@@ -59,6 +59,10 @@ export class ModelStore {
     const total = plan.reduce((n, p) => n + p.file.size, 0) + (info.archive?.size || 0);
     let doneBytes = 0;
     let lastTick = 0;
+    // set once the archive starts unpacking: only then may cleanup delete the
+    // model folder. An offline archive model also pulls the shared VAD first,
+    // and a failure there must not wipe an install this run never touched.
+    let unpacked = false;
     const tick = (chunk: Buffer): void => {
       doneBytes += chunk.length;
       const now = Date.now();
@@ -88,7 +92,10 @@ export class ModelStore {
         await pipeline(body, out);
         fs.renameSync(part, dest);
       }
-      if (info.archive && !this.isReady(id)) await this.fetchArchive(info, controller.signal, tick);
+      if (info.archive && !this.isReady(id)) {
+        unpacked = true;
+        await this.fetchArchive(info, controller.signal, tick);
+      }
       run.progress = 100;
       this.log("info", `model ready: ${id}`);
     } catch (err) {
@@ -96,13 +103,13 @@ export class ModelStore {
       this.errors.set(id, message);
       this.log("error", `model download failed: ${id} - ${message}`);
       // a half-unpacked archive must never look like a model on the next launch
-      if (info.archive) {
-        for (const folder of [`${path.join(this.dir, id)}.part`, path.join(this.dir, id)]) {
-          try {
-            fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
-          } catch (rmErr) {
-            this.log("warn", `could not clean up ${folder}: ${String((rmErr as Error).message || rmErr)}`);
-          }
+      const stale = info.archive ? [`${path.join(this.dir, id)}.part`] : [];
+      if (unpacked) stale.push(path.join(this.dir, id));
+      for (const folder of stale) {
+        try {
+          fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+        } catch (rmErr) {
+          this.log("warn", `could not clean up ${folder}: ${String((rmErr as Error).message || rmErr)}`);
         }
       }
     } finally {
@@ -146,19 +153,42 @@ export class ModelStore {
       tar.x({
         cwd: staging,
         strip: 1,
+        // without this a failed write (a full disk, a lock) is only a warning:
+        // tar drops the rest of that entry, the pipeline resolves, and a
+        // truncated ONNX would sail through as a finished model
+        strict: true,
         filter: (p: string) => wanted.has(path.posix.basename(p)),
       }),
     );
 
+    // the catalog carries the exact unpacked size of every entry. A short file
+    // is the shape a swallowed write error takes, so it fails the download; a
+    // long one only means the catalog drifted, which is not the worker's problem
+    const expect = new Map((info.files || []).map((f) => [f.name, f.size]));
     for (const [entry, local] of wanted) {
       const from = path.join(staging, entry);
       if (!fs.existsSync(from)) throw new Error(`archive is missing ${entry}`);
-      if (fs.statSync(from).size === 0) throw new Error(`archive entry ${entry} is empty`);
+      const size = fs.statSync(from).size;
+      const want = expect.get(local);
+      if (want != null ? size < want : size === 0) {
+        throw new Error(`archive entry ${entry} is ${size} B, expected ${want ?? "non-empty"}`);
+      }
+      if (want != null && size !== want) this.log("warn", `${info.id}/${local} is ${size} B, catalog says ${want}`);
       if (entry !== local) fs.renameSync(from, path.join(staging, local));
     }
-    // only now may the model be seen: one rename, after every file is whole
+    // only now may the model be seen: one rename, after every file is whole.
+    // Windows hands out EPERM/EBUSY when a scanner is still holding a new file,
+    // so the publish gets the same few retries the removals get.
     fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
-    fs.renameSync(staging, folder);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(staging, folder);
+        break;
+      } catch (err) {
+        if (attempt === 3) throw err;
+        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      }
+    }
   }
 
   cancel(id: string): void {
@@ -172,12 +202,17 @@ export class ModelStore {
     this.cancel(id);
     this.errors.delete(id);
     try {
-      fs.rmSync(`${path.join(this.dir, id)}.part`, { recursive: true, force: true, maxRetries: 3 });
-      fs.rmSync(path.join(this.dir, id), { recursive: true, force: true });
+      fs.rmSync(path.join(this.dir, id), { recursive: true, force: true, maxRetries: 3 });
     } catch (err) {
       // Windows keeps the ONNX files locked while a session decodes with them
       this.errors.set(id, `could not remove: ${String((err as Error).message || err)}`);
       this.log("warn", `model remove failed: ${id} - ${String(err)}`);
+    }
+    // leftover staging is its own problem: it must never block the removal above
+    try {
+      fs.rmSync(`${path.join(this.dir, id)}.part`, { recursive: true, force: true, maxRetries: 3 });
+    } catch (err) {
+      this.log("warn", `could not remove staging for ${id} - ${String(err)}`);
     }
     this.onChange();
   }
