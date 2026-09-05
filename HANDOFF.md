@@ -15,14 +15,30 @@ a machine, cut **v0.5.2** using the release steps at the bottom.
 PRs #2–#5 are merged; the repo merges by **rebase**, so history is linear —
 don't add merge commits.
 
+`ralph/pipeline-hardening` branches from the `v0.5.2` commit and holds a run of
+hardening work: the repo's first test runner and ~280 tests, plus fixes for a
+relay crash on a malformed hello, wrong bytes served for a suffix range request
+on the update feed, a `.env` parser that dropped a line on a stray CR, config
+and relay-state writes that lost data when interrupted, duplicate sockets left
+open by reconnects, the API keys leaking out of the local control API, and the
+Stream Deck manifest that had sat at `0.1.0` since the UI redesign. See
+`ITERATION_LOG.md` for what each turn found. **None of it is in `v0.5.2` as
+tagged** — decide whether to fold it in before pushing that tag.
+
 ## First run on a new machine
 
 ```bash
 pnpm install
 pnpm --filter @callout-relay/shared build   # other packages import its dist/
 pnpm build
-pnpm typecheck && node scripts/check-renderer-ids.mjs && pnpm smoke
+pnpm typecheck && pnpm typecheck:test && pnpm test
+node scripts/check-renderer-ids.mjs && pnpm smoke
 ```
+
+`pnpm test` is vitest over `<package>/test/`. `pnpm typecheck:test` is separate
+because the tests live outside every package's `rootDir` and `pnpm -r typecheck`
+cannot see them — it has caught things `pnpm test` alone did not. CI and the
+release workflow run all five; a tag can no longer publish with the suite red.
 
 `pnpm --filter @callout-relay/shared build` is not optional: `packages/shared`
 is consumed as built `dist/`, so a stale build shows up as phantom "has no
@@ -110,12 +126,21 @@ stack (proxy?) corrupts or truncates the stream.
 Per-file downloads from Hugging Face do work in the app — `whisper-small`'s
 375 MB arrived byte-exact — so it is not simply "big downloads fail".
 
-Not investigated further. Until it is fixed, no new archive model can be
-installed through the UI. Leftover `<id>.part` folders are harmless; they are
-cleared on the next attempt.
+Until it is fixed, no new archive model can be installed through the UI.
+Leftover `<id>.part` folders are harmless; they are cleared on the next attempt.
 
-Suggested next step: instrument `fetchArchive` to log bytes received vs
-`content-length` on failure, to separate truncation from corruption.
+**The suggested instrumentation is now in.** `fetchArchive` counts the bytes it
+actually receives against `content-length`, so the next failure says either
+`the download stopped early: N of M bytes (P%)` or `the archive would not
+unpack after all N bytes arrived`. That one line decides which half to chase.
+
+Evidence gathered since, which narrows it but does not settle it: probed
+directly, a truncated bz2 stream reports `input stream ended prematurely` or a
+`Cannot read properties of undefined` TypeError — **not** the `crc32 do not
+match` in the report. That argues against a plain short read. It is not proof:
+the probe used a single-block fixture and a real 118 MB archive is many blocks,
+where a partly received block can fail its CRC honestly. Get the instrumented
+message from a real failure before assuming either way.
 
 ### 3. Unverified: the seven archive models
 
@@ -133,6 +158,14 @@ fix targets.
 - The release workflow warns that its GitHub actions target Node 20.
 - The relay server logs `data\relay-state.json` with a backslash on Linux. Only
   the log string is wrong; the file on disk is correct.
+
+### 5. Never run on Linux
+
+CI gained a `linux-relay` job covering the packages that ship to the VPS, but it
+has not run yet — the tests were all written and run on Windows. Expect it to be
+the first thing that goes red, and read that as information rather than
+breakage. The release workflow's own Linux job was deliberately left without
+tests until that one has gone green once.
 
 ## Release process
 

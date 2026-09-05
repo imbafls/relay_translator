@@ -841,3 +841,29 @@ or only guard a JSON parse.
   Disabling the viewer token check turns five of the nine red - and before this
   turn it would have turned nothing red anywhere in the repo.
 - **Status**: PASSED
+
+---
+
+### Turn 30/40 - The document the next session reads first
+
+- **Tests Added**: `packages/shared/test/handoff.test.ts`, 4 assertions.
+  Deliberately narrow, because a document cannot be asserted true but a command
+  it tells you to run either exists or does not: every `pnpm <script>` it names
+  must be in `package.json`, every repo file it points at must exist, and it may
+  not still claim there is no test runner.
+- **Issue/Gap Uncovered**: `HANDOFF.md` had gone stale in a way that already
+  cost something. It told this loop the repo had no test runner - which is why
+  the loop prompt says so - long after the runner existed. Its first-run block
+  ran typecheck, the id check and smoke, and never the suite. Its open-work
+  entry for the archive download still asked for instrumentation that turn 8
+  shipped. Nothing recorded the hardening branch or that none of it is in
+  `v0.5.2` as tagged.
+- **Enhancement Shipped**: The document now matches the repo: the full
+  verification sequence, why `typecheck:test` is separate, what the branch holds
+  and that the tag predates it, the instrumentation and the evidence it has
+  produced so far, and a new open item for the Linux CI job that has never run.
+  Two mistakes of mine on the way, both caught immediately: the file-reference
+  regex listed `js` before `json`, so ordered alternation truncated
+  `package.json` to `package.js`; and a failed backup left injected test text in
+  the document, which the guard's own assertion then flagged.
+- **Status**: PASSED
