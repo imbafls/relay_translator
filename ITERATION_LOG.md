@@ -37,3 +37,29 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   swallowed. `onError` logs and notifies without tearing down the session, so the
   report is safe on that path.
 - **Status**: PASSED
+
+---
+
+### Turn 2/100 - Translation pipeline & relay logic (shutdown race)
+
+- **Tests Added**: `packages/relay/test/session.test.ts`, 5 tests driving the real
+  `PublisherSession` - its segment ids, its final-then-patch broadcast order and
+  its stop path all genuine, with STT through the session's own `mockStt` seam
+  and Gemini behind a translator whose latency the test controls. Added a
+  `translator` seam to `SessionDeps` alongside the existing `mockStt`/`mockGemini`
+  ones to make that possible.
+- **Issue/Gap Uncovered**: Two things, one of which turned out to be a non-issue
+  worth recording. The ordering tests **pass**: the source subtitle is broadcast
+  synchronously and the translation patches the same segment id, so a slow
+  translation updates its row in place and cannot reorder captions. But
+  `inflight` was a dead counter - incremented and decremented, never read - and
+  the server's `close()` called `dropPublisher()` and then immediately closed
+  every viewer socket. The last utterance finals late, so its translation was
+  still running at that point and resolved into viewers that were already gone.
+  Say one more line, hit stop, and that line never gets translated for anyone.
+- **Enhancement Shipped**: `PublisherSession.drain(timeoutMs)` waits for the
+  translations that were in flight at stop and resolves with the number still
+  outstanding, so a wedged translator cannot hold a shutdown open. The relay's
+  `close()` now awaits it before tearing down viewer sockets. `inflight` finally
+  has a reader.
+- **Status**: PASSED

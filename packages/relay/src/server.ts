@@ -726,7 +726,11 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         },
         async close() {
           clearInterval(heartbeat);
+          // the last thing said finals late, so its translation is usually
+          // still running here; let it reach the viewers before their sockets go
+          const lastSession = publisher?.session ?? null;
           dropPublisher("relay shutting down");
+          if (lastSession) await lastSession.drain(2000);
           if (uplink) {
             try {
               uplink.close(1001, "relay shutting down");

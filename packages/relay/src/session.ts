@@ -45,6 +45,8 @@ export interface SessionDeps {
   geminiApiKey?: string;
   mockStt?: boolean;
   mockGemini?: boolean;
+  /** stand in for Gemini (tests, and any embedder that brings its own engine) */
+  translator?: Translator;
   /** where local models live + the worker script; absent = local STT unavailable */
   localStt?: LocalSttOptions;
   /** fan-out to all viewers */
@@ -103,7 +105,9 @@ export class PublisherSession {
 
     this.translator = !translates
       ? null
-      : this.deps.mockGemini || !this.deps.geminiApiKey
+      : this.deps.translator
+        ? this.deps.translator
+        : this.deps.mockGemini || !this.deps.geminiApiKey
         ? createMockTranslator(target)
         : createGeminiTranslator({
             apiKey: this.deps.geminiApiKey!,
@@ -255,5 +259,20 @@ export class PublisherSession {
     }
     this.stt = null;
     this.deps.setLive(false);
+  }
+
+  /**
+   * Wait for translations that were already in flight when the session stopped.
+   * The last thing said before STOP finals late, so its translation is usually
+   * still running; without this it races whoever is tearing the session down.
+   * Resolves with the number still outstanding, which is 0 unless the timeout
+   * won - a wedged translator must not hold a shutdown open.
+   */
+  async drain(timeoutMs = 5000): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.inflight > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return this.inflight;
   }
 }
