@@ -131,6 +131,9 @@ export interface SttModelInfo {
   archive?: SttModelArchive;
   /** local only: sherpa-onnx model family */
   engine?: "zipformer-online" | "nemotron-online" | "nemo-transducer" | "sense-voice" | "whisper" | "moonshine";
+  /** local only: mel bins the model was exported with (whisper large-v3 and
+   *  nemotron use 128; everything else 80) */
+  melBins?: 80 | 128;
   /** local only: how much machine it wants */
   tier?: ModelTier;
   /** local only: approximate 1-5 ratings, for the setup picker */
@@ -207,24 +210,12 @@ export const STT_MODELS: SttModelInfo[] = [
       { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt`, size: 315894 },
     ],
   },
-  {
-    id: "local-whisper-small",
-    label: "Whisper Small - ~100 languages incl. vi, slowest",
-    provider: "local",
-    kind: "offline",
-    engine: "whisper",
-    languages: "~100 incl. vi",
-    sizeMb: 375,
-    tier: "heavy",
-    speed: 1,
-    accuracy: 4,
-    note: "The widest language list, including Vietnamese. Pads every phrase to 30 s, so it is slow.",
-    files: [
-      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-encoder.int8.onnx`, size: 112442483 },
-      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-decoder.int8.onnx`, size: 262226114 },
-      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt`, size: 816730 },
-    ],
-  },
+  // "local-whisper-small" lived here. sherpa-onnx aborts the process while
+  // constructing the recognizer for it - not a catchable error - with files
+  // that match Hugging Face byte for byte, under every config we tried, while
+  // whisper tiny.en on the same build loads and decodes. Removed rather than
+  // shipped as a model that kills the app; the load probe in localStt.ts now
+  // contains this class of failure for anything else that misbehaves.
 
   // --- archive models: one tar.bz2 from the sherpa-onnx releases page -------
   {
@@ -405,6 +396,7 @@ export const STT_MODELS: SttModelInfo[] = [
   },
   {
     id: "local-whisper-turbo",
+    melBins: 128,
     label: "Whisper Large v3 Turbo - every language, slowest",
     provider: "local",
     kind: "offline",

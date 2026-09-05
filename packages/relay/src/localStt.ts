@@ -3,6 +3,7 @@ import * as path from "path";
 import { Worker } from "worker_threads";
 import { LOCAL_VAD, sttModel } from "@callout-relay/shared";
 import { SttEvents, SttStream } from "./deepgram";
+import { spawn } from "child_process";
 import type { LocalSttFromWorker, LocalSttInit, LocalSttToWorker } from "./localSttWorker";
 
 export interface LocalSttOptions {
@@ -38,6 +39,49 @@ export function defaultWorkerPath(): string {
   return path.join(__dirname, "localSttWorker.js");
 }
 
+/** models whose load has already been proved in this process */
+const verified = new Set<string>();
+
+/**
+ * Load the model once in a throwaway child process. sherpa-onnx aborts the
+ * process outright on some models instead of throwing, which would take the
+ * whole app down from a worker thread; here only the child dies and the exit
+ * code tells us the model is unusable.
+ */
+function probeModel(workerPath: string, init: LocalSttInit): Promise<string | null> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, [workerPath, "--probe", JSON.stringify({ ...init, channels: 1 })], {
+        // under Electron this makes the app binary behave as plain node
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        stdio: ["ignore", "ignore", "pipe"],
+        windowsHide: true,
+      });
+    } catch (err) {
+      return resolve(String((err as Error)?.message || err));
+    }
+    let tail = "";
+    child.stderr?.on("data", (d: Buffer) => {
+      tail = (tail + String(d)).slice(-2000);
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve("it took too long to load");
+    }, 180000);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve(String(err?.message || err));
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve(null);
+      const last = tail.trim().split(/\r?\n/).filter(Boolean).pop();
+      resolve(`the speech engine quit with ${signal || code}${last ? `: ${last}` : ""}`);
+    });
+  });
+}
+
 /**
  * Local STT over a worker thread. Audio is handed to the worker with
  * ownership transfer; results come back as partial/final events with the
@@ -57,12 +101,7 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   if (!localModelReady(opts.modelsDir, cfg.model)) return fail(`model "${info.label}" is not downloaded yet (02 TRANSCRIBE → DOWNLOAD)`);
   if (!fs.existsSync(opts.workerPath)) return fail(`local STT worker missing at ${opts.workerPath} (local models need the desktop app)`);
 
-  let worker: Worker;
-  try {
-    worker = new Worker(opts.workerPath);
-  } catch (err) {
-    return fail(`could not start local STT worker: ${String((err as Error).message || err)}`);
-  }
+  let worker: Worker | null = null;
   let ready = false;
   /** close() was called: audio stops, but finals from the worker's flush still count */
   let closing = false;
@@ -73,7 +112,7 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
 
   const send = (msg: LocalSttToWorker, transfer?: ArrayBuffer[]): void => {
     try {
-      worker.postMessage(msg, transfer);
+      worker?.postMessage(msg, transfer);
     } catch {
       /* worker gone */
     }
@@ -83,7 +122,7 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     if (done) return;
     done = true;
     if (killTimer) clearTimeout(killTimer);
-    void worker.terminate().catch(() => {});
+    void worker?.terminate().catch(() => {});
     events.onClose?.();
   };
 
@@ -93,6 +132,19 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     killTimer = setTimeout(finish, 4000);
   };
 
+  function startWorker(): void {
+    try {
+      worker = new Worker(opts.workerPath);
+    } catch (err) {
+      events.onError?.(`could not start local STT worker: ${String((err as Error).message || err)}`);
+      finish();
+      return;
+    }
+    wire(worker);
+    send(initMsg);
+  }
+
+  function wire(worker: Worker): void {
   worker.on("message", (msg: LocalSttFromWorker) => {
     if (done) return;
     if (msg.type === "ready") {
@@ -111,6 +163,7 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     events.onError?.(`local STT worker crashed: ${String(err?.message || err)}`);
   });
   worker.on("exit", () => finish());
+  }
 
   const initMsg: LocalSttInit = {
     type: "init",
@@ -118,10 +171,26 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     modelDir: path.join(opts.modelsDir, cfg.model),
     vadModel: path.join(opts.modelsDir, LOCAL_VAD.id, LOCAL_VAD.files![0].name),
     channels: cfg.channels,
+    melBins: info.melBins,
     language: cfg.language,
     numThreads: Math.max(1, Math.min(4, Math.floor((require("os").cpus()?.length || 4) / 2))),
   };
-  send(initMsg);
+
+  // audio that arrives while the probe runs queues up in `pending`, the same
+  // way it does while the model is loading
+  if (verified.has(cfg.model)) startWorker();
+  else {
+    void probeModel(opts.workerPath, initMsg).then((problem) => {
+      if (done) return;
+      if (problem) {
+        events.onError?.(`"${info.label}" could not be loaded on this PC (${problem}). Pick another model under 02 TRANSCRIBE.`);
+        finish();
+        return;
+      }
+      verified.add(cfg.model);
+      startWorker();
+    });
+  }
 
   function sendAudio(chunk: Buffer): void {
     if (done) return;
@@ -143,8 +212,10 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     close() {
       if (closing || done) return;
       closing = true;
-      // not loaded yet: the ready handler flushes the queue and closes
+      // not loaded yet: the ready handler flushes the queue and closes.
+      // No worker at all (still probing) means there is nothing to flush.
       if (ready) requestClose();
+      else if (!worker) finish();
     },
   };
 }
