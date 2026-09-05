@@ -17,6 +17,7 @@ import {
   ModelTier,
   OutputTarget,
   SessionState,
+  FALLBACK_STT,
   STT_MODELS,
   SttModelInfo,
   TRANSLATION_MODELS,
@@ -58,7 +59,7 @@ let localModels: LocalModelStatus[] = [];
 /** CPU / RAM of this PC, for the tier recommendation (from the main process) */
 let hardware: HardwareInfo | undefined;
 /** the cloud model to return to when local turns out too slow */
-let lastCloudStt = "deepgram-nova-3";
+let lastCloudStt: string = FALLBACK_STT;
 
 // ---------------------------------------------------------------------------
 // small helpers

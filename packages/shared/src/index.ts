@@ -73,6 +73,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   relayPort: 8787,
 };
 
+/**
+ * Where the app lands when the model its config names has left the catalogue.
+ * A model can be dropped between versions - whisper-small was, for aborting the
+ * process on load - and the app must not strand itself on the missing id. It
+ * has to be a cloud model: a fresh fallback cannot assume anything is on disk.
+ * The catalogue tests hold both of those properties.
+ */
+export const FALLBACK_STT = "deepgram-nova-3";
+
 /** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
 export function isLocalStt(id: string): boolean {
   const info = sttModel(id);

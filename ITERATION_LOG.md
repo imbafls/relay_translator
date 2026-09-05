@@ -121,3 +121,33 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   rather than throwing. The relay now survives all five malformed shapes and
   keeps serving.
 - **Status**: PASSED
+
+---
+
+### Turn 5/100 - Client UI and catalogue invariants
+
+- **Tests Added**: `packages/shared/test/catalogue.test.ts`, 50 tests over the
+  model catalogue and the pure helpers around it: no duplicate ids, every local
+  model carrying the `engine`/`kind`/`files`/`sizeMb`/`tier` the loader reads,
+  mel bins only ever 80 or 128, unique file names, every archive model mapping
+  every file it declares to an entry in the archive, defaults and fallbacks
+  resolving, `recommendTier` across the grid, and `clampChannels` against
+  wrong-typed input off the wire.
+- **Issue/Gap Uncovered**: Two all-clears and one latent risk. The public viewer
+  writes transcript and speaker text with `textContent` throughout - its single
+  `innerHTML` is a clear - so the publicly served page has no injection path,
+  and the renderer's `innerHTML` sites are static templates or `esc()`-escaped.
+  Every catalogue invariant already held, including the archive `pick` coverage
+  I expected to catch something. The risk is the boot fallback: a config naming
+  a model that left the catalogue falls back to a hardcoded `"deepgram-nova-3"`
+  literal in the renderer, and that guard runs once. If that id is ever dropped
+  the way whisper-small just was, the app strands itself on a second dead model.
+  Nothing enforced that it stays in the catalogue. One test of mine was wrong
+  rather than the code - 12 threads with 8 GB is correctly `medium`, since heavy
+  needs both gates - and that expectation was fixed, not the function.
+- **Enhancement Shipped**: `FALLBACK_STT` in shared, with the two properties the
+  fallback actually depends on now asserted: it resolves in the catalogue, and
+  it is a cloud model, because the fallback runs when nothing is known to be on
+  disk. The renderer uses it instead of its own literal, so dropping that model
+  turns the suite red instead of stranding a user.
+- **Status**: PASSED
