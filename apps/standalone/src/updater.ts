@@ -80,6 +80,8 @@ export class Updater {
     mod.autoDownload = true;
     // an update must never interrupt a live session; it lands on the next launch
     mod.autoInstallOnAppQuit = true;
+    // we ship a normal NSIS installer, never a web installer
+    mod.disableWebInstaller = true;
     mod.logger = {
       info: (m: unknown) => this.deps.log("info", `update: ${String(m)}`),
       warn: (m: unknown) => this.deps.log("warn", `update: ${String(m)}`),
