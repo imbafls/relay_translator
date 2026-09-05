@@ -11,12 +11,25 @@ export function generateToken(bytes = 16): string {
   return crypto.randomBytes(bytes).toString("hex");
 }
 
-function readStateFile(file: string): Partial<RelayState> | undefined {
+function readStateFile(file: string): Record<string, unknown> | undefined {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * We only ever write strings here, but the file is on a box that gets
+ * redeployed and restarted, and it can come back hand-edited, copied in from
+ * another machine, or half-written. A token that is not a usable string can
+ * never equal the one off a query param, so adopting it would bring the relay
+ * up refusing every connection it exists to accept - and persist that state.
+ */
+function persistedToken(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 /**
@@ -35,12 +48,12 @@ export function loadState(
     publisherToken:
       opts.publisherToken ||
       process.env.RELAY_PUBLISHER_TOKEN ||
-      persisted?.publisherToken ||
+      persistedToken(persisted?.publisherToken) ||
       generateToken(),
     viewerToken:
       opts.viewerToken ||
       process.env.RELAY_VIEWER_TOKEN ||
-      persisted?.viewerToken ||
+      persistedToken(persisted?.viewerToken) ||
       generateToken(),
   };
   saveState(dataDir, state);
@@ -50,7 +63,12 @@ export function loadState(
 export function saveState(dataDir: string, state: RelayState): void {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, "relay-state.json");
-  fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
+  // write beside it and rename over the top, so a crash or a full disk part
+  // way through cannot leave a truncated file - that parses as nothing on the
+  // next boot, and everyone's viewer link changes underneath them
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf8");
+  fs.renameSync(tmp, file);
 }
 
 export function relayDataDir(): string {

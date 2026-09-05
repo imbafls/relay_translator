@@ -151,3 +151,32 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   disk. The renderer uses it instead of its own literal, so dropping that model
   turns the suite red instead of stranding a user.
 - **Status**: PASSED
+
+---
+
+### Turn 6/100 - Resilience & state (relay token persistence)
+
+- **Tests Added**: `packages/relay/test/config.test.ts`, 15 tests over
+  `relay-state.json` - the file that keeps a viewer link working across a
+  restart, living on a VPS next to a service that gets restarted and
+  redeployed. Covers tokens surviving a restart, explicit options winning,
+  recovery from a file truncated mid-write / empty / null / a bare string / an
+  array, wrong-typed tokens, and what `saveState` leaves on disk.
+- **Issue/Gap Uncovered**: `readStateFile` is guarded, so a corrupt file already
+  regenerated rather than crashing. But the tokens came out of it through
+  `persisted?.publisherToken || generateToken()`, which is a falsiness check,
+  not a type check. A file holding `123`, `true`, `{"a":1}` or `["a"]` was
+  adopted verbatim - and a non-string token can never equal the string off a
+  query param, so the relay came up refusing every connection it exists to
+  accept, then persisted that state so a restart did not clear it. The route in
+  is `saveState` itself: a plain `writeFileSync` that a crash or a full disk can
+  truncate. Two all-clears alongside it: `/updates/` is properly defended by an
+  `^[A-Za-z0-9._-]+$` allowlist that makes a slash impossible, and the uplink
+  hello spreads rather than dereferences, so it cannot crash the way the
+  publisher hello could.
+- **Enhancement Shipped**: Persisted tokens are accepted only when they are
+  non-empty strings, and `readStateFile` rejects a root that is not a plain
+  object. `saveState` writes beside the file and renames over the top, so a
+  crash part way through can no longer leave a truncated file that costs
+  everyone their viewer link on the next boot.
+- **Status**: PASSED
