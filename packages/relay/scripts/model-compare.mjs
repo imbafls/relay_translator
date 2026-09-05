@@ -31,7 +31,7 @@ for (const model of MODELS) {
     if (!res.ok) {
       const detail = await res.text();
       const msg = detail.match(/"message":\s*"([^"]+)"/)?.[1] || detail.slice(0, 120);
-      console.log(`${model}: HTTP ${res.status} (${ms}ms) — ${msg}`);
+      console.log(`${model}: HTTP ${res.status} (${ms}ms) - ${msg}`);
       continue;
     }
     const data = await res.json();

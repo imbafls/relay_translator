@@ -674,7 +674,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       log(
         "info",
         `relay listening on ${host}:${actualPort} (lan: ${origin}, live: no)` +
-          (newestInstaller() ? ` — serving ${newestInstaller()} at /download` : ""),
+          (newestInstaller() ? ` - serving ${newestInstaller()} at /download` : ""),
       );
       resolve({
         port: actualPort,

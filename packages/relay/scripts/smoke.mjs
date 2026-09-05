@@ -1,5 +1,5 @@
 /**
- * Relay smoke test (no API keys needed — mock STT + mock Gemini).
+ * Relay smoke test (no API keys needed - mock STT + mock Gemini).
  * Verifies: static viewer page, token auth, single-connection kick,
  * publisher hello, subtitle pipeline (source + translation), link rotate.
  */
@@ -12,7 +12,7 @@ const failures = [];
 const ok = (name) => console.log(`  PASS  ${name}`);
 const fail = (name, detail) => {
   failures.push(name);
-  console.log(`  FAIL  ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`  FAIL  ${name}${detail ? ` - ${detail}` : ""}`);
 };
 
 async function expectMsg(ws, type, timeoutMs = 8000) {

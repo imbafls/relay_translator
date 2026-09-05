@@ -262,7 +262,7 @@ body.obs .row.latest .ts { display: none; }
 body.obs .row.latest .src { color: var(--ink-2); font-size: calc(var(--size) * 1.889); line-height: 1.25; font-weight: 400; }
 body.obs .row.latest .tgt { font-size: calc(var(--size) * 2.556); line-height: 1.2; font-weight: 600; margin-top: 8px; }
 body.obs.no-tgt .row.latest .src { color: var(--fg); font-size: calc(var(--size) * 2.556); font-weight: 600; }
-/* the drop shadow is part of the overlay itself — it keeps text legible over any video */
+/* the drop shadow is part of the overlay itself - it keeps text legible over any video */
 body.obs .row.latest .src, body.obs .row.latest .tgt { text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7); }
 body.obs.obs-black .row.latest { background: rgba(0, 0, 0, 0.55); padding: 18px 28px 18px 0; }
 body.obs.obs-black .row.latest::before { margin-left: 0; }

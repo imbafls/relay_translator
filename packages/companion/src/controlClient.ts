@@ -98,7 +98,7 @@ export class ControlClient {
             }
           }
         } catch {
-          // server went away — retry after a beat
+          // server went away - retry after a beat
         }
         if (!stopped) await new Promise((r) => setTimeout(r, 3000));
       }

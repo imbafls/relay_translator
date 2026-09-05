@@ -1,11 +1,11 @@
-# Relay — UI redesign spec ("caption console")
+# Relay - UI redesign spec ("caption console")
 
-Source of truth for visuals: the Claude Design project `Relay Redesign.dc.html`, turns **3** (console, viewer, OBS, Stream Deck) and **4** (onboarding). Turn 2 is superseded; turn 1 is the old UI recreated for comparison. Screen ids (3a, 4c…) below match the badges in that file.
+Source of truth for visuals: `Relay Redesign.dc.html`, turns **3** (console, viewer, OBS, Stream Deck) and **4** (onboarding). Turn 2 is superseded; turn 1 is the old UI recreated for comparison. Screen ids (3a, 4c…) below match the badges in that file.
 
 Applies to: `apps/standalone/renderer` (desktop), `packages/viewer/public` (phone/OBS), `apps/streamdeck/com.callout-relay.sdPlugin/pi` (property inspector).
 
 ## Concept
-Relay is a broadcast caption encoder, not a settings form. The live text is the hero; every control lives in one **signal-chain strip** (01 SOURCE → 02 TRANSCRIBE → 03 TRANSLATE → 04 OUTPUT). No cards, no rounded panels — one ruled grid on warm black. Amber appears only when something is live or needs attention.
+Relay is a broadcast caption encoder, not a settings form. The live text is the hero; every control lives in one **signal-chain strip** (01 SOURCE → 02 TRANSCRIBE → 03 TRANSLATE → 04 OUTPUT). No cards, no rounded panels - one ruled grid on warm black. Amber appears only when something is live or needs attention.
 
 ## Tokens
 ```css
@@ -13,7 +13,7 @@ Relay is a broadcast caption encoder, not a settings form. The live text is the 
 --ink:     #efeae0;               /* primary text, primary buttons */
 --ink-2:   #b8b3a8;               /* original-language line when translation is emphasized */
 --dim:     #8a877f;               /* secondary text, labels (5.6:1 on bg) */
---mute:    #3a3834;               /* disabled/ghost text, inactive meter bars — never for readable copy */
+--mute:    #3a3834;               /* disabled/ghost text, inactive meter bars - never for readable copy */
 --rule:    rgba(239,234,224,.14); /* structural rules */
 --rule-2:  rgba(239,234,224,.08); /* inner rules */
 --amber:   #e0a43a;               /* ON AIR, live cursor, warnings (NOT SET / LAN ONLY / KEY NEEDED) */
@@ -30,7 +30,7 @@ Disabled chain blocks get a hatch overlay: `repeating-linear-gradient(135deg, tr
 
 Both families are self-hosted from `packages/viewer/public/fonts` (the desktop build copies them into `dist/renderer/fonts`, and the relay embeds them as SEA assets), so nothing loads from a CDN at runtime.
 
-## Layout — desktop window (980×800, min 720)
+## Layout - desktop window (980×800, min 720)
 Top → bottom, all full-width, separated by `--rule`:
 1. **Top bar 40px**: wordmark left · session clock `HH:MM:SS` centered (dim when idle, ink when live) · status right (`○ STANDBY` dim / `● ON AIR` amber, dot pulses 1.6s).
 2. **Stage** (flex 1): two columns `ENGLISH · SOURCE | TIẾNG VIỆT · TRANSLATION` with 10px header row. Lines bottom-aligned, 18px gap, newest last. Left col has a 62px mono timestamp gutter (`MM:SS`); right col a 40px latency column. Older lines fade to `--dim`; newest interim line shows amber timestamp + blinking 2px amber cursor. Idle: centered ghost waveform (mute bars), "Nothing on air", and the mono chain summary `Source → STT → MT → output`.
@@ -41,12 +41,12 @@ Top → bottom, all full-width, separated by `--rule`:
 
 **Translation off (3i, 4e)**: stage collapses to one `ENGLISH · CAPTIONS` column at 22px; 03 block hatched, toggle OFF, language pair struck through, meta `BYPASSED · $0.000`. If off because no Gemini key: value "Needs a Gemini key", meta `ADD KEY` underlined (opens keys view).
 
-## Onboarding (first run, turn 4) — shown until a valid Deepgram key is saved
+## Onboarding (first run, turn 4) - shown until a valid Deepgram key is saved
 Same window frame; top-bar center shows stepper `1 SPEECH · 2 TRANSLATION · 3 READY` (current ink, done dim with ✓, upcoming mute). Left pane 48px padding: step label, 30px headline, dim body, underline input, `→` help rows with an underlined "Get a free key at …" link (opens browser). Right pane previews the stage the user will get. Chain strip persists with `—` placeholders and `STEP n` meta; the current block gets a 2px ink top rule.
 - **4a/4b** Deepgram key (required). Validate on paste (test request); show `VALID · $X CREDIT` or an amber error. CONTINUE is mute/disabled until valid.
 - **4c** Gemini key (optional). Right pane: English column + hatched "TIẾNG VIỆT · WITH KEY" preview. Buttons `CONTINUE →` | `SKIP · ENGLISH ONLY` share one outlined block; Skip is always enabled.
 - **4d** Source + output pickers, `OPEN CONSOLE`. If step 2 skipped, 03 shows `No key · ADD GEMINI KEY`.
-Relay URL/token are **not** in onboarding — they live in the keys view; the console shows `RELAY NOT SET · LAN ONLY` in amber until set.
+Relay URL/token are **not** in onboarding - they live in the keys view; the console shows `RELAY NOT SET · LAN ONLY` in amber until set.
 
 ## Phone viewer (390 wide, safe-area top 56px)
 - **Live (3d)**: header row = `● ON AIR` amber, `EN → VI`, mono clock, `AA` (opens display). Lines bottom-aligned, each row = 44px mono timestamp gutter + text, separated by `--rule-2`. Original above translation, same size; in history both dim, in the latest line original `--ink-2` and translation ink wt 600 at 21px with a 1px ink rule beneath. Interim line: amber timestamp + blinking cursor. Translation off (3j): single 20/24px line per row.
@@ -66,6 +66,6 @@ Header `● ON AIR · KEY = STOP`; LINK row (mono, underline, `COPY NEW`); 2×2 
 ## Rules
 - Only `--amber` is chromatic; never add green/red. Stop is ink-outlined, not red.
 - No border-radius, shadows, gradients (except the hatch), or emoji/icons beyond chevrons, ●/○/■ and the `→`.
-- Mute (`#3a3834`) is for disabled/ghost only — never for text the user must read.
+- Mute (`#3a3834`) is for disabled/ghost only - never for text the user must read.
 - Interactive hit targets ≥ 44px on phone.
-- Copy figures (credit, prices, free-tier claims) in the mocks are placeholders — verify before shipping.
+- Copy figures (credit, prices, free-tier claims) in the mocks are placeholders - verify before shipping.

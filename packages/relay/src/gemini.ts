@@ -59,7 +59,7 @@ function cacheKey(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").replace(/[.!?,;:]+$/, "").trim();
 }
 
-/** small LRU with TTL — callouts repeat a lot, so this cuts most API calls */
+/** small LRU with TTL - callouts repeat a lot, so this cuts most API calls */
 class TranslationCache {
   private map = new Map<string, { value: string; at: number }>();
   constructor(
@@ -144,7 +144,7 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
         return hit;
       }
 
-      // retry with backoff on 429 (quota) / 5xx — short so latency stays low
+      // retry with backoff on 429 (quota) / 5xx - short so latency stays low
       let lastErr: unknown;
       const backoff = [0, 1200, 3000];
       for (let i = 0; i < backoff.length; i += 1) {

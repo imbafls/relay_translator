@@ -2,7 +2,7 @@
 
 Real-time translated comms for games. Capture your mic (or the game audio itself),
 transcribe it with Deepgram, translate it with Gemini, and your friend reads the
-subtitles on their phone or as a transparent OBS overlay — while you never leave
+subtitles on their phone or as a transparent OBS overlay - while you never leave
 the game.
 
 ```
@@ -54,12 +54,12 @@ Prebuilt installers live in `release/`:
 | File | What it is |
 | --- | --- |
 | `CalloutRelay-Setup-0.3.0.exe` | Windows installer (desktop + Start Menu shortcuts, updates itself) |
-| `CalloutRelay-Portable-0.3.0.exe` | Portable single exe — run from anywhere, nothing installed |
+| `CalloutRelay-Portable-0.3.0.exe` | Portable single exe - run from anywhere, nothing installed |
 | `callout-relay-server.exe` | Standalone relay server (for a VPS / second PC) |
-| `latest.yml` | Update feed the installed app reads — keep it next to the installer |
+| `latest.yml` | Update feed the installed app reads - keep it next to the installer |
 | `SHA256SUMS.txt` | Checksums for the above |
 
-The desktop apps embed the relay, the viewer page, and the control API — there
+The desktop apps embed the relay, the viewer page, and the control API - there
 are no dev servers, no Node.js install, no terminal. Install (or run the
 portable exe), paste your API keys once in Settings, and you're done.
 
@@ -70,7 +70,7 @@ pnpm install
 pnpm dist        # -> release/ (installer + portable + callout-relay-server.exe)
 ```
 
-API keys — either put them in `.env` at the repo root (gitignored, dev only):
+API keys - either put them in `.env` at the repo root (gitignored, dev only):
 
 ```
 DEEPGRAM_API_KEY=...
@@ -84,7 +84,7 @@ stored in `%APPDATA%\callout-relay\config.json` on Windows.
 
 The installed app checks for a new version 15 seconds after launch and every six
 hours after that, downloads it in the background, and installs it on the next
-restart — a live session is never interrupted. `KEYS → UPDATES` shows the running
+restart - a live session is never interrupted. `KEYS → UPDATES` shows the running
 version, the last check, a manual **CHECK**, and a switch to turn the background
 checks off. When an update is staged, an amber chip appears in the footer and in
 the tray menu; clicking it restarts into the new version.
@@ -93,7 +93,7 @@ The portable exe cannot replace itself, so it reports "portable build" and links
 to the releases page instead.
 
 By default the app reads the GitHub release for each tag. **That only works
-once the repo is public** — GitHub answers 404 on a private release feed, and
+once the repo is public** - GitHub answers 404 on a private release feed, and
 the app reports "no release feed found" and offers the releases page instead.
 
 While it is private, or to host builds yourself, set `updateFeedUrl` in
@@ -109,12 +109,12 @@ download link   https://relay.supr.systems/download
 
 To publish a build there, copy the installer, its `.blockmap` and `latest.yml`
 from the GitHub release into `/opt/callout-relay/data/updates/` on the box.
-Upload `latest.yml` last — it is what tells installed apps a new version exists.
+Upload `latest.yml` last - it is what tells installed apps a new version exists.
 Nothing needs restarting.
 
 ## Releasing
 
-Tagging is the whole release process — the `Release` workflow builds the
+Tagging is the whole release process - the `Release` workflow builds the
 installers, the update feed and both relay-server binaries, then attaches them to
 the GitHub release:
 
@@ -150,13 +150,13 @@ every control sits in one signal-chain strip underneath it
 (`01 SOURCE -> 02 TRANSCRIBE -> 03 TRANSLATE -> 04 OUTPUT`).
 
 - **First run** walks you through three steps: a Deepgram key (required, checked
-  as you paste), a Gemini key (optional — skip it for English-only captions), and
+  as you paste), a Gemini key (optional - skip it for English-only captions), and
   your audio source plus where captions go.
 - **01 SOURCE** picks `Default microphone` or `System audio (game + comms)`
-  (system audio uses Windows loopback capture — no stereo mix fiddling). While
+  (system audio uses Windows loopback capture - no stereo mix fiddling). While
   live it turns into an input level meter.
 - **03 TRANSLATE** holds the language pair and the on/off toggle. It starts
-  **off** — a fresh install captions what it hears and nothing else. Add a Gemini
+  **off** - a fresh install captions what it hears and nothing else. Add a Gemini
   key and switch it on to get a second column; with no key it greys out and the
   stage stays a single caption column.
 - **04 OUTPUT** chooses Phone, OBS, or Both. OBS is served entirely from this PC
@@ -166,7 +166,7 @@ every control sits in one signal-chain strip underneath it
   **NEW**.
 - **KEYS** opens keys & relay settings, **LOG** shows the detailed session log
   with per-line latency. `Esc` returns to the stage.
-- Closing the window hides to tray — capture keeps running mid-game. The tray
+- Closing the window hides to tray - capture keeps running mid-game. The tray
   menu can start/stop and rotate the link without opening the app.
 - Settings changes (model / language / audio source) apply live: the session
   restarts but the viewer link survives.
@@ -181,13 +181,13 @@ Your relay is already deployed and running:
 - **Public name:** `relay.supr.systems` (TLS via the Traefik already on the box)
 - **Host:** `187.124.87.202` (Hostinger, Ubuntu 24.04)
 - **Service:** `systemctl status callout-relay` (auto-starts on boot, restarts on crash)
-- **Install dir:** `/opt/callout-relay/` — binary + `.env` (keys) + `data/relay-state.json` (tokens)
+- **Install dir:** `/opt/callout-relay/` - binary + `.env` (keys) + `data/relay-state.json` (tokens)
 - **Viewer link:** `https://relay.supr.systems/watch/<viewerToken>`
 - **Logs:** `journalctl -u callout-relay -f`
 
 Set `relayUrl` to `wss://relay.supr.systems` in `KEYS`; the phone link derives its
 `https://` base from it, so nothing else needs configuring. Link mode is `fixed`,
-so the viewer link is stable across sessions — rotate only when you want to kick
+so the viewer link is stable across sessions - rotate only when you want to kick
 everyone off.
 
 **How the TLS is wired.** Traefik terminates on 443 and forwards to the relay on
@@ -208,7 +208,7 @@ node scripts/vps.mjs exec "systemctl restart callout-relay"
 `F:\Ai\_projects\_secrets\hostinger_vps.*`.
 
 - Tokens persist in `%APPDATA%\callout-relay\relay-state.json` (or the platform
-  equivalent — on the server: `relay-state.json` next to the exe if `%APPDATA%`
+  equivalent - on the server: `relay-state.json` next to the exe if `%APPDATA%`
   is missing), so the viewer link is stable across restarts.
 - For a hosted relay, set `DEEPGRAM_API_KEY` + `GEMINI_API_KEY` and
   `RELAY_PUBLISHER_TOKEN` / `RELAY_VIEWER_TOKEN` in the environment, open
@@ -226,7 +226,7 @@ node scripts/vps.mjs exec "systemctl restart callout-relay"
 3. Restart Stream Deck. Drop **Callout Relay → Toggle Relay** on a key.
 4. The property inspector is the 3-step wizard: **Model → Audio → Link**
    (copy / rotate the viewer link right from the PI).
-5. The key goes green **LIVE** whenever a session is running — regardless of
+5. The key goes green **LIVE** whenever a session is running - regardless of
    whether it was started from the app, tray, or the key itself.
 
 The plugin talks to the desktop app's local control API
@@ -238,7 +238,7 @@ the tray anyway).
 `http://<lan-ip>:8787/watch/<token>`
 
 - Mobile-friendly dark UI with the last few callout lines.
-- `?obs=1` — transparent background, only the latest subtitle pair, sized for
+- `?obs=1` - transparent background, only the latest subtitle pair, sized for
   OBS browser sources (add it as a Browser source, 1920x1080).
 - The link is the token: whoever has it can watch. Rotate to kill old viewers.
 
@@ -256,9 +256,9 @@ the tray anyway).
 ```
 
 Notes on models:
-- `deepgram-nova-3` — fastest, best for English comms.
-- `deepgram-nova-3-multi` — multilingual (en/es/fr/de/pt/it/...).
-- `deepgram-nova-2` — widest language support (incl. Vietnamese STT).
+- `deepgram-nova-3` - fastest, best for English comms.
+- `deepgram-nova-3-multi` - multilingual (en/es/fr/de/pt/it/...).
+- `deepgram-nova-2` - widest language support (incl. Vietnamese STT).
 - `gemini-2.5-flash-lite` if you want to shave ~200 ms off translation.
 
 ## Testing
@@ -270,14 +270,14 @@ node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
 
 ## Troubleshooting
 
-- **Friend can't open the link** — same Wi-Fi? Check Windows Firewall for the
+- **Friend can't open the link** - same Wi-Fi? Check Windows Firewall for the
   Node/Electron inbound rule on port 8787. Different network → run the relay
   on a VPS or tunnel it.
-- **No system audio option works** — loopback capture needs the Electron app
+- **No system audio option works** - loopback capture needs the Electron app
   running on Windows; it auto-approves the capture prompt.
-- **`replaced by another session`** — a second publisher (e.g. a second app
+- **`replaced by another session`** - a second publisher (e.g. a second app
   instance) took over; only one publisher connection is allowed.
-- **Kicked viewers** — someone opened the same link on another device, or the
+- **Kicked viewers** - someone opened the same link on another device, or the
   link was rotated. Send them the fresh link.
 
 ## Done when

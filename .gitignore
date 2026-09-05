@@ -3,7 +3,7 @@ dist/
 out/
 *.tsbuildinfo
 
-# secrets — never commit
+# secrets - never commit
 .env
 .env.*
 sec.txt

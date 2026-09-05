@@ -38,7 +38,7 @@ pub.addEventListener("message", (e) => {
   const msg = JSON.parse(String(e.data));
   if (msg.type === "ready") {
     readyAt = Date.now() - t0;
-    console.log(`[publisher] ready — Deepgram session open (${readyAt} ms after connect)`);
+    console.log(`[publisher] ready - Deepgram session open (${readyAt} ms after connect)`);
   }
   if (msg.type === "subtitle") {
     // what the desktop app's session log now shows the gamer live

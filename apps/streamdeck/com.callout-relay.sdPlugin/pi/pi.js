@@ -1,4 +1,4 @@
-/* Stream Deck property inspector — talks straight to the desktop app's
+/* Stream Deck property inspector - talks straight to the desktop app's
    control API on 127.0.0.1:47477 (status, config, link rotate, SSE). */
 (() => {
   "use strict";

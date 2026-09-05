@@ -1,5 +1,5 @@
 /**
- * Relay desktop console renderer — "caption console" (DESIGN.md, turns 3 + 4).
+ * Relay desktop console renderer - "caption console" (DESIGN.md, turns 3 + 4).
  *
  * Layout: top bar · stage (or keys / log / onboarding view) · signal-chain strip · footer.
  * All state lives here; the main process owns config, the local relay and the uplink.
@@ -415,7 +415,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
 
     relayClient = new RelayPublisherClient(prep.publisherUrl, {
       onState: (clientState, detail) => {
-        log(`relay: ${clientState}${detail ? ` — ${detail}` : ""}`, clientState === "connected" ? "ok" : "");
+        log(`relay: ${clientState}${detail ? ` - ${detail}` : ""}`, clientState === "connected" ? "ok" : "");
         recomputeState();
       },
       onError: (msg) => log(`relay error: ${msg}`, "err"),
@@ -470,7 +470,7 @@ function recomputeState(): void {
 /** settings changes bounce the session without rotating the link */
 async function restartIfLive(): Promise<void> {
   if (session === "idle" || session === "error") return;
-  log("applying settings — restarting session…");
+  log("applying settings - restarting session…");
   stopSession(true);
   await startSession({ rotateLink: false });
 }
@@ -1027,7 +1027,7 @@ function renderOnboarding(): void {
     $("obStepLabel").textContent = "STEP 2 OF 3 · OPTIONAL";
     $("obTitle").textContent = "Want captions in another language?";
     $("obBody").textContent =
-      "Add a Gemini key and Relay translates each line as it lands. Skip it and viewers get English captions only — you can add it later under KEYS.";
+      "Add a Gemini key and Relay translates each line as it lands. Skip it and viewers get English captions only - you can add it later under KEYS.";
   } else {
     $("obStepLabel").textContent = "STEP 3 OF 3";
     $("obTitle").textContent = "Pick what Relay listens to.";
@@ -1164,7 +1164,7 @@ function renderUpdate(): void {
   }
 
   // footer chip: only ready / downloading / a found update earn attention.
-  // it shares the readout row, so keep it short — KEYS has the full story
+  // it shares the readout row, so keep it short - KEYS has the full story
   const chipText =
     u.state === "ready" ? `UPDATE ${u.latest}` :
     u.state === "downloading" ? `UPDATE ${u.percent ?? 0}%` :
@@ -1172,7 +1172,7 @@ function renderUpdate(): void {
     "";
   chip.hidden = !chipText;
   chip.textContent = chipText;
-  chip.title = u.state === "ready" ? `Version ${u.latest} is ready — click to restart and install` : "";
+  chip.title = u.state === "ready" ? `Version ${u.latest} is ready - click to restart and install` : "";
   chip.classList.toggle("progress", u.state === "downloading");
   // the chip and the STT/TRN figures fight for the same row; the chip wins
   $("app").classList.toggle("has-update", !chip.hidden);
@@ -1194,14 +1194,14 @@ function renderUpdate(): void {
       state.classList.add("warn");
       break;
     case "ready":
-      state.textContent = `${u.latest} READY — RESTART TO INSTALL`;
+      state.textContent = `${u.latest} READY - RESTART TO INSTALL`;
       state.classList.add("ready");
       break;
     case "current":
       state.textContent = `UP TO DATE${u.checkedAt ? ` · CHECKED ${new Date(u.checkedAt).toLocaleTimeString()}` : ""}`;
       break;
     case "unsupported":
-      state.textContent = `${(u.detail || "").toUpperCase()} — UPDATE BY HAND`;
+      state.textContent = `${(u.detail || "").toUpperCase()} - UPDATE BY HAND`;
       break;
     case "error":
       state.textContent = (u.detail || "CHECK FAILED").toUpperCase();
@@ -1217,7 +1217,7 @@ function setUpdate(u: UpdateStatus | undefined): void {
   const wasReady = update?.state === "ready";
   update = u;
   renderUpdate();
-  if (u.state === "ready" && !wasReady) log(`update ${u.latest} ready — restart to install`, "ok");
+  if (u.state === "ready" && !wasReady) log(`update ${u.latest} ready - restart to install`, "ok");
 }
 
 function bind(): void {
@@ -1236,7 +1236,7 @@ function bind(): void {
   };
   $("rotateLink").onclick = async () => {
     await cr.rotateLink();
-    log("links rotated — old links are dead", "ok");
+    log("links rotated - old links are dead", "ok");
   };
   bindSeg("linkSeg", (v) => {
     linkChoice = v as "phone" | "obs";
@@ -1358,7 +1358,7 @@ function bind(): void {
     $("translateToggle").hidden = false;
     $("badgesToggle").hidden = false;
     setView("stage");
-    log("setup complete — hit START SESSION when ready", "ok");
+    log("setup complete - hit START SESSION when ready", "ok");
   };
 
   // main-process events
@@ -1402,10 +1402,10 @@ async function boot(): Promise<void> {
   if (!config.deepgramApiKey) {
     obStep = 1;
     setView("onboarding");
-    log("first run — add a Deepgram key to begin");
+    log("first run - add a Deepgram key to begin");
   } else {
     setView("stage");
-    log("ready — hit START SESSION");
+    log("ready - hit START SESSION");
     // silent key checks for the KEY OK readouts
     if (config.deepgramApiKey) void checkKey("deepgram", config.deepgramApiKey);
     if (config.geminiApiKey) void checkKey("gemini", config.geminiApiKey);

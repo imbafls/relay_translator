@@ -1,6 +1,6 @@
 /**
  * WebSocket implementation resolver: browsers / Node >= 22 expose a global
- * WebSocket; Electron main (Node 20) does not — fall back to the `ws` package.
+ * WebSocket; Electron main (Node 20) does not - fall back to the `ws` package.
  */
 export function getWebSocketImpl(): typeof WebSocket {
   if (typeof WebSocket !== "undefined") return WebSocket;

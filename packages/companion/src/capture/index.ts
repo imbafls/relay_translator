@@ -7,7 +7,7 @@ export const SOURCE_SYSTEM_LOOPBACK = "system-loopback";
 
 /**
  * Renderer-side audio capture: mic (getUserMedia) or system loopback
- * (getDisplayMedia — Electron main must install a display-media request
+ * (getDisplayMedia - Electron main must install a display-media request
  * handler with audio: 'loopback' for the system option to work).
  * Emits s16le mono 16 kHz PCM chunks ready for the relay.
  */
@@ -60,7 +60,7 @@ export class BrowserAudioCapture {
       });
       stream.getVideoTracks().forEach((t) => t.stop());
       if (stream.getAudioTracks().length === 0) {
-        throw new Error("no system audio track — platform does not support loopback capture");
+        throw new Error("no system audio track - platform does not support loopback capture");
       }
     } else if (source === SOURCE_DEFAULT_MIC) {
       stream = await navigator.mediaDevices.getUserMedia({

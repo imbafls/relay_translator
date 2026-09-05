@@ -83,13 +83,13 @@ function httpOriginOfRelayUrl(relayUrl: string): string | null {
   return `${scheme}://${m[2]}`;
 }
 
-/** OBS / LAN viewer link — always the local embedded relay */
+/** OBS / LAN viewer link - always the local embedded relay */
 function localViewerUrl(): string | undefined {
   if (!relay) return undefined;
   return relay.viewerUrl(relay.state.viewerToken, true);
 }
 
-/** internet viewer link — remote relay, if configured */
+/** internet viewer link - remote relay, if configured */
 function phoneUrl(): string | undefined {
   const cfg = config();
   const token = cfg.viewerToken;
@@ -151,7 +151,7 @@ function startUplink(): void {
   uplink = new UplinkClient(url, {
     onState: (state, detail) => {
       uplinkState = state === "idle" ? "off" : state;
-      log("info", `uplink: ${uplinkState}${detail ? ` — ${detail}` : ""}`);
+      log("info", `uplink: ${uplinkState}${detail ? ` - ${detail}` : ""}`);
       broadcastStatus();
     },
     onStats: () => broadcastStatus(),
@@ -241,7 +241,7 @@ function translationActive(cfg: AppConfig): boolean {
 /**
  * Cheap provider round-trips used by onboarding / the keys view.
  * Deepgram: list projects (+ balance when the account exposes it).
- * Gemini: list models. Never throws — returns {valid:false, detail}.
+ * Gemini: list models. Never throws - returns {valid:false, detail}.
  */
 async function validateKey(provider: "deepgram" | "gemini", key: string): Promise<KeyValidation> {
   if (!key) return { valid: false, detail: "empty" };
@@ -526,7 +526,7 @@ function refreshTray(): void {
     trayUpdateLabel = label;
     tray.setContextMenu(buildTrayMenu());
   }
-  tray.setToolTip(`${APP_NAME} — ${live ? "live" : sessionState}`);
+  tray.setToolTip(`${APP_NAME} - ${live ? "live" : sessionState}`);
   tray.setImage(
     live
       ? nativeImage.createFromPath(path.join(__dirname, "..", "assets", "tray-live.png"))

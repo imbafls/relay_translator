@@ -161,7 +161,7 @@ export function startControlServer(
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    // bind loopback only — this API has no auth by design
+    // bind loopback only - this API has no auth by design
     server.listen(port, "127.0.0.1", () => resolve(handle));
   });
 }

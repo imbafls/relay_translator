@@ -67,15 +67,15 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 export const STT_MODELS = [
-  { id: "deepgram-nova-3", label: "Deepgram Nova-3 — fastest, English-first" },
-  { id: "deepgram-nova-3-multi", label: "Deepgram Nova-3 Multi — en/es/fr/de/pt/it..." },
-  { id: "deepgram-nova-2", label: "Deepgram Nova-2 — wide language incl. vi" },
+  { id: "deepgram-nova-3", label: "Deepgram Nova-3 - fastest, English-first" },
+  { id: "deepgram-nova-3-multi", label: "Deepgram Nova-3 Multi - en/es/fr/de/pt/it..." },
+  { id: "deepgram-nova-2", label: "Deepgram Nova-2 - wide language incl. vi" },
 ] as const;
 
 export const TRANSLATION_MODELS = [
-  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite — cheapest, big free quota" },
-  { id: "gemini-flash-latest", label: "Gemini Flash (latest) — best quality" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash — legacy (free tier: ~20 req/day)" },
+  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite - cheapest, big free quota" },
+  { id: "gemini-flash-latest", label: "Gemini Flash (latest) - best quality" },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash - legacy (free tier: ~20 req/day)" },
 ] as const;
 
 export const LANGUAGES: { code: LanguageCode; label: string }[] = [
@@ -188,9 +188,9 @@ export interface ControlStatus {
     mode: "embedded" | "remote";
     url: string;
     viewerUrl?: string;
-    /** local OBS/LAN link (embedded relay) — present when the local relay runs */
+    /** local OBS/LAN link (embedded relay) - present when the local relay runs */
     localViewerUrl?: string;
-    /** internet link (remote relay uplink) — present when configured */
+    /** internet link (remote relay uplink) - present when configured */
     remoteViewerUrl?: string;
     /** uplink connection state to the remote relay (phone viewers) */
     uplinkState?: "off" | "connecting" | "connected" | "disconnected" | "error";

@@ -24,7 +24,7 @@ execFileSync(
 console.log("[sea] copying node runtime…");
 copyFileSync(process.execPath, exe);
 
-// 3. inject via postject (invoked directly as JS — .cmd spawn is blocked on Node 24)
+// 3. inject via postject (invoked directly as JS - .cmd spawn is blocked on Node 24)
 console.log("[sea] injecting blob with postject…");
 const postjectCli = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

@@ -1,6 +1,6 @@
 # Routes relay.supr.systems to the callout-relay systemd service on the host.
 # Traefik runs with network_mode: host, so the host's own port is 127.0.0.1.
-# WebSockets need no extra config — Traefik forwards Upgrade requests as-is.
+# WebSockets need no extra config - Traefik forwards Upgrade requests as-is.
 http:
   routers:
     callout-relay:

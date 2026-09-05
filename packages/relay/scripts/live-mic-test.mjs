@@ -43,7 +43,7 @@ await new Promise((r, j) => {
   viewer.onopen = r;
   viewer.onerror = j;
 });
-console.log(`viewer connected — collecting ${SECONDS}s…\n`);
+console.log(`viewer connected - collecting ${SECONDS}s…\n`);
 await new Promise((r) => setTimeout(r, SECONDS * 1000));
 viewer.close();
 

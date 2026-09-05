@@ -3,8 +3,8 @@
  *
  * Feed: the GitHub release for each tag, from the `app-update.yml` that
  * electron-builder writes into the package. Setting `updateFeedUrl` overrides
- * that with any static directory serving `latest.yml` + the installer — a relay
- * box, an R2 bucket — which is what you want while the repo is private, since
+ * that with any static directory serving `latest.yml` + the installer - a relay
+ * box, an R2 bucket - which is what you want while the repo is private, since
  * GitHub answers 404 for a private release feed.
  *
  * Only the NSIS install can replace itself. The portable exe and unpackaged dev
@@ -110,7 +110,7 @@ export class Updater {
     );
     mod.on("download-progress", (p) => this.set({ state: "downloading", percent: Math.round(p.percent) }));
     mod.on("update-downloaded", (info) => {
-      this.deps.log("info", `update ${info.version} ready — installs on restart`);
+      this.deps.log("info", `update ${info.version} ready - installs on restart`);
       this.set({ state: "ready", latest: info.version, percent: 100, checkedAt: Date.now() });
     });
     mod.on("error", (err) => {
