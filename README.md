@@ -103,8 +103,8 @@ installer. The relay can be that directory: it serves `<dataDir>/updates` at
 gives you one stable link to hand out.
 
 ```
-updateFeedUrl   http://<your-relay>:8787/updates
-download link   http://<your-relay>:8787/download
+updateFeedUrl   https://relay.supr.systems/updates
+download link   https://relay.supr.systems/download
 ```
 
 To publish a build there, copy the installer, its `.blockmap` and `latest.yml`
@@ -178,15 +178,23 @@ design; `DESIGN.md` is the spec they are all built against.
 
 Your relay is already deployed and running:
 
+- **Public name:** `relay.supr.systems` (TLS via the Traefik already on the box)
 - **Host:** `187.124.87.202` (Hostinger, Ubuntu 24.04)
 - **Service:** `systemctl status callout-relay` (auto-starts on boot, restarts on crash)
 - **Install dir:** `/opt/callout-relay/` — binary + `.env` (keys) + `data/relay-state.json` (tokens)
-- **Viewer link:** `http://187.124.87.202:8787/watch/<viewerToken>`
+- **Viewer link:** `https://relay.supr.systems/watch/<viewerToken>`
 - **Logs:** `journalctl -u callout-relay -f`
 
-The desktop app is already configured for it (`relayUrl: ws://187.124.87.202:8787`
-in Settings → API keys & relay). Link mode is `fixed`, so the viewer link is
-stable across sessions — rotate only when you want to kick everyone off.
+Set `relayUrl` to `wss://relay.supr.systems` in `KEYS`; the phone link derives its
+`https://` base from it, so nothing else needs configuring. Link mode is `fixed`,
+so the viewer link is stable across sessions — rotate only when you want to kick
+everyone off.
+
+**How the TLS is wired.** Traefik terminates on 443 and forwards to the relay on
+`127.0.0.1:8787`, including WebSocket upgrades. The route is a file-provider
+rule in `/docker/traefik/dynamic/relay.yml`; Traefik watches that directory, so
+editing it needs no restart. Port 8787 is still open directly for plain HTTP,
+which is what makes a LAN fallback work.
 
 To redeploy after a rebuild:
 
