@@ -64,9 +64,12 @@ function config(): AppConfig {
   return configStore.get();
 }
 
+/** ws(s)://host[:port] -> http(s)://host[:port]; keeps TLS intact */
 function httpOriginOfRelayUrl(relayUrl: string): string | null {
-  const m = relayUrl.match(/^wss?:\/\/([^/]+)$/i);
-  return m ? `http://${m[1]}` : null;
+  const m = relayUrl.match(/^(wss?):\/\/([^/]+)\/?$/i);
+  if (!m) return null;
+  const scheme = m[1].toLowerCase() === "wss" ? "https" : "http";
+  return `${scheme}://${m[2]}`;
 }
 
 /** OBS / LAN viewer link — always the local embedded relay */
@@ -143,6 +146,35 @@ function startUplink(): void {
     languages: cfg.languages,
     translates: cfg.translationEnabled !== false,
   });
+  void syncRemoteViewerToken();
+}
+
+/**
+ * Pull the remote relay's current viewer token so the phone link is right even
+ * when we never rotate (fixed link mode, fresh install, stale token from 0.1).
+ */
+async function syncRemoteViewerToken(): Promise<void> {
+  const cfg = config();
+  if (!cfg.relayUrl || !cfg.publisherToken) return;
+  const origin = httpOriginOfRelayUrl(cfg.relayUrl);
+  if (!origin) return;
+  try {
+    const res = await fetch(`${origin}/admin/viewer-token`, {
+      headers: { Authorization: `Bearer ${cfg.publisherToken}` },
+    });
+    if (!res.ok) {
+      log("warn", `remote viewer-token sync failed: HTTP ${res.status}`);
+      return;
+    }
+    const { viewerToken } = (await res.json()) as { viewerToken?: string };
+    if (viewerToken && viewerToken !== cfg.viewerToken) {
+      configStore.update({ viewerToken });
+      log("info", "remote viewer token synced");
+      broadcastStatus();
+    }
+  } catch (err) {
+    log("warn", `remote viewer-token sync failed: ${String(err)}`);
+  }
 }
 
 function stopUplink(): void {
@@ -190,9 +222,10 @@ async function rotateLink(): Promise<string | undefined> {
   // rotate both the local (OBS/LAN) link and the remote (phone) link
   if (relay) relay.rotateViewerToken();
   const cfg = config();
-  if (cfg.relayUrl && cfg.publisherToken) {
+  const origin = cfg.relayUrl ? httpOriginOfRelayUrl(cfg.relayUrl) : null;
+  if (origin && cfg.publisherToken) {
     try {
-      const res = await fetch(`${httpOriginOfRelayUrl(cfg.relayUrl)}/admin/rotate-viewer-token`, {
+      const res = await fetch(`${origin}/admin/rotate-viewer-token`, {
         method: "POST",
         headers: { Authorization: `Bearer ${cfg.publisherToken}` },
       });

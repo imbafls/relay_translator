@@ -106,30 +106,6 @@ const MOCK_LINES = [
   "I'm pushed up close on heaven",
 ];
 
-/** Deepgram credit balance in USD (projects -> balance). undefined on failure. */
-export async function getDeepgramBalanceUsd(apiKey: string): Promise<number | undefined> {
-  if (!apiKey) return undefined;
-  try {
-    const res = await fetch("https://api.deepgram.com/v1/projects", {
-      headers: { Authorization: `Token ${apiKey}` },
-    });
-    if (!res.ok) return undefined;
-    const data: any = await res.json();
-    const projectId = data?.projects?.[0]?.project_id;
-    if (!projectId) return undefined;
-    const bal = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/balance`, {
-      headers: { Authorization: `Token ${apiKey}` },
-    });
-    if (!bal.ok) return undefined;
-    const balData: any = await bal.json();
-    const list = Array.isArray(balData?.balance) ? balData.balance : [];
-    const total = list.reduce((s: number, b: any) => s + (Number(b?.balance) || 0), 0);
-    return Number.isFinite(total) ? total : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Mock STT for dev/smoke tests: emits canned finals paced by audio volume
  * so the whole pipeline runs without a Deepgram key.

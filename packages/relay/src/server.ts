@@ -204,6 +204,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   // -------------------------------------------------------------------------
   // HTTP: static viewer page + health + admin
   // -------------------------------------------------------------------------
+  const isPublisherAuth = (req: http.IncomingMessage): boolean => {
+    const auth = String(req.headers.authorization || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    return token === state.publisherToken;
+  };
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://localhost`);
 
@@ -213,10 +219,19 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       return;
     }
 
+    if (url.pathname === "/admin/viewer-token" && req.method === "GET") {
+      if (!isPublisherAuth(req)) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "forbidden" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ viewerToken: state.viewerToken }));
+      return;
+    }
+
     if (url.pathname === "/admin/rotate-viewer-token" && req.method === "POST") {
-      const auth = String(req.headers.authorization || "");
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      if (token !== state.publisherToken) {
+      if (!isPublisherAuth(req)) {
         res.writeHead(403, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "forbidden" }));
         return;
@@ -475,8 +490,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         toViewers({ type: "status", live: false, message: "stream ended" });
       }
     });
-    ws.on("error", () => {
-      if (uplink === ws) uplink = null;
+    // "close" always follows "error" and owns the cleanup + "stream ended" broadcast
+    ws.on("error", (err) => {
+      if (uplink === ws) log("warn", `uplink socket error: ${String(err)}`);
     });
   }
 
