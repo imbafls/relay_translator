@@ -270,7 +270,7 @@ button:disabled { cursor: default; }
 .ob-left { border-right: 1px solid var(--rule); padding: 48px 48px 32px; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
 .headline { font-size: 30px; line-height: 1.15; font-weight: 500; margin: 14px 0 0; text-wrap: pretty; }
 .body { font-size: 14px; line-height: 1.55; color: var(--dim); margin: 14px 0 0; max-width: 380px; }
-.ob-step { display: flex; flex-direction: column; flex: 1; margin-top: 40px; }
+.ob-step { display: flex; flex-direction: column; flex: 1; margin-top: 28px; }
 .ob-step .field-bare { gap: 8px; }
 .help { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; color: var(--dim); line-height: 1.5; }
 .help-row { display: flex; gap: 12px; }
@@ -583,25 +583,34 @@ select option { background: var(--bg); color: var(--ink); }
 .seg-tier button.suggested:not(.active) { color: var(--ink); }
 .tier-blurb { font-size: 12px; color: var(--dim); line-height: 1.45; margin: 10px 0 4px; max-width: 46ch; }
 
-/* per-model ratings: five bordered cells, filled ones in ink */
-.rates { display: flex; gap: 20px; margin-top: 7px; }
+/* ratings: five bordered cells, filled ones in ink (DESIGN.md SegmentedBar) */
+.rates { display: flex; gap: 20px; }
 .rate { display: flex; align-items: center; gap: 8px; }
 .rate-label { font: 10.5px var(--mono); color: var(--dim); letter-spacing: 0.1em; }
 .rate .cells { display: flex; gap: 2px; }
 .rate .cells i { width: 8px; height: 8px; border: 1px solid var(--mute); }
 .rate .cells i.on { background: var(--ink); border-color: var(--ink); }
 .model-row.picked .rate .cells i:not(.on) { border-color: var(--rule); }
-.model-row .note { font-size: 12px; color: var(--dim); line-height: 1.4; margin-top: 6px; max-width: 52ch; }
 
 .model-list-lg .model-row { padding: 14px 0; grid-template-columns: 18px minmax(0, 1fr) auto; }
-/* the detailed rows are tall, so the radio and the action line up with the name */
+/* the name sits above the meta line, so the radio and action align to the top */
 .model-list-lg .model-row { align-items: start; }
 .model-list-lg .model-row .radio { margin-top: 5px; }
 .model-list-lg .model-row .act { padding-top: 1px; }
-/* Eleven models is more than the pane is tall, so the list scrolls on its own
-   and the pane below it (help, CONTINUE) stays where the other steps put it.
-   The right padding keeps the scrollbar off the DOWNLOAD action. */
-.model-list-lg { max-height: 340px; overflow-y: auto; padding-right: 14px; }
+/* the local pane carries the most above the list, so its chrome is the tightest */
+#obLocal .hw { margin: 10px 0 8px; }
+#obLocal.ob-sub { margin-top: 14px; }
+/* Eleven models do not fit a 720px window, so the list scrolls at a fixed
+   height rather than flexing - a flex child that shrinks below its content
+   overflows onto CONTINUE. The step's own chrome is trimmed (one-line
+   headline, tighter margins) so the whole of step 1 still fits without the
+   pane scrolling. The right padding keeps the scrollbar clear of DOWNLOAD. */
+.model-list-lg { max-height: 168px; overflow-y: auto; padding-right: 14px; }
+/* the local pane carries more above the list than the cloud one, so it starts higher */
+
+/* ratings and note for the picked model, under the list */
+.model-note { display: flex; flex-direction: column; gap: 7px; padding-top: 11px; min-height: 52px; }
+.model-note .note { font-size: 12px; color: var(--dim); line-height: 1.45; max-width: 52ch; }
 .model-list-lg .model-row .name { font-size: 16px; }
 .ob-sub { margin-top: 28px; display: flex; flex-direction: column; }
 .ob-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }

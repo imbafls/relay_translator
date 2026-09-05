@@ -923,6 +923,31 @@ function modelsInTier(tier?: ModelTier): SttModelInfo[] {
   return tier ? local.filter((m) => (m.tier || "medium") === tier) : local;
 }
 
+/**
+ * Ratings and the note for the model that is picked, under the list. The pane
+ * is too short to carry them on every row, and only the picked one is being
+ * weighed up anyway.
+ */
+function renderPickedDetail(): void {
+  const box = $("obModelNote");
+  box.innerHTML = "";
+  const m = sttModel(obModel);
+  if (!m) return;
+  if (m.speed || m.accuracy) {
+    const rates = document.createElement("div");
+    rates.className = "rates";
+    if (m.speed) rates.appendChild(ratingRow("SPEED", m.speed));
+    if (m.accuracy) rates.appendChild(ratingRow("ACCURACY", m.accuracy));
+    box.appendChild(rates);
+  }
+  if (m.note) {
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent = m.note;
+    box.appendChild(note);
+  }
+}
+
 /** a 1-5 rating as five bordered cells, filled ones in ink (DESIGN.md SegmentedBar) */
 function ratingRow(label: string, value: number): HTMLElement {
   const row = document.createElement("div");
@@ -947,7 +972,7 @@ function ratingRow(label: string, value: number): HTMLElement {
  */
 function renderModelList(
   box: HTMLElement,
-  opts: { picked: string; pick: (id: string) => void; tier?: ModelTier; detail?: boolean },
+  opts: { picked: string; pick: (id: string) => void; tier?: ModelTier },
 ): void {
   box.innerHTML = "";
   for (const m of modelsInTier(opts.tier)) {
@@ -964,19 +989,6 @@ function renderModelList(
     meta.className = "meta";
     meta.textContent = `${m.languages || ""} · ${fmtMb(m.sizeMb || 0)} · ${m.kind === "streaming" ? "streaming" : "utterances"}`;
     body.append(name, meta);
-    if (opts.detail) {
-      const rates = document.createElement("div");
-      rates.className = "rates";
-      if (m.speed) rates.appendChild(ratingRow("SPEED", m.speed));
-      if (m.accuracy) rates.appendChild(ratingRow("ACCURACY", m.accuracy));
-      if (rates.children.length) body.appendChild(rates);
-      if (m.note) {
-        const note = document.createElement("div");
-        note.className = "note";
-        note.textContent = m.note;
-        body.appendChild(note);
-      }
-    }
     const act = document.createElement("div");
     act.className = "act";
     const btn = (text: string, cls: string, onClick: () => void): HTMLButtonElement => {
@@ -1384,14 +1396,13 @@ function renderOnboarding(): void {
     $("obLocal").hidden = obMode !== "local";
     setSeg("obSttSeg", obMode);
     if (obMode === "local") {
-      $("obTitle").textContent = "Pick a model to run on this PC.";
-      $("obBody").textContent =
-        "Local speech-to-text is free and private - nothing leaves your machine. It costs CPU and a download; cloud Deepgram is a little faster.";
+      $("obTitle").textContent = "Pick a local model.";
+      $("obBody").textContent = "Free and private - nothing leaves this PC. It costs CPU and one download.";
       renderTierPicker();
+      renderPickedDetail();
       renderModelList($("obModels"), {
         picked: obModel,
         tier: obTier,
-        detail: true,
         pick: (id) => {
           obModel = id;
           renderOnboarding();
