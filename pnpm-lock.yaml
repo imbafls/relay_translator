@@ -20,6 +20,10 @@ importers:
 
   apps/standalone:
     dependencies:
+      electron-updater:
+        specifier: ^6.8.9
+        version: 6.8.9
+    devDependencies:
       '@callout-relay/companion':
         specifier: workspace:*
         version: link:../../packages/companion
@@ -29,10 +33,6 @@ importers:
       '@callout-relay/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      electron-updater:
-        specifier: ^6.8.9
-        version: 6.8.9
-    devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1

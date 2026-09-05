@@ -6,10 +6,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const LOCAL_STATE = path.join(process.env.APPDATA || "", "callout-relay", "relay-state.json");
+const DATA = path.join(process.env.APPDATA || "", "callout-relay");
+const LOCAL_STATE = path.join(DATA, "relay-state.json");
 const { publisherToken: LOCAL_PUB, viewerToken: LOCAL_VIEWER } = JSON.parse(fs.readFileSync(LOCAL_STATE, "utf8"));
-const VPS = "187.124.87.202:8787";
-const VPS_VIEWER = "RELAY_VIEWER_TOKEN";
+
+// the remote relay and its viewer token come from the app's own config, so this
+// script never carries a copy of either (tokens rotate; a committed one goes stale)
+const cfg = JSON.parse(fs.readFileSync(path.join(DATA, "config.json"), "utf8"));
+const RELAY_URL = process.env.RELAY_URL || cfg.relayUrl;
+const VPS_VIEWER = process.env.RELAY_VIEWER_TOKEN || cfg.viewerToken;
+if (!RELAY_URL || !VPS_VIEWER) {
+  console.error("set relayUrl + viewerToken in the app (KEYS), or pass RELAY_URL / RELAY_VIEWER_TOKEN");
+  process.exit(1);
+}
 
 const wavPath = process.argv[2] || path.join(process.env.TEMP, "opencode", "callouts.wav");
 const wav = fs.readFileSync(wavPath);
@@ -31,7 +40,7 @@ await new Promise((r, j) => {
 
 // remote viewer (the friend's phone)
 const remoteInbox = [];
-const remoteViewer = new WebSocket(`ws://${VPS}/ws/viewer?token=${VPS_VIEWER}`);
+const remoteViewer = new WebSocket(`${RELAY_URL.replace(/\/$/, "")}/ws/viewer?token=${VPS_VIEWER}`);
 remoteViewer.addEventListener("message", (e) => {
   try {
     remoteInbox.push(JSON.parse(String(e.data)));

@@ -13,7 +13,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { Client } = require("ssh2");
 
-const HOST = process.env.VPS_HOST || "187.124.87.202";
+// the name resolves to the same box and survives the IP changing
+const HOST = process.env.VPS_HOST || "relay.supr.systems";
 const USER = process.env.VPS_USER || "root";
 
 function resolvePassword() {
