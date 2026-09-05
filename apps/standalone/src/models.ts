@@ -1,8 +1,9 @@
 /**
- * Local STT model store: `<dataDir>/models/<id>/<file>`. Downloads stream to
- * `<file>.part` and rename on completion, so a half-finished model never
- * looks installed. One download at a time per model; offline models also
- * pull the silero VAD the worker needs.
+ * Local STT model store: `<dataDir>/models/<id>/<file>`. Per-file downloads
+ * stream to `<file>.part` and rename on completion; archive models unpack
+ * into `<id>.part/` and are published with one directory rename. Either way a
+ * half-finished model never looks installed. One download at a time per
+ * model; offline models also pull the silero VAD the worker needs.
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -96,10 +97,12 @@ export class ModelStore {
       this.log("error", `model download failed: ${id} - ${message}`);
       // a half-unpacked archive must never look like a model on the next launch
       if (info.archive) {
-        try {
-          fs.rmSync(path.join(this.dir, id), { recursive: true, force: true, maxRetries: 3 });
-        } catch (rmErr) {
-          this.log("warn", `could not clean up ${id}: ${String((rmErr as Error).message || rmErr)}`);
+        for (const folder of [`${path.join(this.dir, id)}.part`, path.join(this.dir, id)]) {
+          try {
+            fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+          } catch (rmErr) {
+            this.log("warn", `could not clean up ${folder}: ${String((rmErr as Error).message || rmErr)}`);
+          }
         }
       }
     } finally {
@@ -110,13 +113,23 @@ export class ModelStore {
 
   /**
    * Fetch a tar.bz2 model and unpack only the entries it declares, renaming
-   * each to the plain name the worker looks for. Nothing is written outside
-   * `<dir>/<id>/`, and the archive itself never touches disk.
+   * each to the plain name the worker looks for. The archive itself never
+   * touches disk.
+   *
+   * Everything lands in `<dir>/<id>.part/` first. `localModelReady()` decides
+   * by filename alone, so extracting straight into `<dir>/<id>/` would report
+   * the model ready the moment tar opened the last file - before its bytes
+   * were written - and a crash mid-extract would leave that half-written file
+   * looking installed for good. The staging folder is published with a single
+   * directory rename once every entry is present and non-empty.
    */
   private async fetchArchive(info: SttModelInfo, signal: AbortSignal, tick: (chunk: Buffer) => void): Promise<void> {
     const archive = info.archive!;
     const folder = path.join(this.dir, info.id);
-    fs.mkdirSync(folder, { recursive: true });
+    const staging = `${folder}.part`;
+    // a staging folder left by an earlier crash or cancel is never resumable
+    fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3 });
+    fs.mkdirSync(staging, { recursive: true });
     this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB)`);
 
     const res = await fetch(archive.url, { signal, redirect: "follow" });
@@ -131,17 +144,21 @@ export class ModelStore {
       body,
       unbzip2(),
       tar.x({
-        cwd: folder,
+        cwd: staging,
         strip: 1,
         filter: (p: string) => wanted.has(path.posix.basename(p)),
       }),
     );
 
     for (const [entry, local] of wanted) {
-      const from = path.join(folder, entry);
+      const from = path.join(staging, entry);
       if (!fs.existsSync(from)) throw new Error(`archive is missing ${entry}`);
-      if (entry !== local) fs.renameSync(from, path.join(folder, local));
+      if (fs.statSync(from).size === 0) throw new Error(`archive entry ${entry} is empty`);
+      if (entry !== local) fs.renameSync(from, path.join(staging, local));
     }
+    // only now may the model be seen: one rename, after every file is whole
+    fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+    fs.renameSync(staging, folder);
   }
 
   cancel(id: string): void {
@@ -155,6 +172,7 @@ export class ModelStore {
     this.cancel(id);
     this.errors.delete(id);
     try {
+      fs.rmSync(`${path.join(this.dir, id)}.part`, { recursive: true, force: true, maxRetries: 3 });
       fs.rmSync(path.join(this.dir, id), { recursive: true, force: true });
     } catch (err) {
       // Windows keeps the ONNX files locked while a session decodes with them
