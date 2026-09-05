@@ -266,6 +266,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const isLive = (): boolean => publisher !== null || uplink !== null;
 
   function buildSession(ws: WebSocket, cfg: SessionConfig): void {
+    // viewers are not kicked on a rebuild, so their rows survive it - the new
+    // session has to keep numbering where the old one left off
+    const carryOver = publisher?.session?.lastSegId ?? 0;
     if (publisher) {
       try {
         publisher.session.stop();
@@ -294,7 +297,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       onSttError: (message) => sendPublisher(ws, { type: "error", message }),
       setLive: () => {},
       log,
-    });
+    }, carryOver);
     session.start();
     if (publisher && publisher.ws === ws) publisher.session = session;
   }

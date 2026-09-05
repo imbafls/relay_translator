@@ -1107,3 +1107,28 @@ run.
   contain only what was actually stored, and `update()` merges into that rather
   than into the env-applied view. Three of the five tests go red on revert.
 - **Status**: PASSED
+
+---
+
+### Turn 39/40 - Message orchestration (ids that collided with what was on screen)
+
+Audit finding 12.
+
+- **Tests Added**: `packages/relay/test/segmentIds.test.ts`, 3 tests against a
+  real relay and a real viewer socket: numbering continues across a rebuild, no
+  id repeats across a stream that rebuilds twice, and a genuinely new publisher
+  still starts at 1.
+- **Issue/Gap Uncovered**: `segId` is per-`PublisherSession` and `buildSession`
+  constructs a fresh one on every publisher hello - which a settings change
+  triggers mid-stream, without kicking viewers. Viewers key their caption rows
+  by id and nothing tells them to start again, so the new session handed out ids
+  already on screen: the next caption rewrote an existing row in place under the
+  old line's timestamp, and the line it replaced was gone. Measured against the
+  original, a four-caption stream emitted `1, 2, 1, 1` - two distinct ids for
+  four captions, so the viewer showed two rows being overwritten.
+  Turn 15 tested that ids stay unique *within* a session and never crossed a
+  rebuild, which is why it missed this.
+- **Enhancement Shipped**: a replacement session is seeded from the outgoing
+  one's counter, so numbering continues. Contained to the relay - no protocol
+  change and nothing for viewers to learn. Reverting turns two of the three red.
+- **Status**: PASSED

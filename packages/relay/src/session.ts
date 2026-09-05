@@ -104,8 +104,25 @@ export class PublisherSession {
   constructor(
     private readonly cfg: SessionConfig,
     private readonly deps: SessionDeps,
+    /**
+     * Where to continue numbering segments from.
+     *
+     * Viewers key their caption rows by segment id and nothing tells them to
+     * start again, so a session that restarts at 0 hands out ids the viewer is
+     * already showing: the next caption rewrites an existing row in place,
+     * under the old line's timestamp, and the line it replaced is gone. A
+     * settings change mid-stream is enough to trigger it, since that rebuilds
+     * the session without kicking anyone.
+     */
+    startSegId = 0,
   ) {
     this.local = isLocalStt(cfg.stt);
+    this.segId = startSegId;
+  }
+
+  /** the last segment id handed out, so a replacement can carry on from it */
+  get lastSegId(): number {
+    return this.segId;
   }
 
   private tag(channel: number): { channel?: number; speaker?: string } {
