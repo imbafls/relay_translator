@@ -414,3 +414,28 @@ first-party runtime source.
   is visible - which is the same choice turn 8 made about the archive download:
   say which thing broke.
 - **Status**: PASSED
+
+---
+
+### Turn 15/100 - Message orchestration (what churn leaves behind)
+
+- **Tests Added**: `packages/relay/test/churn.test.ts`, 7 tests against a real
+  relay doing what a long session actually does: a settings change rebuilding
+  the session on a live socket, a publisher replaced by a new one, eight
+  connect-and-disconnect cycles, and the broadcast bus subscribed and
+  unsubscribed ten times over.
+- **Issue/Gap Uncovered**: Nothing in the code. One thing in my understanding,
+  which the tests corrected: a final subtitle goes out *twice* by design - the
+  source immediately, then the translation patching the same segment id, both
+  carrying `final: true`. My first pass counted every final and read that as a
+  duplicate. Knowing it let the assertions tighten from "no more than two" to
+  "exactly one", which is the cover actually worth having against a duplicated
+  caption. Worth recording the contrast with turn 13: the server *does* close
+  the publisher socket it replaces, which is precisely what the client failed to
+  do with its own. Same situation, opposite outcome.
+- **Enhancement Shipped**: Regression cover for the duplicate-caption class -
+  doubled subtitles, reused segment ids, ghost sessions still feeding the bus
+  after their publisher left, and broadcast listeners piling up across the
+  rewiring the app does whenever the relay is rebuilt. Each asserts an exact
+  count, so a regression shows up as a number rather than a shrug.
+- **Status**: PASSED
