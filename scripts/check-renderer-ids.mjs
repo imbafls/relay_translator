@@ -35,18 +35,28 @@ for (const pair of PAIRS) {
   try {
     html = readFileSync(pair.html, "utf8");
   } catch {
-    console.log(`skip ${pair.name} (${pair.html} not present)`);
+    // Not a skip. Every pair here is a page the app ships, so a missing one is
+    // a move or a deletion - and skipping meant this check went green while
+    // checking nothing, which is worse than the mismatch it exists to catch.
+    failures += 1;
+    console.error(`\n${pair.name}: ${pair.html} is missing, so nothing was checked`);
     continue;
   }
-  const defined = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+  const defined = new Set([...html.matchAll(/\sid=["']([^"']+)["']/g)].map((m) => m[1]));
 
   const referenced = new Map();
   for (const file of pair.scripts) {
     const src = readFileSync(file, "utf8");
-    // $("id") / inp("id") / sel("id") / getElementById("id")
-    const re = /(?:\$|inp|sel|getElementById)\(\s*"([A-Za-z][\w-]*)"\s*\)/g;
-    for (const m of src.matchAll(re)) {
-      if (!referenced.has(m[1])) referenced.set(m[1], file);
+    const patterns = [
+      // $("id") / inp("id") / sel("id") / getElementById("id")
+      /(?:\$|inp|sel|getElementById)\(\s*["']([A-Za-z][\w-]*)["']\s*\)/g,
+      // querySelector("#id ...") - not used today, and a silent hole if it is
+      /querySelector(?:All)?\(\s*["']#([A-Za-z][\w-]*)/g,
+    ];
+    for (const re of patterns) {
+      for (const m of src.matchAll(re)) {
+        if (!referenced.has(m[1])) referenced.set(m[1], file);
+      }
     }
   }
 

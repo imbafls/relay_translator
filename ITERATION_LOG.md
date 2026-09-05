@@ -782,3 +782,32 @@ found the duplicate that had drifted furthest.
   must agree, and the script must still be able to reach every file that states
   one. Reverting either half turns two tests red.
 - **Status**: PASSED
+
+---
+
+### Turn 28/40 - Resilience & state (checking the checker)
+
+`check-renderer-ids.mjs` runs in CI and in the release gate and nothing had ever
+checked it. A guard that quietly stops guarding is worse than no guard, because
+the green tick is believed.
+
+- **Tests Added**: `packages/shared/test/checkRendererIds.test.ts`, 6 tests
+  running the real script against fixture trees - its paths are relative to the
+  working directory, so a temp tree is all it takes to control its inputs.
+  Covers a clean pass, an id the markup does not define, a page that has gone
+  missing, an id used through `querySelector`, single-quoted ids, and a class
+  selector not being mistaken for one.
+- **Issue/Gap Uncovered**: A configured page whose HTML could not be read was
+  skipped with a message and did not count as a failure. Deleting the viewer's
+  `index.html` made the script print "skip phone/OBS viewer" and then "all
+  renderer element ids resolve", exit 0 - reporting success while checking
+  nothing. Since a move or a rename is exactly when you want this check to
+  speak up, it was silent in the one case that matters most. Two latent holes
+  alongside it, neither triggered by today's code: ids referenced through
+  `querySelector("#id")` were invisible to it, as were single-quoted lookups
+  and single-quoted `id=''` attributes.
+- **Enhancement Shipped**: A missing page is a failure with a message saying
+  nothing was checked. The reference scan covers `querySelector` and both quote
+  styles. The real repo still passes - 116, 32 and 14 ids resolving - and
+  removing a page now exits 1 where it used to exit 0.
+- **Status**: PASSED
