@@ -106,6 +106,100 @@ describe("localModelReady", () => {
   });
 });
 
+describe("the probe's argv survives a real user's paths", () => {
+  /** a models dir under a folder shaped like an actual Windows profile name */
+  function awkwardDir(name: string): string {
+    const base = tmp();
+    const dir = path.join(base, name);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  it.each([
+    ["a space in the path", "Ömer Test"],
+    ["non-ASCII characters", "Ünïcodé"],
+    ["a quote-adjacent name", "it's mine"],
+    ["a trailing backslash-ish name", "models dir "],
+  ])("loads a model with %s", async (_name, folder) => {
+    // the init json goes through argv to a child process; if it does not
+    // survive the trip the probe exits non-zero and the model is reported
+    // broken on a PC where it would have worked
+    const models = awkwardDir(folder);
+    stageModel(models, "local-zipformer-en-20m");
+    const workerPath = writeWorker(models, { probeExit: 0 });
+
+    const errors: string[] = [];
+    let opened = false;
+    let resolveClose!: () => void;
+    const closed = new Promise<void>((r) => {
+      resolveClose = r;
+    });
+
+    let stream: ReturnType<typeof createLocalSttStream> | null = null;
+    stream = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: "local-zipformer-en-20m", language: "en", channels: 1 },
+      {
+        onOpen: () => {
+          opened = true;
+          setTimeout(() => stream?.close(), 20);
+        },
+        onError: (m) => errors.push(m),
+        onClose: () => resolveClose(),
+      },
+    );
+
+    await closed;
+    expect(errors).toEqual([]);
+    expect(opened).toBe(true);
+  });
+
+  it("hands the child an init it can parse back", async () => {
+    const models = awkwardDir("Ömer's Models");
+    stageModel(models, "local-zipformer-en-20m");
+    // this worker fails the probe unless the init parses and carries the
+    // modelDir it was given, so a mangled argv shows up as a failure
+    const workerPath = path.join(models, "checkingWorker.js");
+    fs.writeFileSync(
+      workerPath,
+      `
+if (process.argv[2] === "--probe") {
+  let init;
+  try { init = JSON.parse(process.argv[3]); } catch { process.exit(41); }
+  if (typeof init.modelDir !== "string" || !init.modelDir.length) process.exit(42);
+  if (init.engine !== "zipformer-online") process.exit(43);
+  process.exit(0);
+} else {
+  const { parentPort } = require("worker_threads");
+  parentPort.on("message", (m) => {
+    if (m.type === "init") parentPort.postMessage({ type: "ready" });
+    else if (m.type === "close") process.exit(0);
+  });
+}
+`,
+    );
+
+    const errors: string[] = [];
+    let resolveClose!: () => void;
+    const closed = new Promise<void>((r) => {
+      resolveClose = r;
+    });
+    let stream: ReturnType<typeof createLocalSttStream> | null = null;
+    stream = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: "local-zipformer-en-20m", language: "en", channels: 1 },
+      {
+        onOpen: () => setTimeout(() => stream?.close(), 20),
+        onError: (m) => errors.push(m),
+        onClose: () => resolveClose(),
+      },
+    );
+
+    await closed;
+    expect(errors).toEqual([]);
+  });
+});
+
 describe("createLocalSttStream probe", () => {
   it("reports a model that aborts the probe instead of taking the process down", async () => {
     const models = tmp();

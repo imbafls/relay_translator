@@ -300,3 +300,33 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   costs a settings change rather than the API keys. A root that is not a plain
   object is rejected instead of being merged.
 - **Status**: PASSED
+
+---
+
+### Turn 11/100 - Sweeping the pattern the last five turns kept hitting
+
+Turns 4, 6, 9 and 10 were all one shape: *we wrote it, so it must be
+well-formed*. This turn went looking for the rest of that class instead of
+another instance of it, by enumerating every write and every parse in
+first-party runtime source.
+
+- **Tests Added**: 6 tests in `packages/relay/test/localStt.test.ts` covering the
+  probe's argv against paths a real Windows profile produces - a space,
+  non-ASCII, an apostrophe, a trailing space - plus a worker that fails the
+  probe unless the init JSON parses back with its `modelDir` and `engine`
+  intact.
+- **Issue/Gap Uncovered**: None. The sweep came back clean, which is the finding.
+  Writes: `models.ts` already stages to `.part` and renames, and the two JSON
+  stores were the ones fixed in turns 6 and 10; `version-bump.mjs` and `vps.mjs`
+  are tooling that is never read back at runtime. Parses: Deepgram's handler
+  wraps everything in a try, both the uplink and relay clients guard the parse
+  and never dereference a nested object the way the publisher hello did, and the
+  viewer's saved-style loader clamps its numbers and whitelists its font. The
+  two places the pattern was actually open are both already closed.
+- **Enhancement Shipped**: Regression cover for the newest and least-exercised
+  code in the tree. The crash guard ships an init through `argv` to a child
+  process, and a probe that fails because a path did not survive that trip
+  reports "could not be loaded on this PC" - a false verdict on a model that
+  works. A user called Ömer is not an edge case. That path is now held down
+  before it ships rather than after.
+- **Status**: PASSED
