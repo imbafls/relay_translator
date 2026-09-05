@@ -55,6 +55,22 @@ export class RelayPublisherClient {
 
   private open(): void {
     if (this.stopped) return;
+    // same reasoning as UplinkClient.open: an armed retry or a still-live
+    // socket would leave a second connection nothing owns, since its onclose
+    // bails out once `this.ws` has moved on
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    const previous = this.ws;
+    this.ws = null;
+    if (previous) {
+      try {
+        previous.close(1000, "reconnecting");
+      } catch {
+        /* already gone */
+      }
+    }
     this.setState("connecting");
     let ws: WebSocket;
     try {
@@ -137,6 +153,8 @@ export class RelayPublisherClient {
     this.setState("disconnected", detail);
     const delay = Math.min(10000, 1000 * 2 ** Math.min(this.attempt, 3));
     this.attempt += 1;
+    // never leave two armed at once
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => this.open(), delay);
   }
 

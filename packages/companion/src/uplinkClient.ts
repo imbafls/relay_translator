@@ -48,6 +48,24 @@ export class UplinkClient {
 
   private open(): void {
     if (this.stopped) return;
+    // A retry may already be armed and the previous socket may still be live.
+    // Leaving either alone opens a second connection to the relay that nothing
+    // owns: its onclose bails out because `this.ws` has moved on, so it is
+    // never retried and never closed, and it holds until the relay drops it.
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    const previous = this.ws;
+    // cleared first, so the old socket's onclose sees it is no longer current
+    this.ws = null;
+    if (previous) {
+      try {
+        previous.close(1000, "reconnecting");
+      } catch {
+        /* already gone */
+      }
+    }
     this.setState("connecting");
     const WS = getWebSocketImpl();
     let ws: WebSocket;
@@ -114,6 +132,8 @@ export class UplinkClient {
     this.setState("disconnected", detail);
     const delay = Math.min(15000, 1000 * 2 ** Math.min(this.attempt, 4));
     this.attempt += 1;
+    // never leave two armed at once
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => this.open(), delay);
   }
 

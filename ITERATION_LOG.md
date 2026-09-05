@@ -361,3 +361,28 @@ first-party runtime source.
   in the same tick as the hello is discarded. A publisher streams, and the test
   has to as well.
 - **Status**: PASSED
+
+---
+
+### Turn 13/100 - Resilience & state (the socket held open all session)
+
+- **Tests Added**: `packages/companion/test/uplinkClient.test.ts`, 7 tests
+  driving the real `UplinkClient` against a real WebSocket server: a second
+  `connect()`, a retry landing next to a reconnect, automatic recovery when the
+  relay goes away, the hello being resent on the new socket, staying down after
+  `disconnect()`, no retry after a 4401 token rejection, and the same
+  stacking test against `RelayPublisherClient`.
+- **Issue/Gap Uncovered**: `open()` assigned `this.ws = ws` without closing the
+  socket it was replacing, and `connect()` did not clear an armed `retryTimer`.
+  So a second `connect()` - a settings change, a session restart - left two live
+  sockets to the relay. The orphan is unrecoverable rather than merely untidy:
+  its `onclose` returns early because `this.ws` has moved on, so it is never
+  retried and never closed, and it holds until the far end drops it. This is the
+  socket the app keeps open for a whole session, so the leak is per restart and
+  accumulates. `relayClient.ts` had the identical shape and the identical fix.
+- **Enhancement Shipped**: `open()` now clears any armed retry and closes the
+  previous socket before opening a new one, clearing `this.ws` first so the old
+  socket's `onclose` correctly sees it is no longer current and does not arm a
+  retry of its own. `scheduleRetry` clears before it sets, so two timers can
+  never be armed at once. Reverting either file turns its stacking test red.
+- **Status**: PASSED
