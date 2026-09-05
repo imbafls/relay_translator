@@ -6,14 +6,14 @@ spec and `README.md` for the product.
 
 ## Where things stand
 
-Released **v0.5.1** (tagged, published, mirrored to the VPS). Since then, one
-branch is pushed but **not merged**:
+Latest **release** is v0.5.1 (tagged, published, mirrored to the VPS).
 
-- `local-stt-crash-guard` (commit `6324d59`) — contains the local-model crash
-  described below. Open a PR for it, or merge to `master` and cut v0.5.2.
+`master` has since taken the local-model crash guard described below (PR #5).
+**That fix is not in any installer yet** — v0.5.1 predates it. If you want it on
+a machine, cut **v0.5.2** using the release steps at the bottom.
 
-`master` is `74f530e` (Release v0.5.1). PRs #2, #3 and #4 are merged; the repo
-merges by **rebase**, so history is linear — don't add merge commits.
+PRs #2–#5 are merged; the repo merges by **rebase**, so history is linear —
+don't add merge commits.
 
 ## First run on a new machine
 
@@ -76,7 +76,7 @@ short pane.
 
 ## Open work, most useful first
 
-### 1. Merge the crash guard (`local-stt-crash-guard`)
+### 1. Ship the crash guard (merged, unreleased)
 
 Root cause, fully traced: **sherpa-onnx aborts the process** while constructing
 the `OfflineRecognizer` for `local-whisper-small`. It is a native `exit()`, not
@@ -88,7 +88,7 @@ configuration (language on/off, `tailPaddings` −1/0/absent, 1 vs 2 threads all
 abort identically), and the engine itself (whisper **tiny.en** loads and decodes
 on the same build).
 
-The branch loads every local model once in a throwaway child process first
+The fix loads every local model once in a throwaway child process first
 (`localSttWorker.js --probe '<init json>'`), caches the result per model, and
 turns a non-zero exit into "could not be loaded on this PC". It drops
 whisper-small from the catalogue, moves mel bins into the catalogue (whisper
