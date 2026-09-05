@@ -1194,6 +1194,9 @@ function openSetup(): void {
   obStep = 1;
   obMode = isLocalStt(config.stt) ? "local" : "cloud";
   if (isLocalStt(config.stt)) obModel = config.stt;
+  // a tier picked in a setup the user abandoned must not outlive it, or the
+  // model this PC actually runs is filtered out of the list it reopens on
+  obTierPicked = false;
   inp("obDeepgramKey").value = config.deepgramApiKey || "";
   inp("obGeminiKey").value = config.geminiApiKey || "";
   obDeepgram = config.deepgramApiKey && keyCheck.deepgram !== "checking" ? keyCheck.deepgram : undefined;
