@@ -665,3 +665,36 @@ recommending of one.
   in only for the socket. The renderer's 1900-line setup state machine is the
   obvious next tenant, and it no longer needs new infrastructure to reach.
 - **Status**: PASSED
+
+---
+
+### Turn 24/40 - Client UI (the renderer's boot, under the new harness)
+
+The harness built last turn, pointed at the 1900-line file it was built for.
+
+- **Tests Added**: `apps/standalone/test/renderer.test.ts`, 5 tests booting the
+  real renderer: the shipped `index.html` in a DOM and `app.ts` imported so its
+  own `boot()` runs, with the preload bridge stood in for - that bridge is the
+  process boundary and everything behind it is Electron. Covers which view opens
+  on a fresh install versus a finished one, and all three arms of the
+  gone-model fallback.
+- **Issue/Gap Uncovered**: Nothing in the product. The fallback turn 5 hardened
+  works end to end: a config naming `local-whisper-small` - dropped from the
+  catalogue for aborting the process - is rewritten to `FALLBACK_STT`, the
+  change is logged rather than made silently, and a config naming a model that
+  still exists is left alone. Turn 5 could only argue for that by reading;
+  disabling the guard now turns two tests red, so it is held down.
+  One harness note: `document.fonts` does not exist in happy-dom, and the
+  renderer awaits `document.fonts.ready` while laying out. The exception landed
+  after the fallback ran but before a view was chosen, which is why the fallback
+  tests passed and the view test did not - a good reminder that a partial boot
+  fails in a shape that looks like a specific bug. The same again with timers:
+  `boot()` starts a clock and a level meter on intervals and never stops them,
+  which is right for a window that lives as long as the app and a leak in a
+  test - they went on firing into a torn-down page and took the whole run's
+  exit code with them while every test still reported passing.
+- **Enhancement Shipped**: Coverage where there was none, on the file that holds
+  all the renderer's state. The bridge stub is the reusable part: every one of
+  the eighteen `cr.*` methods answers, so the next test here starts from a
+  booting app rather than from scratch.
+- **Status**: PASSED
