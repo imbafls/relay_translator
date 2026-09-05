@@ -219,6 +219,8 @@ function bridgeBroadcasts(): void {
         target: msg.target,
         final: msg.final,
         latency: msg.latency,
+        channel: msg.channel,
+        speaker: msg.speaker,
       });
     } else if (msg.type === "status") {
       uplink.sendStatus(msg.live, msg.message, msg.since);

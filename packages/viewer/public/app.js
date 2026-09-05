@@ -254,10 +254,11 @@
     }
   }
 
+  /** the newest final line is the last one in the list (ids are reserved per channel, so DOM order wins) */
   function markLatest() {
-    let latestId = -1;
-    for (const id of rows.keys()) if (id > latestId) latestId = id;
-    for (const [id, el] of rows) el.classList.toggle("latest", id === latestId);
+    const finals = linesEl.querySelectorAll(".row:not(.interim)");
+    const latest = finals[finals.length - 1] || null;
+    for (const el of rows.values()) el.classList.toggle("latest", el === latest);
   }
 
   function showPartial(msg) {

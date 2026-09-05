@@ -109,8 +109,14 @@ export class ModelStore {
     const info = STT_MODELS.find((m) => m.id === id);
     if (!info || info.provider !== "local") return;
     this.cancel(id);
-    fs.rmSync(path.join(this.dir, id), { recursive: true, force: true });
     this.errors.delete(id);
+    try {
+      fs.rmSync(path.join(this.dir, id), { recursive: true, force: true });
+    } catch (err) {
+      // Windows keeps the ONNX files locked while a session decodes with them
+      this.errors.set(id, `could not remove: ${String((err as Error).message || err)}`);
+      this.log("warn", `model remove failed: ${id} - ${String(err)}`);
+    }
     this.onChange();
   }
 }

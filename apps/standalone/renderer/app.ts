@@ -300,9 +300,13 @@ function trimRows(): void {
   }
 }
 
+/** the newest final line is the last one on stage - ids are reserved per channel, so DOM order beats id order */
 function markLatest(): void {
   let latest: Row | null = null;
-  for (const r of rows.values()) if (r.final && (!latest || r.id > latest.id)) latest = r;
+  const els = $("lines").children;
+  for (let i = els.length - 1; i >= 0 && !latest; i--) {
+    for (const r of rows.values()) if (r.final && r.el === els[i]) latest = r;
+  }
   for (const r of rows.values()) r.el.classList.toggle("latest", r === latest);
 }
 
@@ -973,7 +977,7 @@ function setLocalModels(list: LocalModelStatus[] | undefined): void {
   localModels = list;
   renderChain();
   if (view === "keys") renderModelList($("keysModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
-  if (view === "onboarding" && obStep === 1) renderObKeyStatus();
+  if (view === "onboarding" && obStep === 1) renderOnboarding();
 }
 
 function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | undefined, required: boolean): void {
