@@ -42,17 +42,24 @@ function log(message: string, cls: "" | "err" | "ok" = ""): void {
   box.scrollTop = box.scrollHeight;
 }
 
-function logSubtitle(seg: { id: number; source: string; target?: string }): void {
+function logSubtitle(seg: {
+  id: number;
+  source: string;
+  target?: string;
+  latency?: { stt?: number; translate?: number };
+}): void {
   const t = new Date().toLocaleTimeString();
   const box = $("log");
+  const sttTag = seg.latency?.stt != null ? `  [stt ${seg.latency.stt}ms]` : "";
   const en = document.createElement("div");
   en.className = "sub-en";
-  en.textContent = `[${t}] ▸ ${seg.source}`;
+  en.textContent = `[${t}] ▸ ${seg.source}${sttTag}`;
   box.appendChild(en);
   if (seg.target != null) {
     const vi = document.createElement("div");
     vi.className = "sub-vi";
-    vi.textContent = `    ${seg.target}`;
+    const trTag = seg.latency?.translate != null ? `  [+${seg.latency.translate}ms]` : "";
+    vi.textContent = `    ${seg.target}${trTag}`;
     box.appendChild(vi);
   }
   while (box.children.length > 250) box.firstChild?.remove();
@@ -87,6 +94,15 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
   if (state.session === "live" || state.session === "starting") return;
   setState("starting");
   try {
+    // safety: never orphan a previous client's timers/socket
+    if (relayClient) {
+      try {
+        relayClient.disconnect();
+      } catch {
+        /* noop */
+      }
+      relayClient = null;
+    }
     const prep = await cr.prepareSession({ rotate: opts.rotateLink });
     config = prep.config;
     if (!config.deepgramApiKey || !config.geminiApiKey) {
@@ -214,6 +230,7 @@ function syncControlsFromConfig(): void {
     config.linkMode,
   );
   inp("obsOverlay").checked = !!config.obsOverlay;
+  inp("translationEnabled").checked = config.translationEnabled !== false;
   inp("deepgramApiKey").value = config.deepgramApiKey || "";
   inp("geminiApiKey").value = config.geminiApiKey || "";
   inp("relayUrl").value = config.relayUrl || "";
@@ -227,6 +244,7 @@ function configPatchFromControls(): Partial<AppConfig> {
     stt: selectEl("stt").value,
     translation: selectEl("translation").value,
     languages: { source: selectEl("langSource").value, target: selectEl("langTarget").value },
+    translationEnabled: inp("translationEnabled").checked,
     linkMode: selectEl("linkMode").value as AppConfig["linkMode"],
     obsOverlay: inp("obsOverlay").checked,
   };
@@ -281,6 +299,8 @@ function bind(): void {
     selectEl(id).onchange = () => void saveAndApply(configPatchFromControls(), { restart: true });
   }
   inp("obsOverlay").onchange = () => void saveAndApply({ obsOverlay: inp("obsOverlay").checked });
+  inp("translationEnabled").onchange = () =>
+    void saveAndApply({ translationEnabled: inp("translationEnabled").checked }, { restart: true });
 
   inp("relayUrl").onchange = () =>
     void saveAndApply(

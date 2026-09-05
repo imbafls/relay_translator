@@ -42,6 +42,7 @@
     shadow: false,
     align: "left",
     lines: 8,
+    showTranslation: true,
   };
 
   const STYLE_KEY = "callout-style-v1";
@@ -94,8 +95,14 @@
     body.classList.toggle("no-source", !style.showSource);
     body.classList.toggle("shadow", !!style.shadow);
     body.classList.toggle("center-align", style.align === "center");
+    applyVisibility();
     maxPairs = style.lines;
     trimLines();
+  }
+
+  /** hide translations if the host disabled them OR the viewer opted out */
+  function applyVisibility() {
+    document.body.classList.toggle("no-translation", !serverTranslates || !style.showTranslation);
   }
 
   const PRESETS = {
@@ -141,6 +148,7 @@
       $("setShowSource").checked = !!style.showSource;
       $("setSrcSize").value = style.srcSize;
       $("setSrcSizeVal").textContent = `${style.srcSize}px`;
+      $("setShowTranslation").checked = !!style.showTranslation;
       $("setFg").value = style.fg;
       $("setAccent").value = style.accent;
       $("setBg").value = style.bg;
@@ -162,6 +170,9 @@
     $("setFont").addEventListener("change", () => update({ font: $("setFont").value }));
     $("setSize").addEventListener("input", () => update({ size: Number($("setSize").value) }));
     $("setShowSource").addEventListener("change", () => update({ showSource: $("setShowSource").checked }));
+    $("setShowTranslation").addEventListener("change", () =>
+      update({ showTranslation: $("setShowTranslation").checked }),
+    );
     $("setSrcSize").addEventListener("input", () => update({ srcSize: Number($("setSrcSize").value) }));
     $("setFg").addEventListener("input", () => update({ fg: $("setFg").value }));
     $("setAccent").addEventListener("input", () => update({ accent: $("setAccent").value }));
@@ -196,6 +207,7 @@
 
   let ws = null;
   let closedByKick = false;
+  let serverTranslates = true;
 
   function setStatus(cls, text) {
     dot.className = "dot " + cls;
@@ -223,7 +235,10 @@
     const tgt = document.createElement("div");
     tgt.className = "target";
 
-    pair.append(src, tgt);
+    const lat = document.createElement("span");
+    lat.className = "lat";
+
+    pair.append(src, tgt, lat);
     lines.appendChild(pair);
     trimLines();
     lines.scrollTop = lines.scrollHeight;
@@ -236,6 +251,23 @@
     pending.querySelector(".source").textContent = source;
   }
 
+  function latencyLabel(lat) {
+    if (!lat) return "";
+    const stt = lat.stt || 0;
+    const tr = lat.translate || 0;
+    const total = stt + tr;
+    if (total <= 0) return "";
+    return `⚡${(total / 1000).toFixed(1)}s`;
+  }
+
+  function latencyTitle(lat) {
+    if (!lat) return "";
+    const parts = [];
+    if (lat.stt != null) parts.push(`speech→text ${lat.stt} ms`);
+    if (lat.translate != null) parts.push(`translate ${lat.translate} ms`);
+    return parts.join(" · ");
+  }
+
   function showSubtitle(msg) {
     let pair = null;
     for (const el of lines.children) {
@@ -246,6 +278,11 @@
     pair.classList.remove("pending");
     pair.querySelector(".source").textContent = msg.source;
     if (msg.target != null) pair.querySelector(".target").textContent = msg.target;
+    if (msg.latency) {
+      const lat = pair.querySelector(".lat");
+      lat.textContent = latencyLabel(msg.latency);
+      lat.title = latencyTitle(msg.latency);
+    }
     lines.scrollTop = lines.scrollHeight;
   }
 
@@ -267,7 +304,11 @@
       try { msg = JSON.parse(ev.data); } catch { return; }
       switch (msg.type) {
         case "hello":
-          langsEl.textContent = `${msg.languages.source} → ${msg.languages.target}`;
+          serverTranslates = msg.translates !== false;
+          applyVisibility();
+          langsEl.textContent = msg.translates === false
+            ? `${msg.languages.source} (no translation)`
+            : `${msg.languages.source} → ${msg.languages.target}`;
           setStatus(msg.live ? "on" : "off", msg.live ? "live" : "waiting for stream…");
           break;
         case "status":

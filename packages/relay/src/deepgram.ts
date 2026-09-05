@@ -4,7 +4,8 @@ export const SAMPLE_RATE = 16000;
 export interface SttEvents {
   onOpen?: () => void;
   onPartial?: (text: string) => void;
-  onFinal?: (text: string) => void;
+  /** audioEndSec = position of the final word in the audio stream (seconds) */
+  onFinal?: (text: string, meta?: { audioEndSec?: number }) => void;
   onError?: (message: string) => void;
   onClose?: () => void;
 }
@@ -60,8 +61,16 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
       const alt = msg.channel?.alternatives?.[0];
       const text: string = (alt?.transcript || "").trim();
       if (!text) return;
-      if (msg.is_final) events.onFinal?.(text);
-      else events.onPartial?.(text);
+      if (msg.is_final) {
+        const words = alt.words || [];
+        const last = words[words.length - 1];
+        const base = typeof msg.start === "number" ? msg.start : msg.channel?.start;
+        const audioEndSec =
+          typeof base === "number" && typeof last?.end === "number" ? base + last.end : undefined;
+        events.onFinal?.(text, { audioEndSec });
+      } else {
+        events.onPartial?.(text);
+      }
     } catch {
       // ignore malformed frames
     }

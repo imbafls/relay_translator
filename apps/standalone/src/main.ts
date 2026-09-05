@@ -7,6 +7,7 @@ import {
   session,
   desktopCapturer,
   ipcMain,
+  powerSaveBlocker,
   shell,
 } from "electron";
 import * as path from "path";
@@ -33,6 +34,17 @@ let sessionState: SessionState = "idle";
 let sessionError: string | undefined;
 let sessionStartedAt: number | undefined;
 let devices: AudioDeviceInfo[] = [];
+let powerBlockerId: number | null = null;
+
+/** keep the app + audio capture awake while live (no mid-game throttling) */
+function setPowerBlock(on: boolean): void {
+  if (on && powerBlockerId === null) {
+    powerBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+  } else if (!on && powerBlockerId !== null) {
+    powerSaveBlocker.stop(powerBlockerId);
+    powerBlockerId = null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -206,6 +218,7 @@ function registerIpc(): void {
     sessionState = update.state;
     sessionError = update.error;
     sessionStartedAt = update.state === "live" ? Date.now() : undefined;
+    setPowerBlock(update.state === "live" || update.state === "starting");
     broadcastStatus();
   });
 
@@ -375,6 +388,7 @@ if (!gotLock) {
 
   app.on("before-quit", () => {
     quitting = true;
+    setPowerBlock(false);
     relay?.close().catch(() => {});
   });
 

@@ -116,6 +116,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   /** single-connection-per-token: new viewer with the same token kicks the old */
   const viewers = new Map<string, WebSocket>();
   let currentLanguages = { ...DEFAULT_CONFIG.languages };
+  let currentTranslates = DEFAULT_CONFIG.translationEnabled !== false;
 
   const toViewers = (msg: ServerToViewer): void => {
     const payload = JSON.stringify(msg);
@@ -133,6 +134,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
     }
     currentLanguages = { ...cfg.languages };
+    currentTranslates = cfg.translationEnabled !== false;
     const session = new PublisherSession(cfg, {
       deepgramApiKey: opts.deepgramApiKey,
       geminiApiKey: opts.geminiApiKey,
@@ -287,6 +289,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       stt: DEFAULT_CONFIG.stt,
       translation: DEFAULT_CONFIG.translation,
       languages: { ...currentLanguages },
+      translationEnabled: DEFAULT_CONFIG.translationEnabled !== false,
     });
 
     sendPublisher(ws, {
@@ -312,17 +315,19 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       if (msg.type === "hello") {
         log(
           "info",
-          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}`,
+          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}`,
         );
         buildSession(ws, {
           stt: msg.stt,
           translation: msg.translation,
           languages: msg.languages,
+          translationEnabled: msg.translationEnabled !== false,
         });
         toViewers({
           type: "hello",
           languages: msg.languages,
           live: true,
+          translates: currentTranslates,
         });
       }
     });
@@ -347,6 +352,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         type: "hello",
         languages: currentLanguages,
         live: publisher !== null,
+        translates: currentTranslates,
       } satisfies ServerToViewer),
     );
 
@@ -360,6 +366,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
               type: "hello",
               languages: currentLanguages,
               live: publisher !== null,
+              translates: currentTranslates,
             } satisfies ServerToViewer),
           );
         }

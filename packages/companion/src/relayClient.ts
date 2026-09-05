@@ -17,10 +17,16 @@ export class RelayPublisherClient {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = true;
-  private hello: { stt: string; translation: string; languages: AppConfig["languages"] } = {
+  private hello: {
+    stt: string;
+    translation: string;
+    languages: AppConfig["languages"];
+    translationEnabled?: boolean;
+  } = {
     stt: "deepgram-nova-3",
-    translation: "gemini-2.5-flash",
+    translation: "gemini-3.1-flash-lite",
     languages: { source: "en", target: "vi" },
+    translationEnabled: true,
   };
 
   state: "idle" | "connecting" | "connected" | "disconnected" | "error" = "idle";
@@ -31,8 +37,8 @@ export class RelayPublisherClient {
       onState?: (state: RelayPublisherClient["state"], detail?: string) => void;
       onReady?: () => void;
       onError?: (message: string) => void;
-      /** live subtitles echoed back by the relay (source + translation) */
-      onSubtitle?: (seg: { id: number; source: string; target?: string }) => void;
+      /** live subtitles echoed back by the relay (source + translation + latency) */
+      onSubtitle?: (seg: { id: number; source: string; target?: string; latency?: { stt?: number; translate?: number } }) => void;
     } = {},
   ) {}
 
@@ -40,7 +46,12 @@ export class RelayPublisherClient {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
-  connect(hello: { stt: string; translation: string; languages: AppConfig["languages"] }): void {
+  connect(hello: {
+    stt: string;
+    translation: string;
+    languages: AppConfig["languages"];
+    translationEnabled?: boolean;
+  }): void {
     this.stopped = false;
     this.hello = hello;
     this.open();
@@ -64,6 +75,7 @@ export class RelayPublisherClient {
         stt: this.hello.stt,
         translation: this.hello.translation,
         languages: this.hello.languages,
+        translationEnabled: this.hello.translationEnabled,
       });
     };
 
@@ -80,7 +92,12 @@ export class RelayPublisherClient {
         this.hooks.onReady?.();
         this.startPing();
       } else if (msg.type === "subtitle") {
-        this.hooks.onSubtitle?.({ id: msg.id, source: msg.source, target: msg.target });
+        this.hooks.onSubtitle?.({
+          id: msg.id,
+          source: msg.source,
+          target: msg.target,
+          latency: msg.latency,
+        });
       } else if (msg.type === "error") {
         this.hooks.onError?.(msg.message);
       }
@@ -145,7 +162,7 @@ export class RelayPublisherClient {
   }
 
   updateHello(hello: RelayPublisherClient["hello"]): void {
-    this.hello = hello;
+    this.hello = { ...this.hello, ...hello };
   }
 
   disconnect(): void {

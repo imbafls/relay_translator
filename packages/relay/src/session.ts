@@ -1,4 +1,4 @@
-import { Languages, ServerToViewer } from "@callout-relay/shared";
+import { Languages, ServerToViewer, SubtitleLatency } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
   createDeepgramStream,
@@ -15,6 +15,8 @@ export interface SessionConfig {
   stt: string;
   translation: string;
   languages: Languages;
+  /** false = skip Gemini, source-language subtitles only */
+  translationEnabled: boolean;
 }
 
 export interface SessionDeps {
@@ -25,7 +27,13 @@ export interface SessionDeps {
   /** fan-out to all viewers */
   toViewers(msg: ServerToViewer): void;
   /** echo subtitles to the publisher (in-app live log) */
-  toPublisher?(msg: { type: "subtitle"; id: number; source: string; target?: string }): void;
+  toPublisher?(msg: {
+    type: "subtitle";
+    id: number;
+    source: string;
+    target?: string;
+    latency?: SubtitleLatency;
+  }): void;
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
 }
@@ -42,6 +50,10 @@ export class PublisherSession {
   private inflight = 0;
   private geminiErrorLogged = false;
   private closing = false;
+  /** wall clock of the first audio byte (Deepgram word timings are relative to it) */
+  private streamWallStart = 0;
+  /** whether Gemini runs for this session */
+  translates = true;
 
   constructor(
     private readonly cfg: SessionConfig,
@@ -50,13 +62,16 @@ export class PublisherSession {
 
   start(): void {
     const { source, target } = this.cfg.languages;
+    const translates = this.cfg.translationEnabled !== false;
+    this.translates = translates;
 
-    this.translator =
-      this.deps.mockGemini || !this.deps.geminiApiKey
+    this.translator = !translates
+      ? null
+      : this.deps.mockGemini || !this.deps.geminiApiKey
         ? createMockTranslator(target)
         : createGeminiTranslator({
             apiKey: this.deps.geminiApiKey!,
-            model: this.cfg.translation || "gemini-2.5-flash",
+            model: this.cfg.translation || "gemini-3.1-flash-lite",
             source,
             target,
           });
@@ -70,16 +85,27 @@ export class PublisherSession {
       onPartial: (text: string) => {
         this.deps.toViewers({ type: "partial", id: this.segId + 1, source: text });
       },
-      onFinal: (text: string) => {
+      onFinal: (text: string, meta?: { audioEndSec?: number }) => {
         const id = ++this.segId;
-        this.deps.toViewers({ type: "subtitle", id, source: text, final: true });
-        this.deps.toPublisher?.({ type: "subtitle", id, source: text });
+        const finalAt = Date.now();
+        const sttMs =
+          meta?.audioEndSec !== undefined && this.streamWallStart > 0
+            ? Math.max(0, Math.round(finalAt - this.streamWallStart - meta.audioEndSec * 1000))
+            : undefined;
+        const latency: SubtitleLatency = sttMs !== undefined ? { stt: sttMs } : {};
+        this.deps.toViewers({ type: "subtitle", id, source: text, final: true, latency });
+        this.deps.toPublisher?.({ type: "subtitle", id, source: text, latency });
+        if (!this.translator) return;
         this.inflight += 1;
-        this.translator!
+        this.translator
           .translate(text)
           .then((targetText) => {
-            this.deps.toViewers({ type: "subtitle", id, source: text, target: targetText, final: true });
-            this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText });
+            const full: SubtitleLatency = {
+              ...latency,
+              translate: Math.round(Date.now() - finalAt),
+            };
+            this.deps.toViewers({ type: "subtitle", id, source: text, target: targetText, final: true, latency: full });
+            this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText, latency: full });
           })
           .catch((err) => {
             if (!this.geminiErrorLogged) {
@@ -122,6 +148,7 @@ export class PublisherSession {
   }
 
   audio(chunk: Buffer): void {
+    if (this.streamWallStart === 0) this.streamWallStart = Date.now();
     this.stt?.sendAudio(chunk);
   }
 

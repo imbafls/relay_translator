@@ -42,7 +42,12 @@ pub.addEventListener("message", (e) => {
   }
   if (msg.type === "subtitle") {
     // what the desktop app's session log now shows the gamer live
-    if (msg.target) console.log(`[app log] EN: ${msg.source}\n          VI: ${msg.target}`);
+    const lat = msg.latency || {};
+    const tags = [];
+    if (lat.stt != null) tags.push(`stt ${lat.stt}ms`);
+    if (lat.translate != null) tags.push(`translate ${lat.translate}ms`);
+    const tagStr = tags.length ? `  [${tags.join(", ")}]` : "";
+    if (msg.target) console.log(`[app log] EN: ${msg.source}\n          VI: ${msg.target}${tagStr}`);
   }
   if (msg.type === "error") console.log(`[publisher] ERROR: ${msg.message}`);
 });

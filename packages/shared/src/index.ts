@@ -18,6 +18,8 @@ export interface AppConfig {
   /** "default-mic" | "system-loopback" | a deviceId from enumerateDevices() */
   audioSource: string;
   languages: Languages;
+  /** false = relay skips Gemini, viewers get source-language only */
+  translationEnabled: boolean;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
   /** viewer link gets ?obs=1 appended for OBS browser source */
@@ -43,6 +45,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   translation: "gemini-3.1-flash-lite",
   audioSource: "default-mic",
   languages: { source: "en", target: "vi" },
+  translationEnabled: true,
   linkMode: "unique",
   obsOverlay: false,
   relayPort: 8787,
@@ -86,10 +89,17 @@ export interface SubtitleSegment {
   ts: number;
 }
 
+export interface SubtitleLatency {
+  /** speech ended -> text finalized (ms) */
+  stt?: number;
+  /** source final -> translation delivered (ms) */
+  translate?: number;
+}
+
 export type ServerToViewer =
-  | { type: "hello"; languages: Languages; live: boolean }
+  | { type: "hello"; languages: Languages; live: boolean; translates: boolean }
   | { type: "partial"; id: number; source: string }
-  | { type: "subtitle"; id: number; source: string; target?: string; final: boolean }
+  | { type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency }
   | { type: "status"; live: boolean; message?: string }
   | { type: "kicked"; reason: string }
   | { type: "pong" };
@@ -99,13 +109,20 @@ export type ViewerToServer = { type: "ping" } | { type: "sync" };
 export type ServerToPublisher =
   | { type: "ready"; sampleRate: number }
   | { type: "status"; live: boolean; message?: string }
-  | { type: "subtitle"; id: number; source: string; target?: string }
+  | { type: "subtitle"; id: number; source: string; target?: string; latency?: SubtitleLatency }
   | { type: "error"; message: string }
   | { type: "pong" };
 
 /** Binary frames = raw PCM s16le mono 16 kHz. Text frames = JSON control. */
 export type PublisherToServer =
-  | { type: "hello"; stt: string; translation: string; languages: Languages }
+  | {
+      type: "hello";
+      stt: string;
+      translation: string;
+      languages: Languages;
+      /** false = relay skips Gemini (source-only subtitles) */
+      translationEnabled?: boolean;
+    }
   | { type: "ping" };
 
 // ---------------------------------------------------------------------------
