@@ -20,12 +20,18 @@ export interface AppConfig {
   /** "default-mic" | "system-loopback" | a deviceId from enumerateDevices() */
   audioSource: string;
   languages: Languages;
-  /** false = relay skips Gemini, viewers get source-language only */
+  /** false = relay skips Gemini, viewers get source-language only.
+   *  Off by default: a fresh install captions the source language until you
+   *  add a Gemini key and switch 03 TRANSLATE on. */
   translationEnabled: boolean;
   /** false = strip latency badges from viewer subtitles (app log keeps them) */
   showLatency: boolean;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
+  /** false = never check for updates in the background (manual CHECK still works) */
+  autoUpdate: boolean;
+  /** static directory serving latest.yml + installers; empty = the GitHub release feed */
+  updateFeedUrl?: string;
   /** @deprecated superseded by `output`; kept so old config files still parse */
   obsOverlay: boolean;
   /** where captions are shown: phone link (internet/LAN), OBS browser source, or both */
@@ -51,9 +57,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   translation: "gemini-3.1-flash-lite",
   audioSource: "default-mic",
   languages: { source: "en", target: "vi" },
-  translationEnabled: true,
+  translationEnabled: false,
   showLatency: true,
   linkMode: "unique",
+  autoUpdate: true,
   obsOverlay: false,
   output: "phone",
   relayPort: 8787,
@@ -197,6 +204,7 @@ export interface ControlStatus {
   devices: AudioDeviceInfo[];
   config: AppConfig;
   usage?: UsageInfo;
+  update?: UpdateStatus;
 }
 
 export interface UsageInfo {
@@ -216,6 +224,41 @@ export interface UsageInfo {
     /** rough USD estimate from model pricing (0 on free tier) */
     estCostUsd?: number;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Auto-update (desktop app <-> renderer / control API)
+// ---------------------------------------------------------------------------
+
+export type UpdateState =
+  /** nothing checked yet this run */
+  | "idle"
+  | "checking"
+  /** a newer version exists but is not downloaded yet */
+  | "available"
+  | "downloading"
+  /** downloaded and staged; installs on restart */
+  | "ready"
+  /** already on the newest version */
+  | "current"
+  | "error"
+  /** this build cannot replace itself (portable exe / unpackaged dev run) */
+  | "unsupported";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  /** version currently running */
+  current: string;
+  /** newest version seen, when known */
+  latest?: string;
+  /** download progress, 0-100 */
+  percent?: number;
+  /** short human reason for "error" / "unsupported" */
+  detail?: string;
+  /** where to download by hand when self-update is unavailable */
+  releaseUrl?: string;
+  /** epoch ms of the last completed check */
+  checkedAt?: number;
 }
 
 /** result of an API-key test request (see standalone `keys:validate`) */

@@ -69,6 +69,17 @@
             <button class="mono-btn" data-clear="geminiApiKey">CLEAR</button>
           </div>
         </div>
+        <div class="field">
+          <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
+          <div class="field-row update-row">
+            <span id="updateState" class="mono update-state">—</span>
+            <button id="checkUpdate" class="mono-btn">CHECK</button>
+            <button id="installUpdate" class="mono-btn ink" hidden>RESTART &amp; INSTALL</button>
+            <button id="openReleases" class="mono-btn" hidden>OPEN RELEASES</button>
+          </div>
+          <button id="autoUpdate" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>CHECK AUTOMATICALLY</button>
+          <div class="field-row"><input id="updateFeedUrl" type="text" class="uinput mono" placeholder="update feed URL — blank = GitHub releases" autocomplete="off" spellcheck="false" /></div>
+        </div>
         <div class="keys-foot">
           <button class="mono-btn" data-open="https://console.deepgram.com">BALANCE → console.deepgram.com</button>
           <button class="mono-btn" data-open="https://aistudio.google.com/apikey">QUOTA → aistudio.google.com</button>
@@ -259,6 +270,7 @@
       </span>
     </div>
     <div class="readouts mono">
+      <button id="updateChip" class="update-chip" hidden></button>
       <span id="roSttWrap">STT <b id="roStt">0.0</b> min</span>
       <span id="roTrnWrap">TRN <b id="roTrn">0</b></span>
       <span>EST <b id="roEst">$0.000</b></span>

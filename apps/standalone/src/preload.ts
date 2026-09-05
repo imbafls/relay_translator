@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppConfig, AudioDeviceInfo, ControlStatus, KeyValidation, SessionState } from "@callout-relay/shared";
+import type {
+  AppConfig,
+  AudioDeviceInfo,
+  ControlStatus,
+  KeyValidation,
+  SessionState,
+  UpdateStatus,
+} from "@callout-relay/shared";
 
 export interface RendererBridge {
   getConfig(): Promise<AppConfig>;
@@ -14,6 +21,11 @@ export interface RendererBridge {
   rotateLink(): Promise<string | undefined>;
   /** test an API key with a cheap request against the provider */
   validateKey(provider: "deepgram" | "gemini", key: string): Promise<KeyValidation>;
+  /** ask the update feed right now */
+  checkForUpdate(): Promise<UpdateStatus | undefined>;
+  /** restart into a downloaded update; false when nothing is staged */
+  installUpdate(): Promise<boolean>;
+  onUpdate(cb: (status: UpdateStatus) => void): void;
   openExternal(url: string): Promise<void>;
   reportState(state: SessionState, error?: string): void;
   reportDevices(devices: AudioDeviceInfo[]): void;
@@ -39,4 +51,8 @@ contextBridge.exposeInMainWorld("cr", {
     ipcRenderer.on("status:changed", (_e, status) => cb(status)),
   validateKey: (provider: "deepgram" | "gemini", key: string) =>
     ipcRenderer.invoke("keys:validate", { provider, key }),
+  checkForUpdate: () => ipcRenderer.invoke("updates:check"),
+  installUpdate: () => ipcRenderer.invoke("updates:install"),
+  onUpdate: (cb: (status: UpdateStatus) => void) =>
+    ipcRenderer.on("update:changed", (_e, status) => cb(status)),
 } satisfies RendererBridge);

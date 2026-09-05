@@ -53,9 +53,10 @@ Prebuilt installers live in `release/`:
 
 | File | What it is |
 | --- | --- |
-| `Callout Relay Setup 0.2.1.exe` | Windows installer (desktop + Start Menu shortcuts) |
-| `CalloutRelay-Portable-0.2.1.exe` | Portable single exe — run from anywhere, nothing installed |
+| `CalloutRelay-Setup-0.3.0.exe` | Windows installer (desktop + Start Menu shortcuts, updates itself) |
+| `CalloutRelay-Portable-0.3.0.exe` | Portable single exe — run from anywhere, nothing installed |
 | `callout-relay-server.exe` | Standalone relay server (for a VPS / second PC) |
+| `latest.yml` | Update feed the installed app reads — keep it next to the installer |
 | `SHA256SUMS.txt` | Checksums for the above |
 
 The desktop apps embed the relay, the viewer page, and the control API — there
@@ -76,8 +77,43 @@ DEEPGRAM_API_KEY=...
 GEMINI_API_KEY=...
 ```
 
-or paste them into the desktop app once (Settings → API keys). Keys are stored
-in `%APPDATA%\callout-relay\config.json` on Windows.
+or paste them into the desktop app once (KEYS in the app footer). Keys are
+stored in `%APPDATA%\callout-relay\config.json` on Windows.
+
+## Updates
+
+The installed app checks for a new version 15 seconds after launch and every six
+hours after that, downloads it in the background, and installs it on the next
+restart — a live session is never interrupted. `KEYS → UPDATES` shows the running
+version, the last check, a manual **CHECK**, and a switch to turn the background
+checks off. When an update is staged, an amber chip appears in the footer and in
+the tray menu; clicking it restarts into the new version.
+
+The portable exe cannot replace itself, so it reports "portable build" and links
+to the releases page instead.
+
+**The feed has to be reachable.** Updates are served from this repo's GitHub
+releases, which only works while the repo is public. If you keep it private,
+either set `updateFeedUrl` in `KEYS → UPDATES` to any static directory holding
+`latest.yml` plus the installer (your relay box will do), or the app will simply
+report "no release feed found" and keep running.
+
+## Releasing
+
+Tagging is the whole release process — the `Release` workflow builds the
+installers, the update feed and both relay-server binaries, then attaches them to
+the GitHub release:
+
+```powershell
+pnpm version-bump 0.3.1
+git commit -am "Release v0.3.1"
+git tag -a v0.3.1 -m "v0.3.1"
+git push origin master v0.3.1
+```
+
+The workflow refuses to build when the tag and `apps/standalone/package.json`
+disagree, which is what `pnpm version-bump` keeps in step. `CI` runs a typecheck,
+a build and a renderer element-id check on every push and pull request.
 
 ## Run
 
@@ -95,8 +131,10 @@ every control sits in one signal-chain strip underneath it
 - **01 SOURCE** picks `Default microphone` or `System audio (game + comms)`
   (system audio uses Windows loopback capture — no stereo mix fiddling). While
   live it turns into an input level meter.
-- **03 TRANSLATE** holds the language pair and the on/off toggle. With no Gemini
-  key it greys out and the stage collapses to a single caption column.
+- **03 TRANSLATE** holds the language pair and the on/off toggle. It starts
+  **off** — a fresh install captions what it hears and nothing else. Add a Gemini
+  key and switch it on to get a second column; with no key it greys out and the
+  stage stays a single caption column.
 - **04 OUTPUT** chooses Phone, OBS, or Both. OBS is served entirely from this PC
   and never needs a relay; phone links need one to leave your LAN.
 - Hit **START SESSION**, then **COPY** the link in the footer and send it to your

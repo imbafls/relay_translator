@@ -1,6 +1,6 @@
 {
   "name": "callout-relay",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Real-time game comms relay: audio -> Deepgram STT -> Gemini translation -> phone/OBS subtitles",
   "engines": {
@@ -20,6 +20,7 @@
     "dist:app": "pnpm --filter @callout-relay/standalone dist",
     "dist:relay": "pnpm --filter @callout-relay/relay build && node scripts/build-relay-bundle.mjs && node scripts/inject-sea.mjs",
     "build:sd": "pnpm --filter @callout-relay/streamdeck build",
-    "smoke": "node packages/relay/scripts/smoke.mjs"
+    "smoke": "node packages/relay/scripts/smoke.mjs",
+    "version-bump": "node scripts/version-bump.mjs"
   }
 }

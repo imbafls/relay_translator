@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/standalone",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Callout Relay desktop app: translated game comms to your friend's phone",
   "author": "Callout Relay",
@@ -15,7 +15,8 @@
   "dependencies": {
     "@callout-relay/companion": "workspace:*",
     "@callout-relay/relay": "workspace:*",
-    "@callout-relay/shared": "workspace:*"
+    "@callout-relay/shared": "workspace:*",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -40,8 +41,18 @@
     "win": {
       "icon": "assets/icon.png",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -49,10 +60,18 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Callout Relay"
+      "shortcutName": "Callout Relay",
+      "artifactName": "CalloutRelay-Setup-${version}.${ext}"
     },
     "portable": {
       "artifactName": "CalloutRelay-Portable-${version}.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "imbafls",
+        "repo": "relay_translator"
+      }
+    ]
   }
 }

@@ -467,7 +467,7 @@ select option { background: var(--bg); color: var(--ink); }
   color: var(--dim);
 }
 .linkrow .label { letter-spacing: 0.1em; flex: none; }
-.link-url { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.link-url { flex: 1; min-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .link-url.live { color: var(--ink); }
 .link-actions { display: flex; gap: 14px; flex: none; }
 .link-actions button { font: 12px var(--mono); color: var(--dim); }
@@ -486,9 +486,36 @@ select option { background: var(--bg); color: var(--ink); }
 .label-btn:hover, .label-btn.active { color: var(--ink); }
 
 /* narrow window fallback (min 720) */
+@media (max-width: 900px) {
+  /* the same figures live in the chain strip; the link matters more here */
+  #roSttWrap, #roTrnWrap { display: none; }
+}
 @media (max-width: 860px) {
   .block { padding: 12px 14px 14px; }
   .start { width: 180px; }
   .readouts { gap: 12px; padding: 0 14px; }
+  .linkrow { gap: 12px; padding: 0 14px; }
   .ob-left { padding: 32px 28px 24px; }
 }
+
+/* ------------------------------------------------------------ auto-update */
+.toggle-inline { margin-left: 0; align-self: flex-start; }
+.update-row { flex-wrap: wrap; gap: 14px; }
+.update-state { font-size: 10.5px; color: var(--dim); flex: 1; min-width: 120px; }
+.update-state.warn { color: var(--amber); }
+.update-state.ready { color: var(--ink); }
+.mono-btn.ink { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.update-chip {
+  font: 10.5px var(--mono);
+  color: var(--amber);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.update-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.update-chip:hover { color: var(--ink); }
+.update-chip.progress { color: var(--dim); }
+/* STT/TRN also live in the chain strip, so yield the row to the chip */
+.app.has-update #roSttWrap, .app.has-update #roTrnWrap { display: none; }
+.update-chip.progress::before { animation: rl-pulse 1.6s infinite; }

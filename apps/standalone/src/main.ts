@@ -21,13 +21,15 @@ import {
   KeyValidation,
   ServerToViewer,
   SessionState,
+  UpdateStatus,
   UsageInfo,
 } from "@callout-relay/shared";
+import { RELEASES_URL, Updater } from "./updater";
 
 // dev convenience: pick up DEEPGRAM_API_KEY / GEMINI_API_KEY from repo .env
 tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
 
-const APP_VERSION = "0.1.0";
+const APP_VERSION = app.getVersion();
 const APP_NAME = "Callout Relay";
 
 let win: BrowserWindow | null = null;
@@ -39,6 +41,7 @@ let uplink: UplinkClient | null = null;
 let uplinkState: NonNullable<ControlStatus["relay"]["uplinkState"]> = "off";
 let usageCache: UsageInfo | undefined;
 let unsubscribeBroadcast: (() => void) | null = null;
+let updater: Updater | null = null;
 
 const configStore = new ConfigStore(defaultDataDir());
 
@@ -334,6 +337,7 @@ function currentStatus() {
     devices,
     config: cfg,
     usage: usageCache,
+    update: updater?.current,
   };
 }
 
@@ -372,6 +376,9 @@ async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
         since: sessionStartedAt,
       });
   }
+  if (before.autoUpdate !== cfg.autoUpdate || before.updateFeedUrl !== cfg.updateFeedUrl) {
+    updater?.start();
+  }
   win?.webContents.send("config:changed", cfg);
   broadcastStatus();
   return cfg;
@@ -403,6 +410,20 @@ function registerIpc(): void {
 
   ipcMain.handle("open-external", (_e, url: string) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+
+  ipcMain.handle("updates:check", async (): Promise<UpdateStatus | undefined> => {
+    if (!updater) return undefined;
+    return updater.check(true);
+  });
+
+  ipcMain.handle("updates:install", (): boolean => {
+    if (!updater) return false;
+    // a live session would be cut off mid-sentence; stop capture first
+    if (sessionState === "live" || sessionState === "starting") {
+      win?.webContents.send("session:command", "stop");
+    }
+    return updater.install();
   });
 
   ipcMain.handle(
@@ -495,9 +516,16 @@ function trayIcon(): Electron.NativeImage {
   return nativeImage.createEmpty();
 }
 
+let trayUpdateLabel = "";
 function refreshTray(): void {
   if (!tray) return;
   const live = sessionState === "live";
+  // the update entry changes text as it downloads, so rebuild when it moves
+  const label = updateTrayLabel();
+  if (label !== trayUpdateLabel) {
+    trayUpdateLabel = label;
+    tray.setContextMenu(buildTrayMenu());
+  }
   tray.setToolTip(`${APP_NAME} — ${live ? "live" : sessionState}`);
   tray.setImage(
     live
@@ -506,10 +534,16 @@ function refreshTray(): void {
   );
 }
 
-function createTray(): void {
-  tray = new Tray(trayIcon());
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
+function updateTrayLabel(): string {
+  const st = updater?.current;
+  if (st?.state === "ready") return `Restart to update to ${st.latest}`;
+  if (st?.state === "downloading") return `Downloading update… ${st.percent ?? 0}%`;
+  if (st?.state === "unsupported") return "Download the latest version";
+  return "Check for updates";
+}
+
+function buildTrayMenu(): Electron.Menu {
+  return Menu.buildFromTemplate([
       { label: "Show Callout Relay", click: () => win?.show() },
       { type: "separator" },
       {
@@ -529,14 +563,26 @@ function createTray(): void {
       },
       { type: "separator" },
       {
-        label: "Quit",
+        label: updateTrayLabel(),
         click: () => {
-          quitting = true;
-          app.quit();
+          if (updater?.current.state === "ready") updater.install();
+          else if (updater?.current.state === "unsupported") shell.openExternal(RELEASES_URL);
+          else void updater?.check(true);
         },
       },
-    ]),
-  );
+    {
+      label: "Quit",
+      click: () => {
+        quitting = true;
+        app.quit();
+      },
+    },
+  ]);
+}
+
+function createTray(): void {
+  tray = new Tray(trayIcon());
+  tray.setContextMenu(buildTrayMenu());
   refreshTray();
 }
 
@@ -582,6 +628,15 @@ if (!gotLock) {
     // usage refresh loop (Deepgram balance cached inside the relay for 5 min)
     setInterval(() => void refreshUsage(), 60000);
     await startControl();
+    updater = new Updater({
+      config,
+      log,
+      onChange: (status) => {
+        win?.webContents.send("update:changed", status);
+        broadcastStatus();
+      },
+    });
+    updater.start();
     createTray();
     createWindow();
 
@@ -594,6 +649,7 @@ if (!gotLock) {
   app.on("before-quit", () => {
     quitting = true;
     setPowerBlock(false);
+    updater?.stop();
     stopUplink();
     relay?.close().catch(() => {});
   });

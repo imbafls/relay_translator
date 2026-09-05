@@ -14,6 +14,7 @@ import {
   SessionState,
   STT_MODELS,
   TRANSLATION_MODELS,
+  UpdateStatus,
 } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
@@ -43,6 +44,7 @@ let syncing = false;
 /** which link the footer shows when output = both */
 let linkChoice: "phone" | "obs" = "phone";
 const keyCheck: { deepgram?: KeyValidation | "checking"; gemini?: KeyValidation | "checking" } = {};
+let update: UpdateStatus | null = null;
 
 // ---------------------------------------------------------------------------
 // small helpers
@@ -505,7 +507,7 @@ function syncControlsFromConfig(): void {
   fillSelect(sel("translation"), TRANSLATION_MODELS.map((m) => ({ value: m.id, label: trFull(m.id).toUpperCase() })), config.translation);
   fillSelect(sel("langSource"), langs, config.languages.source);
   fillSelect(sel("langTarget"), langs, config.languages.target);
-  for (const id of ["translation", "langSource", "langTarget"]) fitSelect(sel(id));
+  refitSelects();
   setSeg("outputSeg", config.output || "phone");
   setSeg("obOutputSeg", config.output || "phone");
   setSeg("linkModeSeg", config.linkMode);
@@ -531,6 +533,21 @@ function fitSelect(box: HTMLSelectElement): void {
   measureEl.style.textTransform = cs.textTransform;
   measureEl.textContent = box.selectedOptions[0]?.textContent || "";
   box.style.width = `${Math.ceil(measureEl.getBoundingClientRect().width) + parseFloat(cs.paddingRight || "0") + 2}px`;
+}
+
+/**
+ * Widths measured before Archivo loads are too narrow and the value ends up
+ * ellipsised, so re-measure once the webfont is actually in.
+ */
+let fontsPending = true;
+function refitSelects(): void {
+  for (const id of ["translation", "langSource", "langTarget"]) fitSelect(sel(id));
+  if (fontsPending && document.fonts?.status !== "loaded") {
+    fontsPending = false;
+    void document.fonts.ready.then(() => {
+      for (const id of ["translation", "langSource", "langTarget"]) fitSelect(sel(id));
+    });
+  }
 }
 
 function setSeg(id: string, value: string): void {
@@ -749,7 +766,9 @@ function renderKeys(): void {
   inp("publicBaseUrl").value = config.publicBaseUrl || "";
   inp("relayPort").value = String(config.relayPort || 8787);
   setSeg("linkModeSeg", config.linkMode);
+  inp("updateFeedUrl").value = config.updateFeedUrl || "";
   renderKeyStatuses();
+  renderUpdate();
 }
 
 function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | undefined, required: boolean): void {
@@ -798,10 +817,11 @@ async function saveKeys(): Promise<void> {
     publisherToken: inp("publisherToken").value.trim() || undefined,
     publicBaseUrl: inp("publicBaseUrl").value.trim() || undefined,
     relayPort: Number(inp("relayPort").value) || 8787,
+    updateFeedUrl: inp("updateFeedUrl").value.trim() || undefined,
     linkMode: (($("linkModeSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as AppConfig["linkMode"]) || config.linkMode,
   };
   // ConfigStore.merge skips undefined: clear removed secrets explicitly with ""
-  for (const k of ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "publicBaseUrl"] as const) {
+  for (const k of ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "publicBaseUrl", "updateFeedUrl"] as const) {
     if (patch[k] === undefined && config[k]) (patch as Record<string, unknown>)[k] = "";
   }
   const relayChanged = ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "relayPort"].some(
@@ -1121,6 +1141,85 @@ function bindSeg(id: string, onPick: (value: string) => void): void {
   }
 }
 
+/**
+ * Update state lives in two places: a footer chip that only appears when there
+ * is something to act on, and the full readout in the keys view.
+ */
+function renderUpdate(): void {
+  const u = update;
+  const chip = $("updateChip");
+  const state = $("updateState");
+  const version = $("updateVersion");
+  const install = $("installUpdate");
+  const releases = $("openReleases");
+  const check = $("checkUpdate") as HTMLButtonElement;
+
+  version.textContent = u ? `RUNNING ${u.current}` : "";
+  $("autoUpdate").classList.toggle("on", config.autoUpdate !== false);
+
+  if (!u) {
+    chip.hidden = true;
+    state.textContent = "—";
+    return;
+  }
+
+  // footer chip: only ready / downloading / a found update earn attention.
+  // it shares the readout row, so keep it short — KEYS has the full story
+  const chipText =
+    u.state === "ready" ? `UPDATE ${u.latest}` :
+    u.state === "downloading" ? `UPDATE ${u.percent ?? 0}%` :
+    u.state === "available" ? `UPDATE ${u.latest}` :
+    "";
+  chip.hidden = !chipText;
+  chip.textContent = chipText;
+  chip.title = u.state === "ready" ? `Version ${u.latest} is ready — click to restart and install` : "";
+  chip.classList.toggle("progress", u.state === "downloading");
+  // the chip and the STT/TRN figures fight for the same row; the chip wins
+  $("app").classList.toggle("has-update", !chip.hidden);
+
+  state.className = "mono update-state";
+  install.hidden = u.state !== "ready";
+  releases.hidden = u.state !== "unsupported" && u.state !== "error";
+  check.disabled = u.state === "checking" || u.state === "downloading";
+
+  switch (u.state) {
+    case "checking":
+      state.textContent = "CHECKING…";
+      break;
+    case "downloading":
+      state.textContent = `DOWNLOADING ${u.latest ?? ""} · ${u.percent ?? 0}%`;
+      break;
+    case "available":
+      state.textContent = `${u.latest} AVAILABLE`;
+      state.classList.add("warn");
+      break;
+    case "ready":
+      state.textContent = `${u.latest} READY — RESTART TO INSTALL`;
+      state.classList.add("ready");
+      break;
+    case "current":
+      state.textContent = `UP TO DATE${u.checkedAt ? ` · CHECKED ${new Date(u.checkedAt).toLocaleTimeString()}` : ""}`;
+      break;
+    case "unsupported":
+      state.textContent = `${(u.detail || "").toUpperCase()} — UPDATE BY HAND`;
+      break;
+    case "error":
+      state.textContent = (u.detail || "CHECK FAILED").toUpperCase();
+      state.classList.add("warn");
+      break;
+    default:
+      state.textContent = "NOT CHECKED YET";
+  }
+}
+
+function setUpdate(u: UpdateStatus | undefined): void {
+  if (!u) return;
+  const wasReady = update?.state === "ready";
+  update = u;
+  renderUpdate();
+  if (u.state === "ready" && !wasReady) log(`update ${u.latest} ready — restart to install`, "ok");
+}
+
 function bind(): void {
   // footer
   $("startStop").onclick = () => {
@@ -1211,6 +1310,17 @@ function bind(): void {
   inp("relayUrl").oninput = () => renderKeyStatuses();
   bindSeg("linkModeSeg", () => {});
   $("keysSave").onclick = () => void saveKeys();
+  $("checkUpdate").onclick = async () => {
+    log("checking for updates…");
+    setUpdate(await cr.checkForUpdate());
+  };
+  $("installUpdate").onclick = () => void cr.installUpdate();
+  $("openReleases").onclick = () => void cr.openExternal(update?.releaseUrl || "https://github.com/imbafls/relay_translator/releases/latest");
+  $("autoUpdate").onclick = () => void saveAndApply({ autoUpdate: config.autoUpdate === false });
+  $("updateChip").onclick = () => {
+    if (update?.state === "ready") void cr.installUpdate();
+    else setView("keys");
+  };
   for (const i of $("keys").querySelectorAll<HTMLInputElement>("input")) {
     i.onkeydown = (e) => {
       if (e.key === "Enter") void saveKeys();
@@ -1265,8 +1375,11 @@ function bind(): void {
     status = s;
     renderChain();
     renderFooter();
+    if (s.update) setUpdate(s.update);
     if (view === "keys") renderKeyStatuses();
   });
+
+  cr.onUpdate((u) => setUpdate(u));
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && (view === "keys" || view === "log")) setView("stage");

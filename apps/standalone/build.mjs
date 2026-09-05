@@ -23,7 +23,9 @@ await build({
   format: "cjs",
   target: "node20",
   outfile: "dist/main.js",
-  external: ["electron", "bufferutil", "utf-8-validate"],
+  // electron-updater reads app-update.yml at runtime and ships as a real
+  // node_modules package; bundling it breaks that lookup
+  external: ["electron", "electron-updater", "bufferutil", "utf-8-validate"],
   plugins: [copyViewer],
   sourcemap: false,
   logLevel: "warning",

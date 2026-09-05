@@ -1,0 +1,164 @@
+name: Release
+
+# Tag a version to ship it:
+#   pnpm version-bump 0.3.1   (or edit the package.json versions by hand)
+#   git tag -a v0.3.1 -m "..." && git push origin master v0.3.1
+#
+# Windows job: installer + portable + latest.yml (the auto-update feed) + the
+# Windows relay server. Linux job: the relay server binary for the VPS.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build, e.g. v0.3.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify the tag matches the app version
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          pkg=$(node -p "require('./apps/standalone/package.json').version")
+          if [ "$tag" != "v$pkg" ]; then
+            echo "tag $tag does not match apps/standalone version $pkg" >&2
+            exit 1
+          fi
+          echo "releasing $tag"
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      # installer + portable + latest.yml. --publish never: the publish job
+      # below owns the release so both build jobs attach to the same one
+      - name: Build desktop app
+        run: |
+          pnpm --filter @callout-relay/standalone run build
+          pnpm --filter @callout-relay/standalone exec electron-builder --win --publish never
+
+      - name: Build Windows relay server
+        run: pnpm dist:relay
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          cp apps/standalone/release/CalloutRelay-Setup-*.exe out/
+          cp apps/standalone/release/CalloutRelay-Portable-*.exe out/
+          # latest.yml + blockmap are what electron-updater reads to find and
+          # verify the installer; without them auto-update cannot work
+          cp apps/standalone/release/latest.yml out/
+          cp apps/standalone/release/*.blockmap out/
+          cp packages/relay/sea/callout-relay-server.exe out/
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/
+          retention-days: 7
+
+  linux-relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # the SEA blob is portable; inject it into this runner's own node binary
+      - name: Build Linux relay server
+        run: |
+          pnpm --filter @callout-relay/relay build
+          node scripts/build-relay-bundle.mjs
+          node --experimental-sea-config packages/relay/sea/sea-config.json
+          cp "$(command -v node)" callout-relay-server-linux
+          npx --yes postject callout-relay-server-linux NODE_SEA_BLOB packages/relay/sea/sea-prep.blob \
+            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          chmod +x callout-relay-server-linux
+          ./callout-relay-server-linux --version >/dev/null 2>&1 || true
+          ls -la callout-relay-server-linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: callout-relay-server-linux
+          retention-days: 7
+
+  publish:
+    needs: [windows, linux-relay]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Lay out release assets
+        shell: bash
+        run: |
+          mkdir -p out
+          cp dl/windows/* out/
+          cp dl/linux/callout-relay-server-linux out/
+          cd out
+          # same checksum layout the repo has shipped since 0.2.x
+          for f in *.exe callout-relay-server-linux; do
+            [ -f "$f" ] && sha256sum "$f" | awk '{print toupper($1)"  "$2}'
+          done > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ls -la
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" out/* \
+              --title "$TAG" \
+              --generate-notes
+          fi
