@@ -898,3 +898,36 @@ previous thirty turns found - including this one, which is live on the VPS.
   the stream for everyone and systemd restarting into the same request. Same
   probe after the fix: 400, 404, 404, process alive, `/health` still 200.
 - **Status**: PASSED
+
+---
+
+### Turn 32/40 - Resilience & state (a descriptor per abandoned download)
+
+Audit finding 4, and server-side like finding 1, so both reach the VPS in the
+same mirror step.
+
+- **Tests Added**: `packages/relay/test/updateStreams.test.ts` (5) plus
+  `packages/relay/scripts/leak-probe.cjs`, a real-process measurement the test
+  runs and asserts on. Behavioural cover alongside it: serving normally after a
+  run of aborts, a range still correct afterwards, and a completed download
+  still arriving whole.
+- **Issue/Gap Uncovered**: `fs.createReadStream(file).pipe(res)` on the
+  unauthenticated `/updates/` route. `pipe` attaches an error handler to the
+  *destination* only, so a read error on the source is emitted with no listener
+  and ends the process, and it never destroys the source when the destination
+  goes away. Measured against the built relay: 25 aborted downloads, 25 streams,
+  **all 25 `destroyed=false` and still holding descriptors**. A caller leaving
+  part way through is completely ordinary - a phone off wifi, an updater
+  retrying, a closed tab - so this accumulates until the process hits its file
+  limit and stops serving without crashing or logging why.
+- **A mistake worth recording**: my first test observed the leak through the
+  filesystem, on the theory that Windows will not unlink an open file. All six
+  assertions passed against the *unfixed* code. Node opens these with
+  `FILE_SHARE_DELETE`, so the file renames happily while the descriptor is held
+  - the observable proved nothing and would have shipped as false confidence.
+  Counting the streams directly is what showed the leak.
+- **Enhancement Shipped**: both call sites go through `sendFile`, which uses
+  `pipeline` - it destroys the source when the destination goes and gives the
+  source an error handler. Re-measured: 25 aborts, 0 undestroyed. Reverting the
+  fix turns the test red with `RESULT: 12 leaked`.
+- **Status**: PASSED

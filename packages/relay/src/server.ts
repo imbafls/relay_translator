@@ -2,6 +2,7 @@ import * as http from "http";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { pipeline } from "stream";
 import { WebSocketServer, WebSocket, RawData } from "ws";
 import {
   DEFAULT_CONFIG,
@@ -160,6 +161,24 @@ function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConf
  * before any token check. Throwing here is an unauthenticated way to stop the
  * process, so it is caught and answered instead.
  */
+/**
+ * Stream a file to a response without leaking it.
+ *
+ * `pipe()` attaches an error handler to the destination only, so a read error
+ * on the source is emitted with no listener at all - which ends the process,
+ * on an unauthenticated route. It also never destroys the source when the
+ * destination goes away, so a caller who walks away mid-download leaves the
+ * descriptor open for good: 25 aborted downloads measured 25 undestroyed
+ * streams still holding fds. `pipeline` does both.
+ */
+function sendFile(res: http.ServerResponse, file: string, range?: { start: number; end: number }): void {
+  const source = range ? fs.createReadStream(file, range) : fs.createReadStream(file);
+  pipeline(source, res, () => {
+    // a client leaving part way through is the ordinary case here, not a fault
+    // worth logging; pipeline has already destroyed both sides
+  });
+}
+
 function parseTarget(req: http.IncomingMessage): URL | null {
   try {
     return new URL(req.url || "/", "http://localhost");
@@ -426,7 +445,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           "Content-Range": `bytes ${start}-${end}/${stat.size}`,
           "Accept-Ranges": "bytes",
         });
-        if (req.method !== "HEAD") fs.createReadStream(file, { start, end }).pipe(res);
+        if (req.method !== "HEAD") sendFile(res, file, { start, end });
         else res.end();
         return;
       }
@@ -436,7 +455,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         "Accept-Ranges": "bytes",
         "Cache-Control": rel === "latest.yml" ? "no-cache" : "public, max-age=86400",
       });
-      if (req.method !== "HEAD") fs.createReadStream(file).pipe(res);
+      if (req.method !== "HEAD") sendFile(res, file);
       else res.end();
       return;
     }
