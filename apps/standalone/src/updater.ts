@@ -1,10 +1,10 @@
 /**
  * Auto-update for the desktop app.
  *
- * Feed: the GitHub release that the release workflow publishes for each tag.
- * A `updateFeedUrl` in config overrides it with a plain static directory
- * (anything serving `latest.yml` + the installer), which is what you want when
- * the repo is private or you'd rather host updates on your own relay box.
+ * Feed: the relay's own `/updates/` directory (DEFAULT_UPDATE_FEED), which the
+ * release workflow's artifacts get published to. The GitHub release feed is not
+ * usable here because the repo is private. `updateFeedUrl` in config points the
+ * app at any other static directory serving `latest.yml` + the installer.
  *
  * Only the NSIS install can replace itself. The portable exe and unpackaged dev
  * runs report "unsupported" and link to the release page instead.
@@ -12,6 +12,7 @@
 import { app } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+import { DEFAULT_UPDATE_FEED } from "@callout-relay/shared";
 import type { AppConfig, UpdateStatus } from "@callout-relay/shared";
 
 export const RELEASES_URL = "https://github.com/imbafls/relay_translator/releases/latest";
@@ -89,14 +90,12 @@ export class Updater {
       debug: () => {},
     };
 
-    const feedUrl = this.deps.config().updateFeedUrl?.trim();
-    if (feedUrl) {
-      try {
-        mod.setFeedURL({ provider: "generic", url: feedUrl });
-        this.deps.log("info", `update feed: ${feedUrl}`);
-      } catch (err) {
-        this.deps.log("error", `bad updateFeedUrl, using the default feed: ${String(err)}`);
-      }
+    const feedUrl = this.deps.config().updateFeedUrl?.trim() || DEFAULT_UPDATE_FEED;
+    try {
+      mod.setFeedURL({ provider: "generic", url: feedUrl });
+      this.deps.log("info", `update feed: ${feedUrl}`);
+    } catch (err) {
+      this.deps.log("error", `bad update feed ${feedUrl}: ${String(err)}`);
     }
 
     mod.on("checking-for-update", () => this.set({ state: "checking" }));

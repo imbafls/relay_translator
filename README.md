@@ -92,11 +92,18 @@ the tray menu; clicking it restarts into the new version.
 The portable exe cannot replace itself, so it reports "portable build" and links
 to the releases page instead.
 
-**The feed has to be reachable.** Updates are served from this repo's GitHub
-releases, which only works while the repo is public. If you keep it private,
-either set `updateFeedUrl` in `KEYS → UPDATES` to any static directory holding
-`latest.yml` plus the installer (your relay box will do), or the app will simply
-report "no release feed found" and keep running.
+Updates come from the relay box, not GitHub — the repo is private, so its
+release feed 404s for anyone without access. The relay serves whatever is in
+`<dataDir>/updates` at `/updates/`, and `/download` redirects to the installer
+named in `latest.yml`:
+
+- **Download:** <http://187.124.87.202:8787/download>
+- **Feed:** `http://187.124.87.202:8787/updates/latest.yml`
+
+Point `updateFeedUrl` in `KEYS → UPDATES` at any other static directory to use
+your own. To publish a build, copy the installer, its `.blockmap` and
+`latest.yml` from the GitHub release into `/opt/callout-relay/data/updates/` on
+the relay box; nothing needs restarting.
 
 ## Releasing
 
@@ -112,8 +119,21 @@ git push origin master v0.3.1
 ```
 
 The workflow refuses to build when the tag and `apps/standalone/package.json`
-disagree, which is what `pnpm version-bump` keeps in step. `CI` runs a typecheck,
-a build and a renderer element-id check on every push and pull request.
+disagree, which is what `pnpm version-bump` keeps in step. `CI` runs a build, a
+typecheck and a renderer element-id check on every push and pull request.
+
+The release lands on GitHub; publishing it to users is one more step, because
+the update feed lives on the relay box:
+
+```powershell
+gh release download v0.3.1 -p "CalloutRelay-Setup-*.exe" -p "*.blockmap" -p latest.yml -D out
+node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.1.exe /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.1.exe
+node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.1.exe.blockmap /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.1.exe.blockmap
+node scripts/vps.mjs put out\latest.yml /opt/callout-relay/data/updates/latest.yml
+```
+
+Upload `latest.yml` last — it is what tells every installed app that a new
+version exists.
 
 ## Run
 

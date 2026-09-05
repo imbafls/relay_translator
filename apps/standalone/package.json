@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/standalone",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Callout Relay desktop app: translated game comms to your friend's phone",
   "author": "Callout Relay",

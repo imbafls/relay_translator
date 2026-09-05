@@ -23,6 +23,9 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".json": "application/json",
+  ".yml": "text/yaml; charset=utf-8",
+  ".exe": "application/vnd.microsoft.portable-executable",
+  ".blockmap": "application/octet-stream",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
 };
@@ -77,6 +80,12 @@ export interface RelayOptions {
   log?: (level: "info" | "warn" | "error", message: string) => void;
   /** called whenever the number of attached viewers changes */
   onViewers?: (count: number) => void;
+  /**
+   * Directory of desktop-app installers + `latest.yml`, served at `/updates/`
+   * with a `/download` shortcut. Defaults to `<dataDir>/updates`; the folder
+   * simply not existing turns the routes into 404s.
+   */
+  updatesDir?: string;
 }
 
 export interface RelayHandle {
@@ -118,6 +127,7 @@ function lanAddress(): string {
 export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const log = opts.log || (() => {});
   const dataDir = opts.dataDir || ".";
+  const updatesDir = opts.updatesDir || path.join(dataDir, "updates");
   const state = loadState(dataDir, {
     publisherToken: opts.publisherToken,
     viewerToken: opts.viewerToken,
@@ -288,6 +298,69 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ viewerToken }));
       log("info", "viewer token rotated via admin API");
+      return;
+    }
+
+    // newest installer, by name, straight from latest.yml
+    if (url.pathname === "/download") {
+      const file = newestInstaller();
+      if (!file) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("no build published yet");
+        return;
+      }
+      res.writeHead(302, { Location: `/updates/${encodeURIComponent(file)}`, "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
+
+    // update feed + installers (electron-updater reads latest.yml from here)
+    if (url.pathname.startsWith("/updates/")) {
+      const rel = decodeURIComponent(url.pathname.slice("/updates/".length));
+      if (!rel || !/^[A-Za-z0-9._-]+$/.test(rel) || rel.includes("..")) {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      const file = path.join(updatesDir, rel);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(file);
+        if (!stat.isFile()) throw new Error("not a file");
+      } catch {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      const type = MIME[path.extname(rel).toLowerCase()] || "application/octet-stream";
+      // installers are big: stream them, and let the updater resume partials
+      const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
+      if (range) {
+        const start = range[1] ? Number(range[1]) : 0;
+        const end = range[2] ? Number(range[2]) : stat.size - 1;
+        if (start >= stat.size || end >= stat.size || start > end) {
+          res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+          res.end();
+          return;
+        }
+        res.writeHead(206, {
+          "Content-Type": type,
+          "Content-Length": end - start + 1,
+          "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+          "Accept-Ranges": "bytes",
+        });
+        if (req.method !== "HEAD") fs.createReadStream(file, { start, end }).pipe(res);
+        else res.end();
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": type,
+        "Content-Length": stat.size,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": rel === "latest.yml" ? "no-cache" : "public, max-age=86400",
+      });
+      if (req.method !== "HEAD") fs.createReadStream(file).pipe(res);
+      else res.end();
       return;
     }
 
@@ -556,6 +629,19 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     });
   }
 
+  /** the installer named by `path:` in the update feed */
+  function newestInstaller(): string | undefined {
+    try {
+      const yml = fs.readFileSync(path.join(updatesDir, "latest.yml"), "utf8");
+      const m = /^path:\s*(.+?)\s*$/m.exec(yml);
+      const file = m?.[1]?.replace(/^["']|["']$/g, "");
+      if (!file || !/^[A-Za-z0-9._-]+$/.test(file)) return undefined;
+      return fs.existsSync(path.join(updatesDir, file)) ? file : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   function rotateViewerToken(): string {
     state.viewerToken = generateToken();
     saveState(dataDir, state);
@@ -590,7 +676,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       const origin = `http://${lanAddress()}:${actualPort}`;
       log(
         "info",
-        `relay listening on ${host}:${actualPort} (lan: ${origin}, live: no)`,
+        `relay listening on ${host}:${actualPort} (lan: ${origin}, live: no)` +
+          (newestInstaller() ? ` — serving ${newestInstaller()} at /download` : ""),
       );
       resolve({
         port: actualPort,
