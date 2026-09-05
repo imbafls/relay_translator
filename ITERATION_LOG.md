@@ -722,3 +722,36 @@ The harness built last turn, pointed at the 1900-line file it was built for.
   gone-model fallback in turn 24, the stale-key reopen here - which is the
   argument for having built it. The fixes existed; the guards did not.
 - **Status**: PASSED
+
+---
+
+### Turn 26/40 - Client UI (the Stream Deck inspector's own copy of the catalogue)
+
+Started by closing a loose end of my own: turn 9 redacted the API keys leaving
+the control API to `"***"`, and the property inspector reads `geminiApiKey` to
+decide whether its translate toggle works. It only ever tests truthiness, so a
+placeholder is safe - but I had reasoned that rather than shown it.
+
+- **Tests Added**: `packages/shared/test/propertyInspector.test.ts`, 6 tests
+  parsing the shipped `pi.js` and holding its hardcoded lists against the
+  catalogue: no speech, translation or language id it offers may be unknown to
+  the app, every cloud and local model the catalogue has must be offered, and
+  every entry needs a label.
+- **Issue/Gap Uncovered**: The inspector is a plain script in the plugin folder
+  with no build step, so it cannot import the catalogue and keeps its own copy
+  of every id. That copy had drifted twice. It still offered
+  `local-whisper-small`, which was dropped in `0ae312f` for aborting the
+  process - picking it sets a model the app no longer knows, which the renderer
+  then quietly rewrites via the turn 24 fallback, so the setting appears to do
+  nothing. And it was missing all seven archive models added in `36aeda5`.
+  That second one is worse than a short menu: the inspector filters downloaded
+  models against this same list, so a model installed in the app could not be
+  chosen from the Stream Deck at all.
+  One suspicion checked and dropped: `currentStatus.localModels` looked like a
+  field nothing sends, which would have made the whole downloaded-model path
+  dead. It is in `ControlStatus` and `main.ts` populates it. Worth verifying
+  before reporting.
+- **Enhancement Shipped**: The list names all ten local models and no dead ones,
+  and the guard fails if either side moves without the other. Running it against
+  the old file reports both faults by name.
+- **Status**: PASSED

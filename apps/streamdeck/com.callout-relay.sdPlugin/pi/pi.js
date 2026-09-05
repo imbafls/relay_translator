@@ -11,12 +11,24 @@
     ["deepgram-nova-3-multi", "Nova-3 Multi"],
     ["deepgram-nova-2", "Nova-2"],
   ];
-  /** local models are listed only once the desktop app has them downloaded */
+  /**
+   * Local models are listed only once the desktop app has them downloaded, so
+   * this has to name every one the catalogue offers - a model missing here
+   * cannot be picked from the Stream Deck even when it is installed, because
+   * the downloaded check filters against this list. Kept in step with
+   * STT_MODELS in @callout-relay/shared; a test fails if they drift.
+   */
   const LOCAL_MODELS = [
-    ["local-zipformer-en-20m", "Local Zipformer"],
-    ["local-parakeet-tdt-0.6b-v3", "Local Parakeet"],
+    ["local-zipformer-en-20m", "Local Zipformer 20M"],
+    ["local-parakeet-tdt-0.6b-v3", "Local Parakeet v3"],
     ["local-sense-voice", "Local SenseVoice"],
-    ["local-whisper-small", "Local Whisper"],
+    ["local-moonshine-tiny", "Local Moonshine Tiny"],
+    ["local-whisper-tiny-en", "Local Whisper Tiny"],
+    ["local-zipformer-en", "Local Zipformer"],
+    ["local-moonshine-base", "Local Moonshine Base"],
+    ["local-parakeet-tdt-0.6b-v2", "Local Parakeet v2"],
+    ["local-nemotron-streaming", "Local Nemotron"],
+    ["local-whisper-turbo", "Local Whisper Turbo"],
   ];
   const TRANSLATION_MODELS = [
     ["gemini-3.1-flash-lite", "Flash-Lite"],
