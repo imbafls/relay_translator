@@ -30,6 +30,28 @@ function allowedOrigin(origin: string | undefined): boolean {
   return false;
 }
 
+/** AppConfig fields that are credentials rather than settings */
+const SECRET_FIELDS = ["deepgramApiKey", "geminiApiKey", "publisherToken", "viewerToken"] as const;
+const REDACTED = "***";
+
+/**
+ * Status carries the whole AppConfig, secrets included, and the origin check
+ * has to allow `null` for the Stream Deck property inspector - which is the
+ * same Origin a sandboxed iframe on any website sends. That combination would
+ * hand any page that embeds one the Deepgram and Gemini keys.
+ *
+ * Nothing downstream needs the values: the property inspector asks whether a
+ * key is set and the desktop UI reads its config over IPC, not from here. So
+ * presence is all that leaves, and a redacted field stays truthy.
+ */
+function redact(status: ControlStatus): ControlStatus {
+  const config = { ...status.config };
+  for (const field of SECRET_FIELDS) {
+    if (config[field]) config[field] = REDACTED;
+  }
+  return { ...status, config };
+}
+
 /**
  * Localhost-only control API for the companion process.
  * Consumed by the standalone UI (via IPC) and the Stream Deck plugin.
@@ -77,7 +99,7 @@ export function startControlServer(
     try {
       switch (`${req.method} ${url.pathname}`) {
         case `GET /status`: {
-          json(200, handlers.getStatus());
+          json(200, redact(handlers.getStatus()));
           return;
         }
         case `GET /link`: {
@@ -91,7 +113,7 @@ export function startControlServer(
             "Cache-Control": "no-cache",
             Connection: "keep-alive",
           });
-          res.write(`data: ${JSON.stringify({ type: "status", status: handlers.getStatus() })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: "status", status: redact(handlers.getStatus()) })}\n\n`);
           subscribers.add(res);
           const ka = setInterval(() => res.write(":ka\n\n"), 15000);
           req.on("close", () => {
@@ -103,20 +125,20 @@ export function startControlServer(
         case `POST /start`: {
           if (!guardPost()) return;
           await handlers.start();
-          json(200, handlers.getStatus());
+          json(200, redact(handlers.getStatus()));
           return;
         }
         case `POST /stop`: {
           if (!guardPost()) return;
           await handlers.stop();
-          json(200, handlers.getStatus());
+          json(200, redact(handlers.getStatus()));
           return;
         }
         case `POST /config`: {
           if (!guardPost()) return;
           const body = await readJson(req);
           const status = await handlers.patchConfig(body || {});
-          json(200, status);
+          json(200, redact(status));
           return;
         }
         case `POST /link/rotate`: {
@@ -137,7 +159,7 @@ export function startControlServer(
   });
 
   function broadcast(status: ControlStatus): void {
-    const payload = `data: ${JSON.stringify({ type: "status", status })}\n\n`;
+    const payload = `data: ${JSON.stringify({ type: "status", status: redact(status) })}\n\n`;
     for (const res of subscribers) {
       try {
         res.write(payload);
@@ -162,7 +184,13 @@ export function startControlServer(
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     // bind loopback only - this API has no auth by design
-    server.listen(port, "127.0.0.1", () => resolve(handle));
+    server.listen(port, "127.0.0.1", () => {
+      // port 0 means "any free one", and then the requested port is not the
+      // bound one; report what callers can actually connect to
+      const bound = server.address();
+      if (bound && typeof bound === "object") handle.port = bound.port;
+      resolve(handle);
+    });
   });
 }
 

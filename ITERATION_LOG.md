@@ -243,3 +243,34 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   instead of inferring it from a crc message. Also a `catalogue` seam on
   `ModelStore`, which is what lets a test drive it with a small model.
 - **Status**: PASSED
+
+---
+
+### Turn 9/100 - Client UI (the local control API handed out the API keys)
+
+- **Tests Added**: `packages/companion/test/controlServer.test.ts`, 10 tests
+  driving the real control server on a real port over real HTTP. Every response
+  that carries status is checked against the actual secret values, an origin
+  from the open web, the `null` origin the property inspector sends, and a
+  mutation with no client header.
+- **Issue/Gap Uncovered**: `ControlStatus.config` is the whole `AppConfig`,
+  which holds `deepgramApiKey`, `geminiApiKey`, `publisherToken` and
+  `viewerToken`, and five paths returned it verbatim - `GET /status`, the SSE
+  opening frame, `broadcast`, and the replies to `POST /start`, `/stop` and
+  `/config`. The only gate is `allowedOrigin`, and it has to allow `"null"` for
+  the Stream Deck property inspector, because a `file://` page sends exactly
+  that. So does a sandboxed iframe on any website. A page embedding one could
+  read the live Deepgram and Gemini keys off a fixed localhost port. Disabling
+  redaction turns six tests red, the `Origin: null` one among them.
+  Found alongside it: `ControlHandle.port` reported the *requested* port, so
+  `listen(0)` bound an ephemeral port while the handle still advertised 0, and
+  anything building a URL from it got a dead address.
+- **Enhancement Shipped**: Every status leaving the control server is redacted -
+  a set credential becomes `"***"`, an unset one stays falsy. That is all any
+  consumer needs: the property inspector only tests truthiness to grey out its
+  translate toggle, and the desktop UI reads config over IPC, not from here. The
+  origin allowlist is deliberately unchanged, because it cannot be tightened
+  without breaking the property inspector - which is the argument for not having
+  the keys behind it in the first place. `ControlHandle.port` now reports the
+  bound port.
+- **Status**: PASSED
