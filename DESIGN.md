@@ -41,12 +41,18 @@ Top → bottom, all full-width, separated by `--rule`:
 
 **Translation off (3i, 4e)**: stage collapses to one `ENGLISH · CAPTIONS` column at 22px; 03 block hatched, toggle OFF, language pair struck through, meta `BYPASSED · $0.000`. If off because no Gemini key: value "Needs a Gemini key", meta `ADD KEY` underlined (opens keys view).
 
-## Onboarding (first run, turn 4) - shown until a valid Deepgram key is saved
+## Onboarding (first run, turn 4) - shown until setup completes; re-runnable
 Same window frame; top-bar center shows stepper `1 SPEECH · 2 TRANSLATION · 3 READY` (current ink, done dim with ✓, upcoming mute). Left pane 48px padding: step label, 30px headline, dim body, underline input, `→` help rows with an underlined "Get a free key at …" link (opens browser). Right pane previews the stage the user will get. Chain strip persists with `—` placeholders and `STEP n` meta; the current block gets a 2px ink top rule.
-- **4a/4b** Deepgram key (required). Validate on paste (test request); show `VALID · $X CREDIT` or an amber error. CONTINUE is mute/disabled until valid.
+- **4a/4b** Speech engine. A `Cloud · Deepgram | Local · this PC` segment at the top of the step. Cloud: Deepgram key (required). Validate on paste (test request); show `VALID · $X CREDIT` or an amber error. Local: a mono hardware line (`YOUR PC · 16 THREADS · 32 GB RAM · <CPU> → HEAVY RECOMMENDED`), a `Light | Medium | Heavy` segment with a one-line blurb, then the tier's models as ruled rows (2px ink left rule on the selected one): 15px name, mono tag `PHRASE · EN · 102 MB`, `SPEED ●●●●○ ACCURACY ●●●○○` dots, dim note, and a state line (`DOWNLOAD · 102 MB` link, 90px progress bar + `%` + `CANCEL`, `READY ✓`). CONTINUE is mute/disabled until the key is valid or the chosen model is ready.
 - **4c** Gemini key (optional). Right pane: English column + hatched "TIẾNG VIỆT · WITH KEY" preview. Buttons `CONTINUE →` | `SKIP · ENGLISH ONLY` share one outlined block; Skip is always enabled.
-- **4d** Source + output pickers, `OPEN CONSOLE`. If step 2 skipped, 03 shows `No key · ADD GEMINI KEY`.
+- **4d** Source picker, optional `ALSO LISTEN TO` second source, output picker, `OPEN CONSOLE`. If step 2 skipped, 03 shows `No key · ADD GEMINI KEY`.
 Relay URL/token are **not** in onboarding - they live in the keys view; the console shows `RELAY NOT SET · LAN ONLY` in amber until set.
+**Re-run**: `KEYS → RUN SETUP AGAIN →` and the tray entry reopen onboarding pre-filled; the step label row then carries `✕ BACK TO CONSOLE` on the right (also `Esc`). Only OPEN CONSOLE marks setup complete.
+
+## Chain strip additions (0.4)
+- **01 SOURCE** stacks one 13px `--ink-2` select row per extra source under the primary, each with a mono `✕`; the meta row gains `+ ADD` (hidden while live or when every device is used). Meta reads `MIC + SYSTEM · 2 SOURCES`.
+- **02 TRANSCRIBE** carries a `CLOUD | LOCAL` mini-segment right-aligned in its label row. Local meta: `EN · STREAMING · READY`, `EN · PHRASE · 121 MB · DOWNLOAD` (underlined ink link), `DOWNLOADING 43% · CANCEL`, `UNPACKING…`, or amber `ENGINE UNAVAILABLE`. Live meta: `4.2 MIN · LOCAL · $0.000`. The model select groups local models by tier.
+- **Keys view** gains a `LOCAL MODELS` field (folder input, `OPEN FOLDER`, mono summary of models on disk) and `RUN SETUP AGAIN →` in the footer links.
 
 ## Phone viewer (390 wide, safe-area top 56px)
 - **Live (3d)**: header row = `● ON AIR` amber, `EN → VI`, mono clock, `AA` (opens display). Lines bottom-aligned, each row = 44px mono timestamp gutter + text, separated by `--rule-2`. Original above translation, same size; in history both dim, in the latest line original `--ink-2` and translation ink wt 600 at 21px with a 1px ink rule beneath. Interim line: amber timestamp + blinking cursor. Translation off (3j): single 20/24px line per row.

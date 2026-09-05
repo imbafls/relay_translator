@@ -1,10 +1,11 @@
-import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher } from "@callout-relay/shared";
+import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher, isLocalSttModel } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
   createDeepgramStream,
   createMockSttStream,
   SttStream,
 } from "./deepgram";
+import { createLocalSttStream, ModelManager } from "./localStt";
 import {
   createGeminiTranslator,
   createMockTranslator,
@@ -29,8 +30,10 @@ export interface GeminiStats {
 }
 
 export interface SttStats {
-  /** seconds of audio streamed to STT */
+  /** seconds of audio streamed to Deepgram */
   seconds: number;
+  /** seconds of audio transcribed on this machine */
+  localSeconds: number;
 }
 
 export interface SessionDeps {
@@ -38,6 +41,10 @@ export interface SessionDeps {
   geminiApiKey?: string;
   mockStt?: boolean;
   mockGemini?: boolean;
+  /** local model store; without it "local-*" model ids fail to start */
+  models?: ModelManager;
+  /** packaged builds pass the bundled worker script */
+  localSttWorker?: string;
   /** fan-out to all viewers */
   toViewers(msg: ServerToViewer): void;
   /** echo subtitles to the publisher (in-app live log) */
@@ -48,6 +55,8 @@ export interface SessionDeps {
   sttStats?: SttStats;
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
+  /** STT failures worth telling the publisher about (e.g. local model missing) */
+  onSttError?(message: string): void;
 }
 
 /**
@@ -153,6 +162,7 @@ export class PublisherSession {
       },
       onError: (message: string) => {
         this.deps.log("error", `stt error: ${message}`);
+        this.deps.onSttError?.(message);
       },
       onClose: () => {
         if (!this.closing) {
@@ -163,18 +173,26 @@ export class PublisherSession {
       },
     };
 
-    this.stt =
-      this.deps.mockStt || !this.deps.deepgramApiKey
-        ? createMockSttStream(events)
-        : createDeepgramStream(
-            {
-              apiKey: this.deps.deepgramApiKey,
-              model: this.cfg.stt || "deepgram-nova-3",
-              language: source,
-            },
+    const model = this.cfg.stt || "deepgram-nova-3";
+    this.local = isLocalSttModel(model);
+    if (this.deps.mockStt) {
+      this.stt = createMockSttStream(events);
+    } else if (this.local) {
+      this.stt = this.deps.models
+        ? createLocalSttStream(
+            { model, language: source, models: this.deps.models, workerFile: this.deps.localSttWorker, log: this.deps.log },
             events,
-          );
+          )
+        : (setImmediate(() => events.onError?.("local STT is not available on this relay")), createMockSttStream(events));
+    } else if (!this.deps.deepgramApiKey) {
+      this.stt = createMockSttStream(events);
+    } else {
+      this.stt = createDeepgramStream({ apiKey: this.deps.deepgramApiKey, model, language: source }, events);
+    }
   }
+
+  /** whether this session transcribes on the local machine */
+  local = false;
 
   /** sample rate expected from the publisher */
   get sampleRate(): number {
@@ -183,7 +201,11 @@ export class PublisherSession {
 
   audio(chunk: Buffer): void {
     if (this.streamWallStart === 0) this.streamWallStart = Date.now();
-    this.deps.sttStats && (this.deps.sttStats.seconds += chunk.length / (SAMPLE_RATE * 2));
+    if (this.deps.sttStats) {
+      const secs = chunk.length / (SAMPLE_RATE * 2);
+      if (this.local) this.deps.sttStats.localSeconds += secs;
+      else this.deps.sttStats.seconds += secs;
+    }
     this.stt?.sendAudio(chunk);
   }
 

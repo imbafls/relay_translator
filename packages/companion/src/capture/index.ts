@@ -5,15 +5,29 @@ export const TARGET_SAMPLE_RATE = 16000;
 export const SOURCE_DEFAULT_MIC = "default-mic";
 export const SOURCE_SYSTEM_LOOPBACK = "system-loopback";
 
+/** de-duplicate a source list, keeping order; never empty */
+export function normalizeSources(sources: readonly string[] | string | undefined): string[] {
+  const list = typeof sources === "string" ? [sources] : sources || [];
+  const out: string[] = [];
+  for (const s of list) {
+    const id = String(s || "").trim();
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out.length ? out : [SOURCE_DEFAULT_MIC];
+}
+
 /**
  * Renderer-side audio capture: mic (getUserMedia) or system loopback
  * (getDisplayMedia - Electron main must install a display-media request
  * handler with audio: 'loopback' for the system option to work).
- * Emits s16le mono 16 kHz PCM chunks ready for the relay.
+ *
+ * Several sources can run at once: each gets its own MediaStream and all of
+ * them feed the same worklet input, where Web Audio sums them - so the relay
+ * still receives one mono 16 kHz s16le PCM stream.
  */
 export class BrowserAudioCapture {
   private ctx: AudioContext | null = null;
-  private stream: MediaStream | null = null;
+  private streams: MediaStream[] = [];
   private node: AudioWorkletNode | null = null;
   private sink: GainNode | null = null;
   private workletUrl: string | null = null;
@@ -44,13 +58,10 @@ export class BrowserAudioCapture {
     return this.active;
   }
 
-  async start(source: string, onPcm: (chunk: Int16Array) => void): Promise<void> {
-    if (this.active) this.stop();
-
-    let stream: MediaStream;
+  private async openSource(source: string): Promise<MediaStream> {
     if (source === SOURCE_SYSTEM_LOOPBACK) {
       // Electron main auto-approves via setDisplayMediaRequestHandler (loopback audio)
-      stream = await navigator.mediaDevices.getDisplayMedia({
+      const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: {
           echoCancellation: false,
@@ -62,19 +73,37 @@ export class BrowserAudioCapture {
       if (stream.getAudioTracks().length === 0) {
         throw new Error("no system audio track - platform does not support loopback capture");
       }
-    } else if (source === SOURCE_DEFAULT_MIC) {
-      stream = await navigator.mediaDevices.getUserMedia({
+      return stream;
+    }
+    if (source === SOURCE_DEFAULT_MIC) {
+      return navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
-    } else {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: { exact: source },
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+    }
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: { exact: source },
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+  }
+
+  /** `sources` = one id or several; all of them are mixed into the PCM stream */
+  async start(sources: string | readonly string[], onPcm: (chunk: Int16Array) => void): Promise<void> {
+    if (this.active) this.stop();
+    const ids = normalizeSources(sources);
+
+    const streams: MediaStream[] = [];
+    for (const id of ids) {
+      try {
+        streams.push(await this.openSource(id));
+      } catch (err) {
+        for (const s of streams) s.getTracks().forEach((t) => t.stop());
+        const what = id === SOURCE_SYSTEM_LOOPBACK ? "system audio" : id === SOURCE_DEFAULT_MIC ? "default microphone" : "microphone";
+        throw new Error(`${what}: ${String((err as Error).message || err)}`);
+      }
     }
 
     const ctx = new AudioContext();
@@ -96,16 +125,16 @@ export class BrowserAudioCapture {
       if (data?.type === "pcm" && data.buffer) onPcm(new Int16Array(data.buffer));
     };
 
-    const srcNode = ctx.createMediaStreamSource(stream);
+    // every source fans into the same worklet input; Web Audio sums them
+    for (const stream of streams) ctx.createMediaStreamSource(stream).connect(node);
     // keep the graph pulling (and processing while the window is hidden)
     const sink = ctx.createGain();
     sink.gain.value = 0;
-    srcNode.connect(node);
     node.connect(sink);
     sink.connect(ctx.destination);
 
     this.ctx = ctx;
-    this.stream = stream;
+    this.streams = streams;
     this.node = node;
     this.sink = sink;
     this.active = true;
@@ -123,11 +152,11 @@ export class BrowserAudioCapture {
     } catch {
       /* noop */
     }
-    this.stream?.getTracks().forEach((t) => t.stop());
+    for (const s of this.streams) s.getTracks().forEach((t) => t.stop());
     this.ctx?.close().catch(() => {});
     this.node = null;
     this.sink = null;
     this.ctx = null;
-    this.stream = null;
+    this.streams = [];
   }
 }

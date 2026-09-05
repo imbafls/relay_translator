@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/standalone",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "Callout Relay desktop app: translated game comms to your friend's phone",
   "author": "Callout Relay",
@@ -13,7 +13,8 @@
     "dist": "pnpm typecheck && pnpm build && electron-builder --win"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "sherpa-onnx-node": "1.13.7"
   },
   "devDependencies": {
     "@callout-relay/companion": "workspace:*",
@@ -38,6 +39,11 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "dist/localStt-worker.js",
+      "**/node_modules/sherpa-onnx-node/**",
+      "**/node_modules/sherpa-onnx-*/**"
+    ],
     "win": {
       "icon": "assets/icon.png",
       "target": [

@@ -70,6 +70,14 @@
           </div>
         </div>
         <div class="field">
+          <div class="field-label">LOCAL MODELS<span id="modelsStatus" class="field-status dim"></span></div>
+          <div class="field-row">
+            <input id="modelsDir" type="text" class="uinput mono" placeholder="models folder - blank = app data\models" autocomplete="off" spellcheck="false" />
+            <button id="openModels" class="mono-btn">OPEN FOLDER</button>
+          </div>
+          <div id="modelsSummary" class="field-meta mono"></div>
+        </div>
+        <div class="field">
           <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
           <div class="field-row update-row">
             <span id="updateState" class="mono update-state">—</span>
@@ -83,6 +91,7 @@
         <div class="keys-foot">
           <button class="mono-btn" data-open="https://console.deepgram.com">BALANCE → console.deepgram.com</button>
           <button class="mono-btn" data-open="https://aistudio.google.com/apikey">QUOTA → aistudio.google.com</button>
+          <button id="runSetup" class="mono-btn">RUN SETUP AGAIN →</button>
         </div>
       </div>
       <div class="keys-col">
@@ -138,23 +147,47 @@
   <!-- ================= ONBOARDING ================= -->
   <section id="onboarding" class="view onboarding" hidden>
     <div class="ob-left">
-      <div id="obStepLabel" class="label">STEP 1 OF 3 · REQUIRED</div>
+      <div class="ob-top">
+        <div id="obStepLabel" class="label">STEP 1 OF 3 · REQUIRED</div>
+        <button id="obCancel" class="subbar-btn ob-cancel" hidden>✕ BACK TO CONSOLE</button>
+      </div>
       <h1 id="obTitle" class="headline">Relay needs a Deepgram key to hear you.</h1>
       <p id="obBody" class="body">Deepgram turns your mic or game audio into text. Your key is stored on this PC and never sent anywhere except Deepgram.</p>
 
       <div id="obStep1" class="ob-step">
-        <div class="field field-bare">
-          <div class="field-label">DEEPGRAM API KEY<span id="obDgStatus" class="field-status mute">WAITING</span></div>
-          <div class="field-row">
-            <input id="obDeepgramKey" type="password" class="uinput uinput-lg mono" placeholder="paste key" autocomplete="off" spellcheck="false" />
-            <button class="mono-btn" data-show="obDeepgramKey">SHOW</button>
-            <button class="mono-btn" data-clear="obDeepgramKey">CLEAR</button>
+        <div class="seg seg-lg ob-engine" id="obEngineSeg">
+          <button data-value="cloud">Cloud · Deepgram</button>
+          <button data-value="local">Local · this PC</button>
+        </div>
+
+        <div id="obCloud" class="ob-pane">
+          <div class="field field-bare">
+            <div class="field-label">DEEPGRAM API KEY<span id="obDgStatus" class="field-status mute">WAITING</span></div>
+            <div class="field-row">
+              <input id="obDeepgramKey" type="password" class="uinput uinput-lg mono" placeholder="paste key" autocomplete="off" spellcheck="false" />
+              <button class="mono-btn" data-show="obDeepgramKey">SHOW</button>
+              <button class="mono-btn" data-clear="obDeepgramKey">CLEAR</button>
+            </div>
+          </div>
+          <div class="help">
+            <div class="help-row"><span class="arrow ink">→</span><span><button class="ulink" data-open="https://console.deepgram.com/signup">Get a free key at console.deepgram.com</button> - new accounts include free credit, no card.</span></div>
+            <div class="help-row"><span class="arrow">→</span><span>Create API key → copy → paste here. Nova-3 costs about $0.0043 per minute after credit.</span></div>
           </div>
         </div>
-        <div class="help">
-          <div class="help-row"><span class="arrow ink">→</span><span><button class="ulink" data-open="https://console.deepgram.com/signup">Get a free key at console.deepgram.com</button> - new accounts include free credit, no card.</span></div>
-          <div class="help-row"><span class="arrow">→</span><span>Create API key → copy → paste here. Nova-3 costs about $0.0043 per minute after credit.</span></div>
+
+        <div id="obLocal" class="ob-pane" hidden>
+          <div id="obHardware" class="hw-line mono"></div>
+          <div class="seg" id="obTierSeg">
+            <button data-value="light">Light</button>
+            <button data-value="medium">Medium</button>
+            <button data-value="heavy">Heavy</button>
+          </div>
+          <div id="obTierBlurb" class="tier-blurb"></div>
+          <div id="obModels" class="model-list"></div>
+          <div id="obEngineWarn" class="field-meta mono warn" hidden></div>
+          <div class="field-meta mono mute">RATINGS ARE APPROXIMATE · STREAMING = WORDS AS YOU SPEAK · PHRASE = ONE LINE PER PAUSE</div>
         </div>
+
         <div class="ob-actions">
           <button id="obContinue1" class="ink-btn" disabled>CONTINUE →</button>
           <span id="obHint1" class="mono mute">VALIDATES ON PASTE</span>
@@ -189,6 +222,11 @@
             <div class="field-meta mono">SYSTEM AUDIO RELAYS GAME + COMMS INSTEAD OF MIC</div>
           </div>
           <div class="field field-bare">
+            <div class="field-label">ALSO LISTEN TO · OPTIONAL</div>
+            <div class="select-row select-row-lg"><select id="obAudioSource2" class="uselect"></select><span class="chev"></span></div>
+            <div class="field-meta mono">MIXED INTO THE SAME CAPTIONS, E.G. YOUR MIC PLUS THE VOICE CHAT</div>
+          </div>
+          <div class="field field-bare">
             <div class="field-label">SHOW CAPTIONS ON</div>
             <div class="seg seg-lg" id="obOutputSeg">
               <button data-value="phone">Phone</button>
@@ -212,11 +250,14 @@
     <div class="block" id="blkSource">
       <div class="block-label"><span class="num">01</span>SOURCE</div>
       <div class="block-value select-row"><select id="audioSource" class="vselect"></select><span class="chev"></span></div>
-      <div class="block-meta mono" id="metaSource"><span id="sourceKind">MIC</span><button id="rescan" class="ulink-mono">RESCAN</button></div>
+      <div id="extraSources" class="extra-sources"></div>
+      <div class="block-meta mono" id="metaSource"><span id="sourceKind">MIC</span><button id="addSource" class="ulink-mono">+ ADD</button><button id="rescan" class="ulink-mono">RESCAN</button></div>
       <div class="meter" id="meter" hidden><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
     </div>
     <div class="block" id="blkStt">
-      <div class="block-label"><span class="num">02</span>TRANSCRIBE</div>
+      <div class="block-label"><span class="num">02</span>TRANSCRIBE
+        <span class="seg-mini engine-seg" id="engineSeg"><button data-value="cloud">CLOUD</button><button data-value="local">LOCAL</button></span>
+      </div>
       <div class="block-value select-row"><select id="stt" class="vselect"></select><span class="chev"></span></div>
       <div class="block-meta mono" id="metaStt"></div>
     </div>

@@ -53,11 +53,11 @@ console.log(`relay on ${base}`);
   health.ok ? ok("health endpoint") : fail("health endpoint", JSON.stringify(health));
   const page = await fetch(`${base}/watch/${viewerToken}`);
   const html = await page.text();
-  page.ok && html.includes("Callout Relay")
+  page.ok && html.includes("<title>Relay</title>")
     ? ok("viewer page served")
     : fail("viewer page served", `status ${page.status}`);
   const bad = await fetch(`${base}/watch/not-the-token`);
-  bad.status === 200 && (await bad.text()).includes("Callout Relay")
+  bad.status === 200 && (await bad.text()).includes("<title>Relay</title>")
     ? ok("viewer page serves any path (token enforced at WS)")
     : fail("viewer page serves any path (token enforced at WS)");
 }
@@ -163,7 +163,85 @@ let viewer2;
   pub.close();
 }
 
-// 6. link rotate: old viewer token dies
+// 6. local STT: a model that is not on disk fails loudly to the publisher
+{
+  const local = await startRelay({ port: 0, dataDir, mockGemini: true, modelsDir: path.join(dataDir, "no-models") });
+  const pub = new WebSocket(`ws://127.0.0.1:${local.port}/ws/publisher?token=${local.state.publisherToken}`);
+  await new Promise((res, rej) => {
+    pub.onopen = res;
+    pub.onerror = rej;
+  });
+  const errPromise = expectMsg(pub, "error", 4000);
+  pub.send(
+    JSON.stringify({
+      type: "hello",
+      stt: "local-zipformer-en-20m",
+      translation: "gemini-2.5-flash",
+      languages: { source: "en", target: "vi" },
+      translationEnabled: false,
+    }),
+  );
+  try {
+    const err = await errPromise;
+    /not downloaded/.test(err.message)
+      ? ok("local model missing -> publisher error")
+      : fail("local model missing -> publisher error", JSON.stringify(err));
+  } catch (e) {
+    fail("local model missing -> publisher error", e.message);
+  }
+  const statuses = local.models.statuses();
+  statuses.length > 0 && statuses.every((m) => m.state === "missing")
+    ? ok("model catalog reports missing models")
+    : fail("model catalog reports missing models", JSON.stringify(statuses.slice(0, 2)));
+  pub.close();
+  await local.close();
+}
+
+// 7. local STT end to end - only when a model folder is provided
+//    CALLOUT_LOCAL_STT_MODEL_DIR=<models dir> CALLOUT_LOCAL_STT_MODEL=<id> pnpm smoke
+if (process.env.CALLOUT_LOCAL_STT_MODEL_DIR) {
+  const modelId = process.env.CALLOUT_LOCAL_STT_MODEL || "local-zipformer-en-20m";
+  const local = await startRelay({ port: 0, dataDir, mockGemini: true, modelsDir: process.env.CALLOUT_LOCAL_STT_MODEL_DIR });
+  const st = local.models.status(modelId);
+  if (st.state !== "ready") {
+    fail("local STT end to end", `${modelId} is ${st.state} in ${process.env.CALLOUT_LOCAL_STT_MODEL_DIR}`);
+  } else {
+    const pub = new WebSocket(`ws://127.0.0.1:${local.port}/ws/publisher?token=${local.state.publisherToken}`);
+    await new Promise((res, rej) => {
+      pub.onopen = res;
+      pub.onerror = rej;
+    });
+    pub.send(
+      JSON.stringify({ type: "hello", stt: modelId, translation: "x", languages: { source: "en", target: "vi" }, translationEnabled: false }),
+    );
+    await expectMsg(pub, "ready");
+    const wav = process.env.CALLOUT_LOCAL_STT_WAV;
+    const pcm = wav ? fs.readFileSync(wav).subarray(44) : Buffer.alloc(16000 * 2 * 4);
+    const got = expectMsg(pub, "subtitle", 20000);
+    let pos = 0;
+    const tick = setInterval(() => {
+      if (pos >= pcm.length) {
+        pub.send(Buffer.alloc(3200));
+        return;
+      }
+      pub.send(pcm.subarray(pos, pos + 3200));
+      pos += 3200;
+    }, 100);
+    try {
+      const sub = await got;
+      sub.source ? ok(`local STT end to end (${modelId}: "${sub.source}")`) : fail("local STT end to end", JSON.stringify(sub));
+    } catch (e) {
+      fail("local STT end to end", e.message);
+    }
+    clearInterval(tick);
+    pub.close();
+  }
+  await local.close();
+} else {
+  console.log("  SKIP  local STT end to end (set CALLOUT_LOCAL_STT_MODEL_DIR)");
+}
+
+// 8. link rotate: old viewer token dies
 {
   const res = await fetch(`${base}/admin/rotate-viewer-token`, {
     method: "POST",

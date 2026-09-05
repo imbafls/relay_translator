@@ -67,12 +67,20 @@
     $("viewerUrl").title = show ? url : "";
   }
 
+  /** cloud models plus every local model that is downloaded ("Local · zipformer-en-20m") */
+  function sttEntries() {
+    const local = ((currentStatus && currentStatus.localStt && currentStatus.localStt.models) || [])
+      .filter((m) => m.state === "ready")
+      .map((m) => [m.id, `Local · ${m.id.replace(/^local-/, "")}`]);
+    return STT_MODELS.concat(local);
+  }
+
   function renderConfig(cfg) {
     if (!cfg) return;
     syncing = true;
     const devices = (currentStatus ? currentStatus.devices : []).map((d) => [d.id, shortDevice(d.label)]);
     fill($("audioSource"), devices.length ? devices : DEFAULT_DEVICES, cfg.audioSource);
-    fill($("stt"), STT_MODELS, cfg.stt);
+    fill($("stt"), sttEntries(), cfg.sttEngine === "local" ? cfg.localStt : cfg.stt);
     fill($("translation"), TRANSLATION_MODELS, cfg.translation);
     fill($("langSource"), LANGUAGES, cfg.languages.source);
     fill($("langTarget"), LANGUAGES, cfg.languages.target);
@@ -121,9 +129,13 @@
     }
   }
 
-  for (const id of ["stt", "translation", "audioSource"]) {
+  for (const id of ["translation", "audioSource"]) {
     $(id).addEventListener("change", () => patchConfig({ [id]: $(id).value }));
   }
+  $("stt").addEventListener("change", () => {
+    const v = $("stt").value;
+    patchConfig(v.startsWith("local-") ? { sttEngine: "local", localStt: v } : { sttEngine: "cloud", stt: v });
+  });
   $("langSource").addEventListener("change", () => patchConfig({ languages: { source: $("langSource").value } }));
   $("langTarget").addEventListener("change", () => patchConfig({ languages: { target: $("langTarget").value } }));
   $("translateToggle").addEventListener("click", () => {

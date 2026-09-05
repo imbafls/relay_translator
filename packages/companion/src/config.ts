@@ -35,7 +35,28 @@ export class ConfigStore {
     if (stored.output === undefined && stored.obsOverlay === true) {
       this.cached.output = "obs";
     }
+    // migration: pre-0.4 configs had one source and no setup flag; a saved
+    // Deepgram key means onboarding already ran
+    if (!Array.isArray(stored.audioSources) && stored.audioSource) {
+      this.cached.audioSources = [stored.audioSource];
+    }
+    if (stored.setupComplete === undefined && stored.deepgramApiKey) {
+      this.cached.setupComplete = true;
+    }
+    this.cached = this.reconcileSources(this.cached);
     return this.cached;
+  }
+
+  /**
+   * `audioSource` (primary) and `audioSources` (all) describe one thing:
+   * de-duplicate the list and keep the primary equal to its first entry.
+   */
+  private reconcileSources(cfg: AppConfig): AppConfig {
+    const sources = Array.isArray(cfg.audioSources) ? cfg.audioSources : [];
+    const unique: string[] = [];
+    for (const s of sources) if (typeof s === "string" && s && !unique.includes(s)) unique.push(s);
+    if (unique.length === 0) unique.push(cfg.audioSource || DEFAULT_CONFIG.audioSource);
+    return { ...cfg, audioSources: unique, audioSource: unique[0] };
   }
 
   get(): AppConfig {
@@ -43,7 +64,15 @@ export class ConfigStore {
   }
 
   update(patch: Partial<AppConfig>): AppConfig {
-    this.cached = this.merge(this.get(), patch);
+    const before = this.get();
+    const merged = this.merge(before, patch);
+    // a single-field patch (Stream Deck inspector, old callers) swaps the
+    // primary and keeps the extra sources
+    if (patch.audioSource !== undefined && patch.audioSources === undefined) {
+      const extras = (before.audioSources || []).slice(1).filter((s) => s !== patch.audioSource);
+      merged.audioSources = [patch.audioSource, ...extras];
+    }
+    this.cached = this.reconcileSources(merged);
     this.persist();
     return this.cached;
   }

@@ -14,6 +14,7 @@ import {
 } from "@callout-relay/shared";
 import { loadState, generateToken, RelayState, saveState } from "./config";
 import { PublisherSession, SessionConfig, GeminiStats, SttStats } from "./session";
+import { ModelManager } from "./localStt";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -86,11 +87,21 @@ export interface RelayOptions {
    * simply not existing turns the routes into 404s.
    */
   updatesDir?: string;
+  /**
+   * Local STT model store. Defaults to `<dataDir>/models`; pass an explicit
+   * ModelManager to share one (with its download state) across relay restarts.
+   */
+  modelsDir?: string;
+  models?: ModelManager;
+  /** bundled worker script for local STT (packaged builds) */
+  localSttWorker?: string;
 }
 
 export interface RelayHandle {
   port: number;
   state: RelayState;
+  /** local STT models (download state lives here) */
+  models: ModelManager;
   /** origin of the embedded relay, e.g. http://192.168.1.5:8787 */
   origin: string;
   viewerUrl(viewerToken: string, obs?: boolean): string;
@@ -135,7 +146,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const mockStt = opts.mockStt ?? process.env.RELAY_MOCK_STT === "1";
   const mockGemini = opts.mockGemini ?? process.env.RELAY_MOCK_GEMINI === "1";
   const geminiStats: GeminiStats = { count: 0, cacheHits: 0, tokensIn: 0, tokensOut: 0 };
-  const sttStats: SttStats = { seconds: 0 };
+  const sttStats: SttStats = { seconds: 0, localSeconds: 0 };
+  const models = opts.models || new ModelManager({ modelsDir: opts.modelsDir || path.join(dataDir, "models"), log });
 
   let publisher: { ws: WebSocket; session: PublisherSession } | null = null;
   /** remote app mirroring finished subtitles via /ws/uplink */
@@ -217,9 +229,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       geminiApiKey: opts.geminiApiKey,
       mockStt,
       mockGemini,
+      models,
+      localSttWorker: opts.localSttWorker,
       geminiStats,
       sttStats,
       toViewers,
+      onSttError: (message) => sendPublisher(ws, { type: "error", message }),
       toPublisher: (msg) => {
         try {
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -679,6 +694,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       resolve({
         port: actualPort,
         state,
+        models,
         origin,
         viewerUrl(token: string, obs?: boolean) {
           const base = `${origin}/watch/${token}`;
@@ -696,6 +712,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
               sttMinutes: Math.round((sttStats.seconds / 60) * 10) / 10,
               estCostUsd: Math.round((sttStats.seconds / 60) * 0.0043 * 100) / 100,
             },
+            local: { sttMinutes: Math.round((sttStats.localSeconds / 60) * 10) / 10 },
             gemini: {
               count: geminiStats.count,
               cacheHits: geminiStats.cacheHits,

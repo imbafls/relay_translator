@@ -12,17 +12,21 @@ import {
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
-import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
+import { startRelay, RelayHandle, tryLoadDotenv, ModelManager } from "@callout-relay/relay";
 import {
   AppConfig,
   AudioDeviceInfo,
   ControlStatus,
+  HardwareInfo,
   KeyValidation,
+  ModelStatus,
   ServerToViewer,
   SessionState,
   UpdateStatus,
   UsageInfo,
+  recommendTier,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
 
@@ -44,6 +48,49 @@ let unsubscribeBroadcast: (() => void) | null = null;
 let updater: Updater | null = null;
 
 const configStore = new ConfigStore(defaultDataDir());
+
+/** local STT models: one manager for the app's lifetime so a download survives relay restarts */
+let models: ModelManager | null = null;
+
+function modelsDirOf(cfg: AppConfig): string {
+  return cfg.modelsDir?.trim() || path.join(defaultDataDir(), "models");
+}
+
+function modelManager(): ModelManager {
+  const dir = modelsDirOf(config());
+  if (!models || models.modelsDir !== dir) {
+    models?.cancel();
+    models = new ModelManager({ modelsDir: dir, log, onChange: () => broadcastStatus() });
+  }
+  return models;
+}
+
+/**
+ * The esbuild bundle drops the worker next to main.js. In a packaged app both
+ * the worker and the native addon are unpacked from the asar (worker threads
+ * cannot read archives), so prefer the app.asar.unpacked twin when it exists.
+ */
+function localSttWorkerFile(): string | undefined {
+  const bundled = path.join(__dirname, "localStt-worker.js");
+  const unpacked = bundled.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+  if (unpacked !== bundled && fs.existsSync(unpacked)) return unpacked;
+  return fs.existsSync(bundled) ? bundled : undefined;
+}
+
+let hardwareCache: HardwareInfo | undefined;
+function hardwareInfo(): HardwareInfo {
+  if (hardwareCache) return hardwareCache;
+  const cpus = os.cpus();
+  const threads = cpus.length || 1;
+  const ramGb = Math.round(os.totalmem() / 1073741824);
+  hardwareCache = {
+    threads,
+    cpu: (cpus[0]?.model || "unknown CPU").replace(/\s+/g, " ").trim(),
+    ramGb,
+    recommended: recommendTier(threads, ramGb),
+  };
+  return hardwareCache;
+}
 
 let sessionState: SessionState = "idle";
 let sessionError: string | undefined;
@@ -119,6 +166,8 @@ async function startEmbeddedRelay(): Promise<void> {
     dataDir: defaultDataDir(),
     deepgramApiKey: cfg.deepgramApiKey,
     geminiApiKey: cfg.geminiApiKey,
+    models: modelManager(),
+    localSttWorker: localSttWorkerFile(),
     log,
     onViewers: () => broadcastStatus(),
   });
@@ -338,6 +387,8 @@ function currentStatus() {
     config: cfg,
     usage: usageCache,
     update: updater?.current,
+    localStt: modelManager().info(),
+    hardware: hardwareInfo(),
   };
 }
 
@@ -358,6 +409,7 @@ const RELAY_KEYS: (keyof AppConfig)[] = [
   "relayUrl",
   "publisherToken",
   "viewerToken",
+  "modelsDir",
 ];
 
 async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
@@ -435,6 +487,31 @@ function registerIpc(): void {
   ipcMain.handle("link:rotate", async () => {
     await rotateLink();
     return viewerUrl();
+  });
+
+  // local STT models
+  ipcMain.handle("hardware:info", (): HardwareInfo => hardwareInfo());
+  ipcMain.handle("models:download", async (_e, id: string): Promise<ModelStatus> => {
+    const mm = modelManager();
+    try {
+      return await mm.download(String(id || ""));
+    } finally {
+      broadcastStatus();
+    }
+  });
+  ipcMain.handle("models:cancel", (): boolean => {
+    const stopped = modelManager().cancel();
+    broadcastStatus();
+    return stopped;
+  });
+  ipcMain.handle("models:remove", (_e, id: string): void => {
+    modelManager().remove(String(id || ""));
+    broadcastStatus();
+  });
+  ipcMain.handle("models:open-folder", async (): Promise<void> => {
+    const dir = modelManager().modelsDir;
+    fs.mkdirSync(dir, { recursive: true });
+    await shell.openPath(dir);
   });
 
   ipcMain.on("session:update", (_e, update: { state: SessionState; error?: string }) => {
@@ -563,6 +640,13 @@ function buildTrayMenu(): Electron.Menu {
       },
       { type: "separator" },
       {
+        label: "Run setup again…",
+        click: () => {
+          win?.show();
+          win?.webContents.send("session:command", "setup");
+        },
+      },
+      {
         label: updateTrayLabel(),
         click: () => {
           if (updater?.current.state === "ready") updater.install();
@@ -649,6 +733,7 @@ if (!gotLock) {
   app.on("before-quit", () => {
     quitting = true;
     setPowerBlock(false);
+    models?.cancel();
     updater?.stop();
     stopUplink();
     relay?.close().catch(() => {});

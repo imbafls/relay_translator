@@ -4,17 +4,27 @@
  * Layout: top bar · stage (or keys / log / onboarding view) · signal-chain strip · footer.
  * All state lives here; the main process owns config, the local relay and the uplink.
  */
-import { BrowserAudioCapture, RelayPublisherClient } from "@callout-relay/companion";
+import { BrowserAudioCapture, RelayPublisherClient, normalizeSources } from "@callout-relay/companion";
 import {
   AppConfig,
+  AudioDeviceInfo,
   ControlStatus,
+  HardwareInfo,
   KeyValidation,
   LANGUAGES,
+  LOCAL_STT_MODELS,
+  LocalSttModel,
+  MODEL_TIERS,
+  ModelStatus,
+  ModelTier,
   OutputTarget,
   SessionState,
   STT_MODELS,
+  SttEngine,
   TRANSLATION_MODELS,
   UpdateStatus,
+  effectiveSttModel,
+  localSttModel,
 } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
@@ -45,6 +55,9 @@ let syncing = false;
 let linkChoice: "phone" | "obs" = "phone";
 const keyCheck: { deepgram?: KeyValidation | "checking"; gemini?: KeyValidation | "checking" } = {};
 let update: UpdateStatus | null = null;
+let hardware: HardwareInfo | null = null;
+/** devices from the last scan (drives every source picker) */
+let deviceList: AudioDeviceInfo[] = [];
 
 // ---------------------------------------------------------------------------
 // small helpers
@@ -67,10 +80,39 @@ const TR_SHORT: Record<string, string> = {
 };
 
 function sttShort(id: string): string {
+  const local = localSttModel(id);
+  if (local) return local.short;
   return STT_SHORT[id] || id.replace(/^deepgram-/, "");
 }
 function sttFull(id: string): string {
+  const local = localSttModel(id);
+  if (local) return local.label;
   return `Deepgram ${sttShort(id)}`;
+}
+/** the model the next session runs with, per the engine switch */
+function currentStt(): string {
+  return effectiveSttModel(config);
+}
+function localEngine(): boolean {
+  return config.sttEngine === "local";
+}
+function modelStatus(id: string): ModelStatus | undefined {
+  return status?.localStt?.models.find((m) => m.id === id);
+}
+function localReady(id: string): boolean {
+  return modelStatus(id)?.state === "ready";
+}
+function engineAvailable(): boolean {
+  return status?.localStt?.available !== false;
+}
+function fmtMb(mb: number): string {
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
+}
+function dots(n: number): string {
+  return "●".repeat(n) + "○".repeat(5 - n);
+}
+function langList(m: LocalSttModel): string {
+  return m.languages[0] === "multi" ? "MULTI" : m.languages.map((l) => l.toUpperCase()).join(" ");
 }
 function trShort(id: string): string {
   return TR_SHORT[id] || id.replace(/^gemini-/, "");
@@ -109,8 +151,18 @@ function usd(n: number, digits = 3): string {
   return `$${n.toFixed(digits)}`;
 }
 function sourceLabel(id: string): string {
-  const opt = sel("audioSource").querySelector<HTMLOptionElement>(`option[value="${CSS.escape(id)}"]`);
-  return opt?.textContent || (id === "system-loopback" ? "System audio" : "Default microphone");
+  const dev = deviceList.find((d) => d.id === id);
+  return dev?.label || (id === "system-loopback" ? "System audio (game + comms)" : "Default microphone");
+}
+/** "Default microphone + System audio" */
+function sourcesLabel(ids: readonly string[]): string {
+  return normalizeSources(ids)
+    .map((id) => sourceLabel(id).replace(/\s*\(.*\)$/, ""))
+    .join(" + ");
+}
+function sourceKind(ids: readonly string[]): string {
+  const kinds = normalizeSources(ids).map((id) => (id === "system-loopback" ? "SYSTEM" : "MIC"));
+  return [...new Set(kinds)].join(" + ") + (kinds.length > 1 ? ` · ${kinds.length} SOURCES` : "");
 }
 function debounce<T extends (...a: never[]) => void>(fn: T, ms: number): T {
   let t: ReturnType<typeof setTimeout> | null = null;
@@ -342,7 +394,7 @@ function renderIdle(): void {
   const empty = $("lines").children.length === 0;
   const idle = $("idle");
   idle.hidden = !empty && session !== "error";
-  const chain = `${sourceLabel(config.audioSource)} → ${sttShort(config.stt)} → ${
+  const chain = `${sourcesLabel(config.audioSources)} → ${sttShort(currentStt())} → ${
     translationActive() ? `${trShort(config.translation)} → ` : ""
   }${outputLabel(config.output).toLowerCase()}${translationActive() ? "" : ` · ${langName(config.languages.source)} only`}`;
   $("idleChain").textContent = chain;
@@ -409,7 +461,14 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     }
     const prep = await cr.prepareSession({ rotate: opts.rotateLink });
     config = prep.config;
-    if (!config.deepgramApiKey) throw new Error("Add a Deepgram key first (KEYS).");
+    if (localEngine()) {
+      const model = localSttModel(config.localStt);
+      if (!engineAvailable()) throw new Error("Local speech engine failed to load on this PC - switch 02 TRANSCRIBE to CLOUD.");
+      if (!model) throw new Error("Pick a local model (02 TRANSCRIBE).");
+      if (!localReady(model.id)) throw new Error(`Download ${model.short} first (02 TRANSCRIBE).`);
+    } else if (!config.deepgramApiKey) {
+      throw new Error("Add a Deepgram key first (KEYS), or switch 02 TRANSCRIBE to LOCAL.");
+    }
     clearStage();
     renderStageHeads();
 
@@ -418,7 +477,15 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
         log(`relay: ${clientState}${detail ? ` - ${detail}` : ""}`, clientState === "connected" ? "ok" : "");
         recomputeState();
       },
-      onError: (msg) => log(`relay error: ${msg}`, "err"),
+      onError: (msg) => {
+        log(`relay error: ${msg}`, "err");
+        // the relay only reports fatal things (speech engine failed, kicked,
+        // bad token): stop rather than stream audio into nothing
+        if (session === "live" || session === "starting") {
+          stopSession(true);
+          setState("error", msg);
+        }
+      },
       onSubtitle: (seg) => {
         logSubtitle(seg);
         onSubtitle(seg);
@@ -426,7 +493,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       onPartial: (seg) => onPartial(seg),
     });
     relayClient.connect({
-      stt: config.stt,
+      stt: currentStt(),
       translation: config.translation,
       languages: config.languages,
       translationEnabled: translationActive(),
@@ -434,11 +501,11 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     });
 
     level = 0;
-    await capture.start(config.audioSource, (chunk) => {
+    await capture.start(config.audioSources, (chunk) => {
       feedLevel(chunk);
       relayClient?.sendAudio(chunk.buffer);
     });
-    log(`capture started: ${sourceLabel(config.audioSource)}`, "ok");
+    log(`capture started: ${sourcesLabel(config.audioSources)} → ${sttFull(currentStt())}`, "ok");
     recomputeState();
   } catch (err) {
     const message = String((err as Error).message || err);
@@ -479,35 +546,111 @@ async function restartIfLive(): Promise<void> {
 // config plumbing
 // ---------------------------------------------------------------------------
 
-function fillSelect(box: HTMLSelectElement, entries: { value: string; label: string }[], value: string): void {
+function fillSelect(box: HTMLSelectElement, entries: { value: string; label: string; group?: string }[], value: string): void {
   box.innerHTML = "";
-  for (const { value: v, label } of entries) {
+  let groupEl: HTMLOptGroupElement | null = null;
+  for (const { value: v, label, group } of entries) {
     const opt = document.createElement("option");
     opt.value = v;
     opt.textContent = label;
     if (v === value) opt.selected = true;
-    box.appendChild(opt);
+    if (group) {
+      if (!groupEl || groupEl.label !== group) {
+        groupEl = document.createElement("optgroup");
+        groupEl.label = group;
+        box.appendChild(groupEl);
+      }
+      groupEl.appendChild(opt);
+    } else {
+      box.appendChild(opt);
+    }
   }
 }
 
+function deviceEntries(): { value: string; label: string }[] {
+  return deviceList.map((d) => ({ value: d.id, label: d.label }));
+}
+
 async function refreshDevices(): Promise<void> {
-  const devices = await capture.listDevices();
-  const entries = devices.map((d) => ({ value: d.id, label: d.label }));
-  fillSelect(sel("audioSource"), entries, config.audioSource);
-  fillSelect(sel("obAudioSource"), entries, config.audioSource);
-  cr.reportDevices(devices);
+  deviceList = await capture.listDevices();
+  renderSources();
+  fillSelect(sel("obAudioSource"), deviceEntries(), config.audioSource);
+  fillSelect(
+    sel("obAudioSource2"),
+    [{ value: "", label: "None" }, ...deviceEntries().filter((d) => d.value !== sel("obAudioSource").value)],
+    config.audioSources[1] || "",
+  );
+  cr.reportDevices(deviceList);
   renderChain();
   renderIdle();
+}
+
+/**
+ * 01 SOURCE: the primary select plus one row per extra source. Each select
+ * offers every device not already taken by another row.
+ */
+function renderSources(): void {
+  const sources = normalizeSources(config.audioSources);
+  const all = deviceEntries();
+  const taken = (except: string): Set<string> => new Set(sources.filter((s) => s !== except));
+  fillSelect(sel("audioSource"), all.filter((d) => !taken(sources[0]).has(d.value)), sources[0]);
+  const box = $("extraSources");
+  box.innerHTML = "";
+  sources.slice(1).forEach((id, i) => {
+    const row = document.createElement("div");
+    row.className = "select-row extra-row";
+    const select = document.createElement("select");
+    select.className = "vselect";
+    fillSelect(select, all.filter((d) => !taken(id).has(d.value)), id);
+    select.disabled = session === "live" || session === "starting";
+    select.onchange = () => {
+      const next = [...sources];
+      next[i + 1] = select.value;
+      void saveAndApply({ audioSources: normalizeSources(next) }, { restart: true });
+    };
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    const remove = document.createElement("button");
+    remove.className = "remove-src";
+    remove.title = "Remove this source";
+    remove.textContent = "✕";
+    remove.onclick = () => {
+      const next = sources.filter((_, j) => j !== i + 1);
+      void saveAndApply({ audioSources: normalizeSources(next) }, { restart: true });
+    };
+    row.append(select, chev, remove);
+    box.appendChild(row);
+  });
+  // nothing left to add once every device is in use
+  $("addSource").hidden = sources.length >= all.length;
+}
+
+function addSource(): void {
+  const sources = normalizeSources(config.audioSources);
+  const free = deviceEntries().find((d) => !sources.includes(d.value));
+  if (!free) return;
+  void saveAndApply({ audioSources: [...sources, free.value] }, { restart: true });
+}
+
+function sttEntries(engine: SttEngine): { value: string; label: string; group?: string }[] {
+  if (engine === "cloud") return STT_MODELS.map((m) => ({ value: m.id, label: sttFull(m.id) }));
+  return LOCAL_STT_MODELS.map((m) => ({
+    value: m.id,
+    label: `${m.label}${localReady(m.id) ? "" : ` · ${fmtMb(m.sizeMb)}`}`,
+    group: MODEL_TIERS.find((t) => t.id === m.tier)?.label,
+  }));
 }
 
 function syncControlsFromConfig(): void {
   syncing = true;
   const langs = LANGUAGES.map((l) => ({ value: l.code, label: langName(l.code) }));
-  fillSelect(sel("stt"), STT_MODELS.map((m) => ({ value: m.id, label: sttFull(m.id) })), config.stt);
+  fillSelect(sel("stt"), sttEntries(config.sttEngine), currentStt());
+  setSeg("engineSeg", config.sttEngine || "cloud");
   fillSelect(sel("translation"), TRANSLATION_MODELS.map((m) => ({ value: m.id, label: trFull(m.id).toUpperCase() })), config.translation);
   fillSelect(sel("langSource"), langs, config.languages.source);
   fillSelect(sel("langTarget"), langs, config.languages.target);
   refitSelects();
+  renderSources();
   setSeg("outputSeg", config.output || "phone");
   setSeg("obOutputSeg", config.output || "phone");
   setSeg("linkModeSeg", config.linkMode);
@@ -628,22 +771,17 @@ function renderChain(): void {
   for (const b of $("chain").querySelectorAll<HTMLElement>(".select-row, #outputSeg, #translateNeedsKey, #translatePair")) b.hidden = false;
 
   // 01 SOURCE
-  $("sourceKind").textContent = config.audioSource === "system-loopback" ? "SYSTEM" : "MIC";
+  $("sourceKind").textContent = sourceKind(config.audioSources);
   $("meter").hidden = !live;
   $("metaSource").hidden = live;
   $("rescan").hidden = live;
+  $("extraSources").hidden = false;
+  for (const b of $("extraSources").querySelectorAll<HTMLSelectElement>("select")) b.disabled = live;
 
   // 02 TRANSCRIBE
-  if (live && usage) {
-    metaSpans($("metaStt"), [{ text: `${usage.deepgram.sttMinutes.toFixed(1)} MIN` }, { text: usd(usage.deepgram.estCostUsd) }]);
-  } else {
-    const k = keyStateLabel("deepgram");
-    metaSpans($("metaStt"), [
-      { text: config.languages.source.toUpperCase() },
-      { text: STT_TAG[config.stt] || "" },
-      { text: k.text, cls: k.cls },
-    ]);
-  }
+  $("engineSeg").hidden = live;
+  for (const b of $("engineSeg").querySelectorAll<HTMLButtonElement>("button")) b.disabled = live;
+  renderSttMeta(live);
 
   // 03 TRANSLATE
   const blk = $("blkTranslate");
@@ -710,6 +848,66 @@ function renderChain(): void {
   metaSpans($("metaOutput"), items);
 }
 
+/** 02 TRANSCRIBE meta line: key state for cloud, model state + download link for local */
+function renderSttMeta(live: boolean): void {
+  const usage = status?.usage;
+  const meta = $("metaStt");
+  if (live && usage) {
+    metaSpans(
+      meta,
+      localEngine()
+        ? [{ text: `${(usage.local?.sttMinutes ?? 0).toFixed(1)} MIN` }, { text: "LOCAL · $0.000" }]
+        : [{ text: `${usage.deepgram.sttMinutes.toFixed(1)} MIN` }, { text: usd(usage.deepgram.estCostUsd) }],
+    );
+    return;
+  }
+  if (!localEngine()) {
+    const k = keyStateLabel("deepgram");
+    metaSpans(meta, [
+      { text: config.languages.source.toUpperCase() },
+      { text: STT_TAG[config.stt] || "" },
+      { text: k.text, cls: k.cls },
+    ]);
+    return;
+  }
+  const model = localSttModel(config.localStt);
+  const st = model ? modelStatus(model.id) : undefined;
+  const items: { text: string; cls?: string }[] = [{ text: config.languages.source.toUpperCase() }];
+  if (model) items.push({ text: model.mode.toUpperCase() });
+  let action: { text: string; onClick: () => void; disabled?: boolean } | null = null;
+  if (!engineAvailable()) items.push({ text: "ENGINE UNAVAILABLE", cls: "warn" });
+  else if (!model) items.push({ text: "PICK A MODEL", cls: "warn" });
+  else if (st?.state === "ready") items.push({ text: "READY" });
+  else if (st?.state === "downloading") {
+    items.push({ text: `DOWNLOADING ${st.percent ?? 0}%` });
+    action = { text: "CANCEL", onClick: () => void cr.cancelDownload() };
+  } else if (st?.state === "unpacking") items.push({ text: "UNPACKING…" });
+  else {
+    if (st?.state === "error") items.push({ text: (st.detail || "FAILED").toUpperCase().slice(0, 28), cls: "warn" });
+    else items.push({ text: fmtMb(model.sizeMb) });
+    const busy = status?.localStt?.models.some((m) => m.state === "downloading" || m.state === "unpacking");
+    action = { text: st?.state === "error" ? "RETRY" : "DOWNLOAD", onClick: () => downloadModel(model.id), disabled: busy };
+  }
+  metaSpans(meta, items);
+  if (action) {
+    const b = document.createElement("button");
+    b.className = "model-action";
+    b.textContent = action.text;
+    b.disabled = !!action.disabled;
+    b.onclick = action.onClick;
+    meta.appendChild(b);
+  }
+}
+
+function downloadModel(id: string): void {
+  const model = localSttModel(id);
+  if (!model) return;
+  log(`downloading ${model.label} (${fmtMb(model.sizeMb)})…`);
+  cr.downloadModel(id)
+    .then(() => log(`${model.label} ready`, "ok"))
+    .catch((err) => log(`download failed: ${String((err as Error).message || err)}`, "err"));
+}
+
 // ---------------------------------------------------------------------------
 // footer
 // ---------------------------------------------------------------------------
@@ -738,7 +936,7 @@ function renderFooter(): void {
   $("copyLink").classList.toggle("primary", showLink);
 
   const u = status?.usage;
-  $("roStt").textContent = (u?.deepgram.sttMinutes ?? 0).toFixed(1);
+  $("roStt").textContent = ((u?.deepgram.sttMinutes ?? 0) + (u?.local?.sttMinutes ?? 0)).toFixed(1);
   $("roTrn").textContent = String((u?.gemini.count ?? 0) + (u?.gemini.cacheHits ?? 0));
   $("roEst").textContent = usd((u?.deepgram.estCostUsd ?? 0) + (u?.gemini.estCostUsd ?? 0));
   $("roSttWrap").hidden = live;
@@ -767,8 +965,44 @@ function renderKeys(): void {
   inp("relayPort").value = String(config.relayPort || 8787);
   setSeg("linkModeSeg", config.linkMode);
   inp("updateFeedUrl").value = config.updateFeedUrl || "";
+  inp("modelsDir").value = config.modelsDir || "";
   renderKeyStatuses();
+  renderModelsField();
   renderUpdate();
+}
+
+/** KEYS → LOCAL MODELS: engine state + which models are on disk */
+function renderModelsField(): void {
+  const info = status?.localStt;
+  const st = $("modelsStatus");
+  st.className = "field-status";
+  if (!info) {
+    st.textContent = "";
+    $("modelsSummary").textContent = "";
+    return;
+  }
+  if (!info.available) {
+    st.textContent = "ENGINE UNAVAILABLE";
+    st.classList.add("warn");
+  } else {
+    st.textContent = (info.detail || "ENGINE OK").toUpperCase();
+    st.classList.add("dim");
+  }
+  const ready = info.models.filter((m) => m.state === "ready").map((m) => localSttModel(m.id)?.short || m.id);
+  const busy = info.models.find((m) => m.state === "downloading" || m.state === "unpacking");
+  const summary = $("modelsSummary");
+  summary.className = "field-meta mono";
+  if (!info.available) {
+    summary.textContent = (info.detail || "the speech engine did not load").toUpperCase();
+    summary.classList.add("warn");
+  } else if (busy) {
+    summary.textContent = `${busy.state === "unpacking" ? "UNPACKING" : `DOWNLOADING ${busy.percent ?? 0}%`} · ${(localSttModel(busy.id)?.short || busy.id).toUpperCase()}`;
+  } else if (ready.length) {
+    summary.textContent = `ON DISK · ${ready.join(" · ").toUpperCase()}`;
+  } else {
+    summary.textContent = "NO MODELS YET · PICK ONE UNDER 02 TRANSCRIBE → LOCAL";
+  }
+  inp("modelsDir").placeholder = info.modelsDir || "models folder";
 }
 
 function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | undefined, required: boolean): void {
@@ -818,13 +1052,14 @@ async function saveKeys(): Promise<void> {
     publicBaseUrl: inp("publicBaseUrl").value.trim() || undefined,
     relayPort: Number(inp("relayPort").value) || 8787,
     updateFeedUrl: inp("updateFeedUrl").value.trim() || undefined,
+    modelsDir: inp("modelsDir").value.trim() || undefined,
     linkMode: (($("linkModeSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as AppConfig["linkMode"]) || config.linkMode,
   };
   // ConfigStore.merge skips undefined: clear removed secrets explicitly with ""
-  for (const k of ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "publicBaseUrl", "updateFeedUrl"] as const) {
+  for (const k of ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "publicBaseUrl", "updateFeedUrl", "modelsDir"] as const) {
     if (patch[k] === undefined && config[k]) (patch as Record<string, unknown>)[k] = "";
   }
-  const relayChanged = ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "relayPort"].some(
+  const relayChanged = ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "relayPort", "modelsDir"].some(
     (k) => (patch as Record<string, unknown>)[k] !== undefined && (patch as Record<string, unknown>)[k] !== (config as unknown as Record<string, unknown>)[k],
   );
   await saveAndApply(patch, { restart: relayChanged });
@@ -839,6 +1074,12 @@ async function saveKeys(): Promise<void> {
 let obStep: 1 | 2 | 3 = 1;
 let obDeepgram: KeyValidation | "checking" | undefined;
 let obGemini: KeyValidation | "checking" | undefined;
+let obEngine: SttEngine = "cloud";
+let obTier: ModelTier = "light";
+/** local model picked in step 1 */
+let obModel = "";
+/** true when setup was reopened from a finished console (shows BACK TO CONSOLE) */
+let obRerun = false;
 
 const SAMPLE_EN = ["Two pushing B main, one's low", "Rotate A, spike's down", "He's one shot, behind the box", "Reloading, cover me"];
 const SAMPLE_VI = ["Hai đứa đẩy B main, một đứa yếu máu", "Đảo sang A, spike đã đặt", "Nó còn một viên, sau cái hộp", "Đang nạp đạn, che tôi"];
@@ -861,9 +1102,11 @@ function renderOnboardingPreview(): void {
   const box = $("obPreview");
   const target = langName(config.languages.target).toUpperCase();
   if (obStep === 1) {
-    const valid = obDeepgram && obDeepgram !== "checking" && obDeepgram.valid;
+    const valid = obStep1Ready();
+    const model = obEngine === "local" ? localSttModel(obModel) : undefined;
+    const head = model ? `WHAT YOU'LL GET · ${esc(model.short.toUpperCase())} · ${model.mode === "streaming" ? "LIVE WORDS" : "ONE LINE PER PAUSE"}` : "WHAT YOU'LL GET";
     box.innerHTML =
-      `<div class="preview-head label">WHAT YOU'LL GET</div>` +
+      `<div class="preview-head label">${head}</div>` +
       `<div class="preview-lines">${previewLines({
         texts: SAMPLE_EN,
         tone: (i) => (valid ? (i < 2 ? "c-dim" : "c-ink") : "c-mute"),
@@ -938,26 +1181,42 @@ function renderOnboardingChain(): void {
   $("badgesToggle").hidden = true;
   const hasGemini = !!config.geminiApiKey && config.translationEnabled !== false;
 
+  $("extraSources").hidden = true;
+  $("engineSeg").hidden = true;
   // 01
   if (obStep === 3) {
     $("blkSource").classList.remove("placeholder");
     $("blkSource").classList.add("current");
-    obValue("blkSource", sourceLabel(sel("obAudioSource").value || config.audioSource));
-    $("sourceKind").textContent = sel("obAudioSource").value === "system-loopback" ? "SYSTEM" : "MIC";
+    const picked = obSources();
+    obValue("blkSource", sourcesLabel(picked));
+    $("sourceKind").textContent = sourceKind(picked);
   } else {
     obValue("blkSource", "—");
     $("sourceKind").textContent = "STEP 3";
   }
   // 02
-  obValue("blkStt", sttFull(config.stt));
+  const obStt = obEngine === "local" ? obModel || config.localStt : config.stt;
+  obValue("blkStt", obStep === 1 && obEngine === "local" && !obModel ? "Local model" : sttFull(obStt));
   if (obStep === 1) {
     $("blkStt").classList.remove("placeholder");
     $("blkStt").classList.add("current");
-    const v = obDeepgram && obDeepgram !== "checking" && obDeepgram.valid;
-    metaSpans($("metaStt"), [v ? { text: "KEY OK" } : { text: "KEY NEEDED", cls: "warn" }]);
+    if (obEngine === "local") {
+      const st = obModel ? modelStatus(obModel) : undefined;
+      metaSpans($("metaStt"), [
+        { text: "LOCAL" },
+        st?.state === "ready"
+          ? { text: "MODEL READY" }
+          : st?.state === "downloading"
+            ? { text: `DOWNLOADING ${st.percent ?? 0}%` }
+            : { text: "MODEL NEEDED", cls: "warn" },
+      ]);
+    } else {
+      const v = obDeepgram && obDeepgram !== "checking" && obDeepgram.valid;
+      metaSpans($("metaStt"), [{ text: "CLOUD" }, v ? { text: "KEY OK" } : { text: "KEY NEEDED", cls: "warn" }]);
+    }
   } else {
     $("blkStt").classList.remove("placeholder");
-    metaSpans($("metaStt"), [{ text: "KEY OK" }]);
+    metaSpans($("metaStt"), [obEngine === "local" ? { text: "LOCAL · READY" } : { text: "KEY OK" }]);
   }
   // 03
   const trMeta = $("metaTranslate");
@@ -1018,11 +1277,22 @@ function renderOnboarding(): void {
   $("obStep1").hidden = obStep !== 1;
   $("obStep2").hidden = obStep !== 2;
   $("obStep3").hidden = obStep !== 3;
+  $("obCancel").hidden = !obRerun;
   if (obStep === 1) {
     $("obStepLabel").textContent = "STEP 1 OF 3 · REQUIRED";
-    $("obTitle").textContent = "Relay needs a Deepgram key to hear you.";
-    $("obBody").textContent =
-      "Deepgram turns your mic or game audio into text. Your key is stored on this PC and never sent anywhere except Deepgram.";
+    setSeg("obEngineSeg", obEngine);
+    $("obCloud").hidden = obEngine !== "cloud";
+    $("obLocal").hidden = obEngine !== "local";
+    if (obEngine === "local") {
+      $("obTitle").textContent = "Pick a model that fits your PC.";
+      $("obBody").textContent =
+        "Speech becomes text on this machine: nothing leaves your PC and there is no bill. Bigger models hear better but take CPU away from the game.";
+      renderObLocal();
+    } else {
+      $("obTitle").textContent = "Relay needs a Deepgram key to hear you.";
+      $("obBody").textContent =
+        "Deepgram turns your mic or game audio into text. Your key is stored on this PC and never sent anywhere except Deepgram.";
+    }
   } else if (obStep === 2) {
     $("obStepLabel").textContent = "STEP 2 OF 3 · OPTIONAL";
     $("obTitle").textContent = "Want captions in another language?";
@@ -1048,6 +1318,103 @@ function renderOnboarding(): void {
   renderTopbar();
 }
 
+/** the sources step 3 currently has picked (primary + optional second) */
+function obSources(): string[] {
+  const primary = sel("obAudioSource").value || config.audioSource;
+  const second = sel("obAudioSource2").value;
+  return normalizeSources(second ? [primary, second] : [primary]);
+}
+
+function obStep1Ready(): boolean {
+  if (obEngine === "local") return !!obModel && localReady(obModel) && engineAvailable();
+  return !!(obDeepgram && obDeepgram !== "checking" && obDeepgram.valid);
+}
+
+/** LOCAL pane of step 1: hardware line, tier segment, model rows */
+function renderObLocal(): void {
+  const hw = hardware || status?.hardware || null;
+  const hwEl = $("obHardware");
+  if (hw) {
+    hwEl.innerHTML =
+      `YOUR PC · <b>${esc(String(hw.threads))} THREADS</b> · <b>${esc(String(hw.ramGb))} GB RAM</b> · ` +
+      `<span title="${esc(hw.cpu)}">${esc(hw.cpu.replace(/\(R\)|\(TM\)|CPU|Processor/gi, "").replace(/\s+/g, " ").trim().slice(0, 28).toUpperCase())}</span>` +
+      ` → <b>${hw.recommended.toUpperCase()} RECOMMENDED</b>`;
+  } else {
+    hwEl.textContent = "CHECKING THIS PC…";
+  }
+  setSeg("obTierSeg", obTier);
+  const tier = MODEL_TIERS.find((t) => t.id === obTier);
+  $("obTierBlurb").textContent = tier ? tier.blurb + (hw && hw.recommended === obTier ? " Recommended for this PC." : "") : "";
+
+  const warn = $("obEngineWarn");
+  if (status?.localStt && !status.localStt.available) {
+    warn.hidden = false;
+    warn.textContent = `THE SPEECH ENGINE DID NOT LOAD ON THIS PC · ${(status.localStt.detail || "").toUpperCase()}`;
+  } else {
+    warn.hidden = true;
+  }
+
+  const list = $("obModels");
+  list.innerHTML = "";
+  const busy = status?.localStt?.models.find((m) => m.state === "downloading" || m.state === "unpacking");
+  for (const m of LOCAL_STT_MODELS.filter((x) => x.tier === obTier)) {
+    const st = modelStatus(m.id);
+    const row = document.createElement("div");
+    row.className = "model-row" + (m.id === obModel ? " active" : "");
+    row.dataset.id = m.id;
+    row.innerHTML =
+      `<div class="model-head">${esc(m.label)}</div>` +
+      `<div class="model-tag">${m.mode} · ${esc(langList(m))} · ${esc(fmtMb(m.sizeMb))}</div>` +
+      `<div class="model-rate"><span>SPEED <b>${dots(m.speed)}</b></span><span>ACCURACY <b>${dots(m.accuracy)}</b></span></div>` +
+      `<div class="model-note">${esc(m.note)}</div>` +
+      `<div class="model-state"></div>`;
+    const stateEl = row.querySelector(".model-state") as HTMLElement;
+    const button = (text: string, onClick: () => void, disabled = false): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.textContent = text;
+      b.disabled = disabled;
+      b.onclick = (e) => {
+        e.stopPropagation();
+        onClick();
+      };
+      return b;
+    };
+    const span = (text: string, cls = ""): HTMLSpanElement => {
+      const s = document.createElement("span");
+      s.textContent = text;
+      if (cls) s.className = cls;
+      return s;
+    };
+    if (st?.state === "ready") {
+      stateEl.append(span("READY ✓", "ready"));
+      if (m.id !== obModel) stateEl.append(button("USE", () => obPickModel(m.id)));
+    } else if (st?.state === "downloading" || st?.state === "unpacking") {
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      const fill = document.createElement("i");
+      fill.style.width = `${st.percent ?? 0}%`;
+      bar.appendChild(fill);
+      stateEl.append(bar, span(st.state === "unpacking" ? "UNPACKING…" : `${st.percent ?? 0}%`), button("CANCEL", () => void cr.cancelDownload()));
+    } else {
+      if (st?.state === "error") stateEl.append(span((st.detail || "FAILED").toUpperCase().slice(0, 40), "warn"));
+      stateEl.append(
+        button(st?.state === "error" ? `RETRY · ${fmtMb(m.sizeMb)}` : `DOWNLOAD · ${fmtMb(m.sizeMb)}`, () => {
+          obPickModel(m.id);
+          downloadModel(m.id);
+        }, !!busy || !engineAvailable()),
+      );
+    }
+    row.onclick = () => obPickModel(m.id);
+    list.appendChild(row);
+  }
+}
+
+function obPickModel(id: string): void {
+  if (obModel === id) return;
+  obModel = id;
+  renderOnboarding();
+}
+
 function renderObKeyStatus(): void {
   const dg = $("obDgStatus");
   const key = inp("obDeepgramKey").value.trim();
@@ -1064,9 +1431,10 @@ function renderObKeyStatus(): void {
   } else if (obDeepgram && obDeepgram.valid) {
     dg.textContent = obDeepgram.creditUsd != null ? `VALID · $${obDeepgram.creditUsd.toFixed(2)} CREDIT` : "VALID";
   }
-  const ok1 = !!(obDeepgram && obDeepgram !== "checking" && obDeepgram.valid);
+  const ok1 = obStep1Ready();
   ($("obContinue1") as HTMLButtonElement).disabled = !ok1;
-  $("obHint1").textContent = ok1 ? "NEXT: TRANSLATION (OPTIONAL)" : "VALIDATES ON PASTE";
+  const hint1 = obEngine === "local" ? (obModel ? "DOWNLOAD THE MODEL TO CONTINUE" : "PICK A MODEL") : "VALIDATES ON PASTE";
+  $("obHint1").textContent = ok1 ? "NEXT: TRANSLATION (OPTIONAL)" : hint1;
   $("obHint1").className = ok1 ? "mono dim" : "mono mute";
 
   const gm = $("obGmStatus");
@@ -1126,6 +1494,40 @@ async function obGoto(step: 1 | 2 | 3): Promise<void> {
   obStep = step;
   if (step === 3) await refreshDevices();
   renderOnboarding();
+}
+
+/**
+ * Open onboarding. First run starts blank; a re-run (KEYS → RUN SETUP AGAIN,
+ * tray) starts from the current settings and can be abandoned.
+ */
+async function openSetup(rerun: boolean): Promise<void> {
+  if (session !== "idle" && session !== "error") stopSession();
+  obRerun = rerun;
+  obStep = 1;
+  obEngine = config.sttEngine === "local" ? "local" : "cloud";
+  obModel = config.sttEngine === "local" ? config.localStt : localReady(config.localStt) ? config.localStt : "";
+  if (!hardware) {
+    try {
+      hardware = await cr.hardwareInfo();
+    } catch {
+      hardware = null;
+    }
+  }
+  const rec = hardware?.recommended || status?.hardware?.recommended || "light";
+  obTier = localSttModel(obModel)?.tier || rec;
+  if (rerun) {
+    inp("obDeepgramKey").value = config.deepgramApiKey || "";
+    inp("obGeminiKey").value = config.geminiApiKey || "";
+    const dg = keyCheck.deepgram;
+    obDeepgram = dg && dg !== "checking" ? dg : config.deepgramApiKey ? { valid: true } : undefined;
+    const gm = keyCheck.gemini;
+    obGemini = gm && gm !== "checking" ? gm : config.geminiApiKey ? { valid: true } : undefined;
+  } else {
+    obDeepgram = undefined;
+    obGemini = undefined;
+  }
+  setView("onboarding");
+  log(rerun ? "setup reopened" : "first run - pick how Relay should hear you");
 }
 
 // ---------------------------------------------------------------------------
@@ -1249,8 +1651,17 @@ function bind(): void {
 
   // chain
   $("rescan").onclick = () => void refreshDevices();
-  sel("audioSource").onchange = () => void saveAndApply({ audioSource: sel("audioSource").value }, { restart: true });
-  sel("stt").onchange = () => void saveAndApply({ stt: sel("stt").value }, { restart: true });
+  $("addSource").onclick = () => addSource();
+  sel("audioSource").onchange = () =>
+    void saveAndApply({ audioSources: normalizeSources([sel("audioSource").value, ...config.audioSources.slice(1)]) }, { restart: true });
+  sel("stt").onchange = () => {
+    const id = sel("stt").value;
+    void saveAndApply(localSttModel(id) ? { localStt: id } : { stt: id }, { restart: true });
+  };
+  bindSeg("engineSeg", (v) => {
+    if (session === "live" || session === "starting") return;
+    void saveAndApply({ sttEngine: v as SttEngine }, { restart: true });
+  });
   sel("translation").onchange = () => void saveAndApply({ translation: sel("translation").value }, { restart: true });
   sel("langSource").onchange = () =>
     void saveAndApply({ languages: { source: sel("langSource").value, target: config.languages.target } }, { restart: true });
@@ -1317,6 +1728,8 @@ function bind(): void {
   $("installUpdate").onclick = () => void cr.installUpdate();
   $("openReleases").onclick = () => void cr.openExternal(update?.releaseUrl || "https://github.com/imbafls/relay_translator/releases/latest");
   $("autoUpdate").onclick = () => void saveAndApply({ autoUpdate: config.autoUpdate === false });
+  $("openModels").onclick = () => void cr.openModelsFolder();
+  $("runSetup").onclick = () => void openSetup(true);
   $("updateChip").onclick = () => {
     if (update?.state === "ready") void cr.installUpdate();
     else setView("keys");
@@ -1338,8 +1751,32 @@ function bind(): void {
     renderObKeyStatus();
     obCheckGemini();
   };
+  bindSeg("obEngineSeg", (v) => {
+    obEngine = v as SttEngine;
+    if (obEngine === "local" && !obModel) {
+      // nothing picked yet: default to the recommended tier's first ready (or first) model
+      const tierModels = LOCAL_STT_MODELS.filter((m) => m.tier === obTier);
+      obModel = (tierModels.find((m) => localReady(m.id)) || tierModels[0])?.id || "";
+    }
+    renderOnboarding();
+  });
+  bindSeg("obTierSeg", (v) => {
+    obTier = v as ModelTier;
+    const tierModels = LOCAL_STT_MODELS.filter((m) => m.tier === obTier);
+    if (!tierModels.some((m) => m.id === obModel)) obModel = (tierModels.find((m) => localReady(m.id)) || tierModels[0])?.id || "";
+    renderOnboarding();
+  });
+  $("obCancel").onclick = () => {
+    obRerun = false;
+    setView("stage");
+    log("setup closed - nothing changed that you did not save");
+  };
   $("obContinue1").onclick = async () => {
-    await saveAndApply({ deepgramApiKey: inp("obDeepgramKey").value.trim() });
+    if (obEngine === "local") {
+      await saveAndApply({ sttEngine: "local", localStt: obModel });
+    } else {
+      await saveAndApply({ sttEngine: "cloud", deepgramApiKey: inp("obDeepgramKey").value.trim() });
+    }
     await obGoto(2);
   };
   $("obContinue2").onclick = async () => {
@@ -1350,11 +1787,22 @@ function bind(): void {
     await saveAndApply({ translationEnabled: false });
     await obGoto(3);
   };
-  sel("obAudioSource").onchange = () => renderOnboardingChain();
+  sel("obAudioSource").onchange = () => {
+    // the second picker must not offer the primary again
+    const second = sel("obAudioSource2").value;
+    fillSelect(
+      sel("obAudioSource2"),
+      [{ value: "", label: "None" }, ...deviceEntries().filter((d) => d.value !== sel("obAudioSource").value)],
+      second === sel("obAudioSource").value ? "" : second,
+    );
+    renderOnboardingChain();
+  };
+  sel("obAudioSource2").onchange = () => renderOnboardingChain();
   bindSeg("obOutputSeg", () => renderOnboarding());
   $("obOpenConsole").onclick = async () => {
     const out = (($("obOutputSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as OutputTarget) || "phone";
-    await saveAndApply({ audioSource: sel("obAudioSource").value || config.audioSource, output: out });
+    await saveAndApply({ audioSources: obSources(), output: out, setupComplete: true });
+    obRerun = false;
     $("translateToggle").hidden = false;
     $("badgesToggle").hidden = false;
     setView("stage");
@@ -1364,6 +1812,7 @@ function bind(): void {
   // main-process events
   cr.onCommand((cmd) => {
     if (cmd === "start") void startSession({ rotateLink: true });
+    else if (cmd === "setup") void openSetup(true);
     else stopSession();
   });
   cr.onConfigChanged((cfg) => {
@@ -1371,18 +1820,35 @@ function bind(): void {
     config = cfg;
     syncControlsFromConfig();
   });
+  let lastModelSig = "";
   cr.onStatus((s) => {
     status = s;
+    if (s.hardware) hardware = s.hardware;
     renderChain();
     renderFooter();
     if (s.update) setUpdate(s.update);
-    if (view === "keys") renderKeyStatuses();
+    if (view === "keys") {
+      renderKeyStatuses();
+      renderModelsField();
+    }
+    // model downloads move: refresh the local pane and the select labels
+    const sig = JSON.stringify(s.localStt?.models.map((m) => [m.id, m.state, m.percent]));
+    if (sig !== lastModelSig) {
+      lastModelSig = sig;
+      if (view === "onboarding" && obStep === 1 && obEngine === "local") renderOnboarding();
+      if (view !== "onboarding" && localEngine() && session === "idle") {
+        syncing = true;
+        fillSelect(sel("stt"), sttEntries("local"), currentStt());
+        syncing = false;
+      }
+    }
   });
 
   cr.onUpdate((u) => setUpdate(u));
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && (view === "keys" || view === "log")) setView("stage");
+    if (e.key === "Escape" && view === "onboarding" && obRerun) $("obCancel").click();
   });
 }
 
@@ -1399,17 +1865,15 @@ async function boot(): Promise<void> {
   tickClock();
   await refreshDevices();
 
-  if (!config.deepgramApiKey) {
-    obStep = 1;
-    setView("onboarding");
-    log("first run - add a Deepgram key to begin");
+  if (!config.setupComplete) {
+    await openSetup(false);
   } else {
     setView("stage");
     log("ready - hit START SESSION");
-    // silent key checks for the KEY OK readouts
-    if (config.deepgramApiKey) void checkKey("deepgram", config.deepgramApiKey);
-    if (config.geminiApiKey) void checkKey("gemini", config.geminiApiKey);
   }
+  // silent key checks for the KEY OK readouts
+  if (config.deepgramApiKey) void checkKey("deepgram", config.deepgramApiKey);
+  if (config.geminiApiKey) void checkKey("gemini", config.geminiApiKey);
 }
 
 void boot();

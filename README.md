@@ -149,12 +149,20 @@ The window is a caption console: the live transcript is the whole stage, and
 every control sits in one signal-chain strip underneath it
 (`01 SOURCE -> 02 TRANSCRIBE -> 03 TRANSLATE -> 04 OUTPUT`).
 
-- **First run** walks you through three steps: a Deepgram key (required, checked
-  as you paste), a Gemini key (optional - skip it for English-only captions), and
-  your audio source plus where captions go.
+- **First run** walks you through three steps: how Relay hears you (a Deepgram
+  key checked as you paste, or a local model downloaded onto this PC), a Gemini
+  key (optional - skip it for English-only captions), and your audio sources
+  plus where captions go. `KEYS → RUN SETUP AGAIN` (or the tray menu) reopens
+  it any time; `✕ BACK TO CONSOLE` abandons a re-run.
 - **01 SOURCE** picks `Default microphone` or `System audio (game + comms)`
-  (system audio uses Windows loopback capture - no stereo mix fiddling). While
-  live it turns into an input level meter.
+  (system audio uses Windows loopback capture - no stereo mix fiddling).
+  `+ ADD` mixes in more sources - your mic plus the voice chat, or two mics -
+  into the same captions. While live it turns into an input level meter.
+- **02 TRANSCRIBE** switches between `CLOUD` (Deepgram, needs a key) and
+  `LOCAL` (a model running on this PC, no key, no bill). Local models are
+  grouped LIGHT / MEDIUM / HEAVY; setup recommends a tier from your CPU thread
+  count and RAM, and every model shows approximate speed and accuracy dots plus
+  its download size. The meta line offers `DOWNLOAD` until the model is on disk.
 - **03 TRANSLATE** holds the language pair and the on/off toggle. It starts
   **off** - a fresh install captions what it hears and nothing else. Add a Gemini
   key and switch it on to get a second column; with no key it greys out and the
@@ -242,31 +250,73 @@ the tray anyway).
   OBS browser sources (add it as a Browser source, 1920x1080).
 - The link is the token: whoever has it can watch. Rotate to kill old viewers.
 
+## Local speech-to-text
+
+`02 TRANSCRIBE → LOCAL` runs the model on your PC through
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (CPU only, no key, no
+bill). Models are fetched from the sherpa-onnx `asr-models` GitHub release
+into `%APPDATA%\callout-relay\models` (change the folder under
+`KEYS → LOCAL MODELS`; a folder that already holds sherpa-onnx model
+directories is picked up as-is).
+
+| Tier | Model | Mode | Size | Languages |
+| --- | --- | --- | --- | --- |
+| LIGHT | Zipformer 20M | streaming | 121 MB | en |
+| LIGHT | Moonshine tiny | phrase | 102 MB | en |
+| LIGHT | Whisper tiny.en | phrase | 112 MB | en |
+| MEDIUM | Zipformer EN | streaming | 296 MB | en |
+| MEDIUM | Moonshine base | phrase | 239 MB | en |
+| MEDIUM | Whisper base.en | phrase | 198 MB | en |
+| MEDIUM | SenseVoice | phrase | 158 MB | zh en ja ko yue |
+| HEAVY | Parakeet TDT 0.6B v2 | phrase | 460 MB | en |
+| HEAVY | Parakeet TDT 0.6B v3 | phrase | 464 MB | 25 European |
+| HEAVY | Nemotron 3.5 streaming | streaming | 453 MB | 25 European |
+| HEAVY | Whisper large-v3 turbo | phrase | 537 MB | multilingual |
+
+*Streaming* models show words as you speak, like Deepgram. *Phrase* models
+wait for a pause (Silero VAD), then caption the whole phrase; light phrase
+models also show interim text while you talk. Setup recommends HEAVY for 12+
+threads and 16 GB, MEDIUM for 6+ threads and 8 GB, LIGHT otherwise - a game
+is usually running on the same CPU. Inference runs in a worker thread inside
+the desktop app; the VPS relay never transcribes (it only mirrors finished
+subtitles), so local STT needs no server-side change.
+
 ## Config schema
 
 ```json
 {
+  "sttEngine": "cloud",
   "stt": "deepgram-nova-3",
+  "localStt": "local-zipformer-en-20m",
   "translation": "gemini-2.5-flash",
-  "audioSource": "default-mic",
+  "audioSources": ["default-mic", "system-loopback"],
   "languages": { "source": "en", "target": "vi" },
   "linkMode": "unique",
-  "obsOverlay": false
+  "setupComplete": true
 }
 ```
+
+`audioSource` (single) is still written - it mirrors `audioSources[0]` for
+the Stream Deck inspector and older configs.
 
 Notes on models:
 - `deepgram-nova-3` - fastest, best for English comms.
 - `deepgram-nova-3-multi` - multilingual (en/es/fr/de/pt/it/...).
 - `deepgram-nova-2` - widest language support (incl. Vietnamese STT).
 - `gemini-2.5-flash-lite` if you want to shave ~200 ms off translation.
+- `local-*` ids are the local catalog above (`LOCAL_STT_MODELS` in `packages/shared`).
 
 ## Testing
 
 ```powershell
 pnpm smoke      # full relay e2e without API keys (mock STT + mock Gemini)
 node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
+node packages/relay/scripts/local-stt-test.mjs local-moonshine-tiny <16k-mono.wav>   # local engine
 ```
+
+Set `CALLOUT_LOCAL_STT_MODEL_DIR` (and optionally `CALLOUT_LOCAL_STT_MODEL`,
+`CALLOUT_LOCAL_STT_WAV`) to make `pnpm smoke` also push audio through a real
+local model; without it that case is skipped, so CI stays model-free.
 
 ## Troubleshooting
 
@@ -275,6 +325,11 @@ node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
   on a VPS or tunnel it.
 - **No system audio option works** - loopback capture needs the Electron app
   running on Windows; it auto-approves the capture prompt.
+- **`ENGINE UNAVAILABLE` under 02 TRANSCRIBE** - the sherpa-onnx addon did not
+  load (`KEYS → LOCAL MODELS` shows why). Switch to CLOUD, or reinstall; the
+  portable exe and the installer both ship the Windows x64 binaries.
+- **Local captions lag** - pick a lighter tier, or a *streaming* model; heavy
+  phrase models decode a whole phrase after you stop talking.
 - **`replaced by another session`** - a second publisher (e.g. a second app
   instance) took over; only one publisher connection is allowed.
 - **Kicked viewers** - someone opened the same link on another device, or the

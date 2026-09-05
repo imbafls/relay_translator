@@ -15,6 +15,10 @@ const copyViewer = {
   },
 };
 
+// sherpa-onnx is a native addon that loads its platform package by path at
+// runtime, so it stays a real node_modules dependency (see asarUnpack)
+const NATIVE = ["sherpa-onnx-node", "sherpa-onnx-*"];
+
 // main process: fully self-contained (companion + relay + ws bundled in)
 await build({
   entryPoints: ["src/main.ts"],
@@ -25,8 +29,21 @@ await build({
   outfile: "dist/main.js",
   // electron-updater reads app-update.yml at runtime and ships as a real
   // node_modules package; bundling it breaks that lookup
-  external: ["electron", "electron-updater", "bufferutil", "utf-8-validate"],
+  external: ["electron", "electron-updater", "bufferutil", "utf-8-validate", ...NATIVE],
   plugins: [copyViewer],
+  sourcemap: false,
+  logLevel: "warning",
+});
+
+// local STT worker thread: found by main.js as dist/localStt-worker.js
+await build({
+  entryPoints: ["../../packages/relay/src/localStt/worker.ts"],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node20",
+  outfile: "dist/localStt-worker.js",
+  external: [...NATIVE],
   sourcemap: false,
   logLevel: "warning",
 });

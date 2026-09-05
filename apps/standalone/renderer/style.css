@@ -519,3 +519,58 @@ select option { background: var(--bg); color: var(--ink); }
 /* STT/TRN also live in the chain strip, so yield the row to the chip */
 .app.has-update #roSttWrap, .app.has-update #roTrnWrap { display: none; }
 .update-chip.progress::before { animation: rl-pulse 1.6s infinite; }
+
+/* ------------------------------------------------- multi-source (01 SOURCE) */
+.extra-sources { display: flex; flex-direction: column; gap: 6px; }
+.extra-sources:empty { display: none; }
+.extra-row { display: flex; align-items: baseline; gap: 8px; position: relative; }
+.extra-row .vselect { font-size: 13px; font-weight: 400; color: var(--ink-2); padding-right: 18px; }
+.extra-row .chev { right: 24px; top: 3px; }
+.extra-row .remove-src { font: 10.5px var(--mono); color: var(--dim); flex: none; }
+.extra-row .remove-src:hover { color: var(--amber); }
+.app[data-session="live"] .extra-row .remove-src, .app[data-session="starting"] .extra-row .remove-src { display: none; }
+
+/* ------------------------------------------------ engine + model (02 STT) */
+.engine-seg { margin-left: auto; }
+.block-meta .model-action { font: 10.5px var(--mono); color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.block-meta .model-action:hover { color: var(--amber); }
+.block-meta .model-action:disabled { color: var(--mute); text-decoration: none; }
+
+/* ------------------------------------------------------ onboarding: local */
+.ob-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.ob-cancel { margin-left: 0; }
+.ob-engine { align-self: flex-start; }
+.ob-pane { display: flex; flex-direction: column; margin-top: 26px; }
+.hw-line { font-size: 10.5px; color: var(--dim); letter-spacing: 0.04em; margin-bottom: 14px; }
+.hw-line b { color: var(--ink); font-weight: 500; }
+.tier-blurb { margin: 12px 0 14px; font-size: 13px; line-height: 1.5; color: var(--dim); max-width: 400px; }
+.model-list { display: flex; flex-direction: column; border-top: 1px solid var(--rule); }
+.model-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "head tag" "rate rate" "note note" "state state";
+  gap: 4px 12px;
+  padding: 12px 14px 12px 16px;
+  border-bottom: 1px solid var(--rule-2);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--dim);
+}
+.model-row:hover { color: var(--ink); }
+.model-row.active { border-left-color: var(--ink); color: var(--ink); }
+.model-row.recommended { border-left-color: var(--rule-3); }
+.model-row .model-head { grid-area: head; font-size: 15px; font-weight: 500; line-height: 1.3; }
+.model-row .model-tag { grid-area: tag; font: 10.5px var(--mono); color: var(--dim); text-transform: uppercase; white-space: nowrap; padding-top: 3px; }
+.model-row .model-rate { grid-area: rate; display: flex; gap: 16px; font: 10.5px var(--mono); color: var(--dim); letter-spacing: 0.06em; }
+.model-row .model-rate b { color: var(--ink); font-weight: 400; letter-spacing: 0.1em; }
+.model-row .model-note { grid-area: note; font-size: 12.5px; line-height: 1.45; color: var(--dim); }
+.model-row .model-state { grid-area: state; display: flex; gap: 14px; align-items: baseline; font: 10.5px var(--mono); color: var(--dim); min-height: 15px; }
+.model-row .model-state .ready { color: var(--ink); }
+.model-row .model-state .warn { color: var(--amber); }
+.model-row .model-state button { font: 10.5px var(--mono); color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.model-row .model-state button:hover { color: var(--amber); }
+.model-row .model-state button:disabled { color: var(--mute); text-decoration: none; }
+.model-row .model-state .bar { display: inline-block; width: 90px; height: 4px; background: var(--mute); position: relative; top: -1px; }
+.model-row .model-state .bar i { display: block; height: 100%; background: var(--ink); }
+.ob-local-hint { margin-top: 12px; }

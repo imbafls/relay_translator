@@ -3,10 +3,15 @@ import type {
   AppConfig,
   AudioDeviceInfo,
   ControlStatus,
+  HardwareInfo,
   KeyValidation,
+  ModelStatus,
   SessionState,
   UpdateStatus,
 } from "@callout-relay/shared";
+
+/** what the main process can ask the renderer to do (tray, Stream Deck, updater) */
+export type RendererCommand = "start" | "stop" | "setup";
 
 export interface RendererBridge {
   getConfig(): Promise<AppConfig>;
@@ -29,7 +34,14 @@ export interface RendererBridge {
   openExternal(url: string): Promise<void>;
   reportState(state: SessionState, error?: string): void;
   reportDevices(devices: AudioDeviceInfo[]): void;
-  onCommand(cb: (cmd: "start" | "stop") => void): void;
+  onCommand(cb: (cmd: RendererCommand) => void): void;
+  /** CPU / RAM summary used for the local model recommendation */
+  hardwareInfo(): Promise<HardwareInfo>;
+  /** fetch + unpack a catalog model; resolves when it is ready */
+  downloadModel(id: string): Promise<ModelStatus>;
+  cancelDownload(): Promise<boolean>;
+  removeModel(id: string): Promise<void>;
+  openModelsFolder(): Promise<void>;
   onConfigChanged(cb: (cfg: AppConfig) => void): void;
   onStatus(cb: (status: ControlStatus) => void): void;
 }
@@ -43,8 +55,13 @@ contextBridge.exposeInMainWorld("cr", {
   reportState: (state: SessionState, error?: string) =>
     ipcRenderer.send("session:update", { state, error }),
   reportDevices: (devices: AudioDeviceInfo[]) => ipcRenderer.send("devices:update", devices),
-  onCommand: (cb: (cmd: "start" | "stop") => void) =>
+  onCommand: (cb: (cmd: RendererCommand) => void) =>
     ipcRenderer.on("session:command", (_e, cmd) => cb(cmd)),
+  hardwareInfo: () => ipcRenderer.invoke("hardware:info"),
+  downloadModel: (id: string) => ipcRenderer.invoke("models:download", id),
+  cancelDownload: () => ipcRenderer.invoke("models:cancel"),
+  removeModel: (id: string) => ipcRenderer.invoke("models:remove", id),
+  openModelsFolder: () => ipcRenderer.invoke("models:open-folder"),
   onConfigChanged: (cb: (cfg: AppConfig) => void) =>
     ipcRenderer.on("config:changed", (_e, cfg) => cb(cfg)),
   onStatus: (cb: (status: ControlStatus) => void) =>
