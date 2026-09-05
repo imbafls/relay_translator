@@ -1,0 +1,58 @@
+{
+  "name": "@callout-relay/standalone",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Callout Relay desktop app: translated game comms to your friend's phone",
+  "author": "Callout Relay",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.typecheck.json --noEmit",
+    "dev": "pnpm build && electron .",
+    "start": "electron .",
+    "dist": "pnpm typecheck && pnpm build && electron-builder --win"
+  },
+  "dependencies": {
+    "@callout-relay/companion": "workspace:*",
+    "@callout-relay/relay": "workspace:*",
+    "@callout-relay/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  },
+  "build": {
+    "appId": "com.calloutrelay.app",
+    "productName": "Callout Relay",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Callout Relay"
+    },
+    "portable": {
+      "artifactName": "CalloutRelay-Portable-${version}.exe"
+    }
+  }
+}

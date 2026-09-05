@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src *; media-src blob:; worker-src blob:;" />
+  <title>Callout Relay</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-dot"></span>
+      Callout Relay
+      <span id="version" class="ver">v0.1.0</span>
+    </div>
+    <div id="sessionState" class="session-state idle">idle</div>
+  </header>
+
+  <main>
+    <!-- control card -->
+    <section class="card control">
+      <button id="startStop" class="primary">Start session</button>
+      <div class="hint" id="statusHint">Capture your mic or the game audio and share a live translated feed.</div>
+      <div id="errorBox" class="error hidden"></div>
+    </section>
+
+    <!-- link card -->
+    <section class="card">
+      <h2>Viewer link</h2>
+      <div class="link-row">
+        <input id="viewerUrl" readonly placeholder="start a session to get a link" />
+        <button id="copyLink" title="Copy link">Copy</button>
+        <button id="openLink" title="Open in browser">Open</button>
+        <button id="rotateLink" title="New link (kills current viewers)">New</button>
+      </div>
+      <div class="row-inline">
+        <label><input type="checkbox" id="obsOverlay" /> OBS overlay link (?obs=1, transparent)</label>
+        <label>Link mode
+          <select id="linkMode">
+            <option value="unique">unique — new link each session</option>
+            <option value="fixed">fixed — stable link</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <!-- audio + models -->
+    <section class="card grid2">
+      <div>
+        <h2>Audio source</h2>
+        <select id="audioSource"></select>
+        <button id="refreshDevices" class="ghost">Refresh devices</button>
+      </div>
+      <div>
+        <h2>Languages</h2>
+        <div class="pair-selects">
+          <label>from
+            <select id="langSource"></select>
+          </label>
+          <span class="arrow">&rarr;</span>
+          <label>to
+            <select id="langTarget"></select>
+          </label>
+        </div>
+      </div>
+      <div>
+        <h2>Speech-to-text</h2>
+        <select id="stt"></select>
+      </div>
+      <div>
+        <h2>Translation</h2>
+        <select id="translation"></select>
+      </div>
+    </section>
+
+    <!-- keys + relay -->
+    <section class="card">
+      <details>
+        <summary>API keys &amp; relay</summary>
+        <div class="grid2">
+          <label class="field">Deepgram API key
+            <input id="deepgramApiKey" type="password" placeholder="deepgram key" />
+          </label>
+          <label class="field">Gemini API key
+            <input id="geminiApiKey" type="password" placeholder="gemini key" />
+          </label>
+          <label class="field">Relay URL (empty = run embedded on this PC)
+            <input id="relayUrl" type="text" placeholder="ws://your-server:8787" />
+          </label>
+          <label class="field">Relay port (embedded)
+            <input id="relayPort" type="number" min="1024" max="65535" />
+          </label>
+          <label class="field">Public base URL (tunnel / hosted relay)
+            <input id="publicBaseUrl" type="text" placeholder="https://my-tunnel.example.com" />
+          </label>
+        </div>
+      </details>
+    </section>
+
+    <!-- log -->
+    <section class="card log-card">
+      <h2>Session log</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

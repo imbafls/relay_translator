@@ -1,0 +1,12 @@
+{
+  "main": "relay-bundle.cjs",
+  "output": "sea-prep.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": true,
+  "assets": {
+    "viewer/index.html": "../../viewer/public/index.html",
+    "viewer/app.js": "../../viewer/public/app.js",
+    "viewer/style.css": "../../viewer/public/style.css"
+  }
+}

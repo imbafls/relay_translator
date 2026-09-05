@@ -1,0 +1,31 @@
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+
+# secrets — never commit
+.env
+.env.*
+sec.txt
+!.env.example
+packages/relay/sea/vps.env
+
+# scratch / tooling
+.firecrawl/
+
+# relay state / local data
+relay-state.json
+*.local.json
+
+# electron
+apps/standalone/release/
+release/
+
+# streamdeck build output
+apps/streamdeck/*.sdPlugin/
+
+# SEA build artifacts
+packages/relay/sea/sea-prep.blob
+packages/relay/sea/*.exe
+packages/relay/sea/callout-relay-server*
+packages/relay/sea/relay-bundle.cjs

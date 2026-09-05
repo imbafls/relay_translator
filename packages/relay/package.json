@@ -1,0 +1,24 @@
+{
+  "name": "@callout-relay/relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebSocket relay: audio in -> Deepgram STT -> Gemini translate -> viewer broadcast",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": { "callout-relay-server": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@callout-relay/shared": "workspace:*",
+    "@callout-relay/viewer": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@callout-relay/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Phone/OBS subtitle page served by the relay",
+  "main": "public/index.html",
+  "scripts": {
+    "build": "node -e \"1\"",
+    "typecheck": "node -e \"1\""
+  }
+}

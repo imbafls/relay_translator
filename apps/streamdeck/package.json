@@ -1,0 +1,20 @@
+{
+  "name": "@callout-relay/streamdeck",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stream Deck plugin for Callout Relay (controls the companion process)",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && node bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@callout-relay/companion": "workspace:*",
+    "@callout-relay/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@elgato/streamdeck": "^0.2.0",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}
