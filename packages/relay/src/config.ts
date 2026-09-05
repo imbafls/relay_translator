@@ -80,18 +80,34 @@ export function relayDataDir(): string {
   return base;
 }
 
-/** Minimal dotenv loader so `pnpm dev:relay` picks up the repo root .env. */
+/**
+ * Minimal dotenv loader. Not only a dev convenience: cli.ts runs it on the
+ * directory beside the binary, so on the VPS this is what reads
+ * /opt/callout-relay/.env and supplies DEEPGRAM_API_KEY and GEMINI_API_KEY. A
+ * value read slightly wrong is a key that fails authentication for a reason
+ * nothing on the box will explain, so the parsing is deliberately forgiving
+ * about how the file was written and strict about what ends up in the value.
+ */
 export function tryLoadDotenv(dirs: string[]): void {
   for (const dir of dirs) {
     const file = path.join(dir, ".env");
     try {
       if (!fs.existsSync(file)) continue;
       const text = fs.readFileSync(file, "utf8");
-      for (const line of text.split(/\r?\n/)) {
-        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      // every line ending, not just LF and CRLF: a lone CR is not a line
+      // terminator `.` will cross, so one anywhere in the file used to make the
+      // regex fail and drop that assignment without a word
+      for (const line of text.split(/\r\n|\r|\n/)) {
+        //  `(.*?)\s*$` is lazy on purpose. Greedy `.*` swallows trailing
+        //  whitespace and leaves `\s*$` matching nothing, so a key pasted with
+        //  a space after it kept the space.
+        const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
         if (!m) continue;
         const [, key, raw] = m;
-        const value = raw.replace(/^["']|["']$/g, "");
+        // quotes have to match to count, and whatever is inside them is kept
+        // verbatim - that is the way to write a value with real spaces in it
+        const quoted = /^(["'])([\s\S]*)\1$/.exec(raw);
+        const value = quoted ? quoted[2] : raw;
         if (process.env[key] === undefined) process.env[key] = value;
       }
     } catch {

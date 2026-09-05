@@ -465,3 +465,33 @@ first-party runtime source.
   refused. Nothing else moved: the explicit-span, open-ended, start-past-EOF and
   backwards cases all passed before the change and still do.
 - **Status**: PASSED
+
+---
+
+### Turn 17/100 - Resilience & state (the .env that supplies the VPS its keys)
+
+Turn 16's lesson generalised: hand-rolled implementations of standard formats
+are where the sharp edges are. This is the last one in the tree.
+
+- **Tests Added**: `packages/relay/test/dotenv.test.ts`, 14 tests over
+  `tryLoadDotenv`: plain assignments, comments, blank lines, CRLF, quoted values
+  of both kinds, an equals sign inside a value, an empty value, a shell
+  `export` line, the environment winning over the file, a missing file, and four
+  kinds of whitespace a real file picks up.
+- **Issue/Gap Uncovered**: Its doc comment calls it a convenience for
+  `pnpm dev:relay`, but `cli.ts` runs it on the directory beside the binary, so
+  on the VPS it is what reads `/opt/callout-relay/.env` and supplies both API
+  keys. Three faults. `(.*)\s*$` is greedy, so `.*` swallowed trailing
+  whitespace and `\s*$` matched nothing - a key pasted with a space after it
+  kept the space, and authentication then fails while every log shows the key
+  looking correct. A trailing tab did the same. And a lone CR anywhere in the
+  file made the whole regex fail, because `.` will not cross a carriage return:
+  the assignment was skipped in silence, so the relay came up with no key at
+  all. `vps.env` is authored on Windows and deployed to Linux, so mixed endings
+  are not hypothetical.
+- **Enhancement Shipped**: The line split takes CR, LF and CRLF. The value match
+  is lazy, so trailing whitespace is trimmed rather than kept. Quotes have to
+  match to count, and what is inside them is preserved verbatim, which is how a
+  value with real spaces gets written deliberately. A shell `export` prefix is
+  accepted, since these files are often sourced as well as parsed.
+- **Status**: PASSED
