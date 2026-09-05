@@ -21,6 +21,7 @@ const html = fs.readFileSync(path.join(rendererDir, "index.html"), "utf8");
 
 interface Calls {
   setConfig: Partial<AppConfig>[];
+  validateKey: string[];
 }
 
 let calls: Calls;
@@ -44,7 +45,10 @@ function bridge(config: AppConfig) {
     },
     prepareSession: async () => ({ viewerUrl: "", localViewerUrl: "", relayUrl: "" }),
     rotateLink: async () => undefined,
-    validateKey: async () => ({ valid: true }),
+    validateKey: async (provider: "deepgram" | "gemini") => {
+      calls.validateKey.push(provider);
+      return { valid: true };
+    },
     checkForUpdate: async () => undefined,
     installUpdate: async () => false,
     onUpdate: () => {},
@@ -62,10 +66,22 @@ function bridge(config: AppConfig) {
 }
 
 /** let boot()'s awaits settle */
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 30));
+const settle = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The onboarding key checks are debounced by 500 ms - they are wired to
+ * keystrokes - so reopening setup does not validate anything immediately.
+ */
+async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`${what} never happened within ${ms}ms`);
+    await settle(20);
+  }
+}
 
 async function bootWith(config: Partial<AppConfig>): Promise<void> {
-  calls = { setConfig: [] };
+  calls = { setConfig: [], validateKey: [] };
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
 
@@ -129,6 +145,47 @@ describe("what the app opens on", () => {
   it("goes straight to the stage once setup is done", async () => {
     await bootWith({ setupDone: true });
     expect(visible("onboarding")).toBe(false);
+  });
+});
+
+describe("setup reopening on keys that are already saved", () => {
+  /**
+   * The bug this guards was real enough to get its own commit. A key saved in
+   * an earlier run has no validation cached in this one, so step 2 opened
+   * showing EMPTY with CONTINUE dead, and the only enabled way out was SKIP -
+   * which turns off the very translation the key was there for.
+   */
+  it("re-checks a saved Gemini key instead of showing it as empty", async () => {
+    await bootWith({ setupDone: false, geminiApiKey: "gm-saved-earlier" });
+    await waitFor(() => calls.validateKey.includes("gemini"), "the gemini re-check");
+  });
+
+  it("re-checks a saved Deepgram key too", async () => {
+    await bootWith({ setupDone: false, deepgramApiKey: "dg-saved-earlier" });
+    await waitFor(() => calls.validateKey.includes("deepgram"), "the deepgram re-check");
+  });
+
+  it("does not check a key that was never saved", async () => {
+    await bootWith({ setupDone: false });
+    // well past the debounce, so this is absence rather than impatience
+    await settle(700);
+    expect(calls.validateKey).toEqual([]);
+  });
+
+  it("puts the saved keys back in the fields", async () => {
+    await bootWith({
+      setupDone: false,
+      deepgramApiKey: "dg-saved-earlier",
+      geminiApiKey: "gm-saved-earlier",
+    });
+    expect((document.getElementById("obDeepgramKey") as HTMLInputElement).value).toBe("dg-saved-earlier");
+    expect((document.getElementById("obGeminiKey") as HTMLInputElement).value).toBe("gm-saved-earlier");
+  });
+
+  it("always opens on the first step", async () => {
+    await bootWith({ setupDone: false, deepgramApiKey: "dg-saved-earlier" });
+    expect(document.getElementById("app")?.dataset.view).toBe("onboarding");
+    expect(document.getElementById("blkStt")?.classList.contains("current")).toBe(true);
   });
 });
 

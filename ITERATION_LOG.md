@@ -698,3 +698,27 @@ The harness built last turn, pointed at the 1900-line file it was built for.
   the eighteen `cr.*` methods answers, so the next test here starts from a
   booting app rather than from scratch.
 - **Status**: PASSED
+
+---
+
+### Turn 25/40 - Client UI (the setup flow's stale-key bug, pinned down)
+
+- **Tests Added**: 5 more in `apps/standalone/test/renderer.test.ts`, all through
+  the boot harness: a saved Gemini key being re-checked when setup opens, the
+  same for Deepgram, no check at all when nothing was saved, both fields
+  refilled from config, and setup always opening on step 1.
+- **Issue/Gap Uncovered**: Nothing new - this pins down a bug that was real
+  enough to get its own commit (`8aae344`), and whose consequence is spelled out
+  in a comment beside the fix: a key saved in an earlier run has no validation
+  cached in this one, so step 2 opened showing EMPTY with CONTINUE dead, and the
+  only enabled way out was SKIP - which turns off the very translation the key
+  was there for. Removing the two re-check lines turns both tests red.
+  My own mistake this turn: the onboarding checks are debounced by 500 ms
+  because they are wired to keystrokes, and a 30 ms settle saw nothing. The
+  tests wait on the outcome now rather than on a guessed delay, and the negative
+  case waits past the debounce so it asserts absence rather than impatience.
+- **Enhancement Shipped**: Regression cover for a fixed bug that had none. That
+  is the second past bug this harness has locked down in two turns - the
+  gone-model fallback in turn 24, the stale-key reopen here - which is the
+  argument for having built it. The fixes existed; the guards did not.
+- **Status**: PASSED
