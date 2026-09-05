@@ -1,0 +1,16 @@
+# The relay is written on Windows and runs on Linux, so what is stored here has
+# to be LF regardless of who commits it. That is already true, but only because
+# every contributor so far has had core.autocrlf on - this makes it a property
+# of the repository instead of a property of the machine.
+#
+# It matters beyond tidiness: a stray CR reaching the VPS is how a .env line
+# stopped parsing (see tryLoadDotenv), and a CR in a config the box reads is the
+# same class of problem.
+* text=auto eol=lf
+
+# binaries, which must never be touched
+*.png binary
+*.woff2 binary
+*.exe binary
+*.bz2 binary
+*.onnx binary

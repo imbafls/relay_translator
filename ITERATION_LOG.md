@@ -579,3 +579,30 @@ form that only informs.
   not a trade worth making - CI is where that belongs until it has gone green
   once.
 - **Status**: PASSED
+
+---
+
+### Turn 21/100 - What crosses to Linux
+
+Went looking to close turn 20's open question by running the suite on Linux
+here. There is no WSL and no Docker on this machine, so it cannot be done and
+the caveat stands: the CI job is how that gets answered.
+
+- **Tests Added**: `packages/shared/test/lineEndings.test.ts`, 3 assertions -
+  that the detection flags a CRLF-stored blob and passes everything else, that
+  no tracked text file is stored with anything but LF, and that the check found
+  enough files to mean something. It reads what git *stores*, not the working
+  tree: CRLF on disk in a Windows checkout is expected and fine.
+- **Issue/Gap Uncovered**: None, and the hypothesis was wrong in a way worth
+  recording. Every commit this session warned about CRLF conversion, and files
+  from this repo are deployed to a Linux box, so a CR reaching the VPS looked
+  plausible - it is the exact bug turn 17 fixed in `tryLoadDotenv`. It is not
+  happening: the index holds 106 files as LF and 17 as binary, and nothing at
+  all with CRLF. The repo is already normalised correctly.
+- **Enhancement Shipped**: It was only correct because every contributor so far
+  has had `core.autocrlf` on - a property of the machines, not the repository.
+  `.gitattributes` makes it a property of the repository, and the guard fails if
+  a CRLF blob is ever committed. Both are preventive rather than corrective, and
+  the commit says so. Adding the attribute changed nothing that is already
+  stored, which is the check that it was a no-op.
+- **Status**: PASSED
