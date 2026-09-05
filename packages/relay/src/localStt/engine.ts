@@ -82,17 +82,26 @@ export function createLocalSttStream(cfg: LocalSttConfig, events: SttEvents): St
   }
 
   if (worker && model && files) {
-    worker.on("message", (msg: FromWorker) => {
+    const thread = worker;
+    thread.on("message", (msg: FromWorker) => {
+      if (msg.type === "closed") {
+        void thread.terminate();
+        return;
+      }
+      // once closed nothing may reach the session: a model that finishes
+      // loading after STOP must not flip viewers back to live
+      if (closed) return;
       if (msg.type === "open") {
         log("info", `local stt ready: ${model.label} (${model.mode})`);
         events.onOpen?.();
       } else if (msg.type === "partial") events.onPartial?.(msg.text);
       else if (msg.type === "final") events.onFinal?.(msg.text, { audioEndSec: msg.audioEndSec });
       else if (msg.type === "error") fail(msg.message);
-      else if (msg.type === "closed") void worker?.terminate();
     });
-    worker.on("error", (err) => fail(`local stt crashed: ${err.message}`));
-    worker.on("exit", () => {
+    thread.on("error", (err) => {
+      if (!closed) fail(`local stt crashed: ${err.message}`);
+    });
+    thread.on("exit", () => {
       if (!closed) {
         closed = true;
         events.onClose?.();
@@ -107,7 +116,7 @@ export function createLocalSttStream(cfg: LocalSttConfig, events: SttEvents): St
       language: cfg.language,
       numThreads: defaultThreads(),
     };
-    worker.postMessage(init);
+    thread.postMessage(init);
   }
 
   return {

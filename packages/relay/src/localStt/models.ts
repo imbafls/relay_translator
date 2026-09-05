@@ -124,6 +124,8 @@ export class ModelManager {
     this.emit(true);
 
     const dest = path.join(this.modelsDir, id);
+    /** only a folder this call created is removed on failure */
+    let createdDest = false;
     try {
       fs.mkdirSync(this.modelsDir, { recursive: true });
       if (needsVad(model.kind) && !this.vadFile()) {
@@ -131,8 +133,9 @@ export class ModelManager {
         await this.fetchFile(`${MODEL_RELEASE_BASE}/${VAD_MODEL_FILE}`, path.join(this.modelsDir, VAD_MODEL_FILE), ctl.signal);
       }
       if (!this.modelDir(model)) {
-        fs.rmSync(dest, { recursive: true, force: true });
+        fs.rmSync(dest, { recursive: true, force: true, maxRetries: 3 });
         fs.mkdirSync(dest, { recursive: true });
+        createdDest = true;
         this.log("info", `downloading ${model.archive} (${model.sizeMb} MB)`);
         await this.fetchArchive(`${MODEL_RELEASE_BASE}/${model.archive}.tar.bz2`, dest, model.sizeMb, status, ctl.signal);
         if (!resolveModelFiles(model.kind, dest)) {
@@ -141,18 +144,25 @@ export class ModelManager {
       }
       this.log("info", `model ready: ${id}`);
     } catch (err) {
-      fs.rmSync(dest, { recursive: true, force: true });
       const detail = ctl.signal.aborted ? "cancelled" : String((err as Error).message || err).slice(0, 160);
+      if (createdDest) {
+        // a half-written folder must never look like a model; a delete that
+        // fails (file still open, Explorer, antivirus) is logged, not fatal
+        try {
+          fs.rmSync(dest, { recursive: true, force: true, maxRetries: 3 });
+        } catch (rmErr) {
+          this.log("warn", `could not remove partial model folder ${dest}: ${String((rmErr as Error).message || rmErr)}`);
+        }
+      }
       if (!ctl.signal.aborted) {
         this.errors.set(id, detail);
         this.log("error", `model download failed (${id}): ${detail}`);
       }
+      throw new Error(detail);
+    } finally {
       this.active = null;
       this.emit(true);
-      throw new Error(detail);
     }
-    this.active = null;
-    this.emit(true);
     return this.status(id);
   }
 

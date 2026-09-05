@@ -120,16 +120,7 @@ function buildStreaming(sherpa: Sherpa, init: Extract<ToWorker, { type: "init" }
       }
     },
     close() {
-      // whatever was being said when the session stopped still counts
-      try {
-        stream.acceptWaveform({ samples: new Float32Array(SAMPLE_RATE), sampleRate: SAMPLE_RATE });
-        while (rec.isReady(stream)) rec.decode(stream);
-        const text = tidy(rec.getResult(stream).text);
-        if (text && text !== last) send({ type: "partial", text });
-        if (text) send({ type: "final", text, audioEndSec: fed / SAMPLE_RATE });
-      } catch {
-        /* closing anyway */
-      }
+      /* the session has already stopped; the recognizer dies with the thread */
     },
   };
 }
@@ -254,17 +245,7 @@ function buildPhrase(sherpa: Sherpa, init: Extract<ToWorker, { type: "init" }>):
       }
     },
     close() {
-      try {
-        vad.flush();
-        while (!vad.isEmpty()) {
-          const seg = vad.front();
-          vad.pop();
-          const { text } = decode(seg.samples);
-          if (text) send({ type: "final", text, audioEndSec: (seg.start + seg.samples.length) / SAMPLE_RATE });
-        }
-      } catch {
-        /* closing anyway */
-      }
+      /* the session has already stopped; nothing sent now would be delivered */
     },
   };
 }
