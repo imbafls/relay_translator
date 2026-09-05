@@ -1,4 +1,4 @@
-import { Languages, UplinkToServer } from "@callout-relay/shared";
+import { Languages, ServerToUplink, UplinkToServer } from "@callout-relay/shared";
 import { getWebSocketImpl } from "./wsImpl";
 
 /**
@@ -12,17 +12,24 @@ export class UplinkClient {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = true;
-  private hello: { languages: Languages; translates: boolean } = {
+  private hello: { languages: Languages; translates: boolean; since?: number } = {
     languages: { source: "en", target: "vi" },
     translates: true,
   };
+  private pingSentAt = 0;
 
   state: "idle" | "connecting" | "connected" | "disconnected" | "error" = "idle";
+  /** last ping round-trip to the remote relay (ms), undefined until measured */
+  rttMs: number | undefined;
+  /** viewers attached to the remote relay (reported by it) */
+  remoteViewers = 0;
 
   constructor(
     private readonly url: string,
     private readonly hooks: {
       onState?: (state: UplinkClient["state"], detail?: string) => void;
+      /** remote viewer count / RTT changed */
+      onStats?: (stats: { remoteViewers: number; rttMs?: number }) => void;
     } = {},
   ) {}
 
@@ -33,7 +40,7 @@ export class UplinkClient {
     return ws.readyState === openConst;
   }
 
-  connect(hello: { languages: Languages; translates: boolean }): void {
+  connect(hello: { languages: Languages; translates: boolean; since?: number }): void {
     this.stopped = false;
     this.hello = hello;
     this.open();
@@ -54,17 +61,30 @@ export class UplinkClient {
 
     ws.onopen = () => {
       this.attempt = 0;
-      this.send({ type: "hello", languages: this.hello.languages, translates: this.hello.translates });
+      this.send({
+        type: "hello",
+        languages: this.hello.languages,
+        translates: this.hello.translates,
+        since: this.hello.since,
+      });
       this.setState("connected");
       this.startPing();
     };
 
     ws.onmessage = (ev: MessageEvent) => {
+      let msg: ServerToUplink;
       try {
-        const msg = JSON.parse(String(ev.data));
-        if (msg.type === "error") this.setState("error", msg.message);
+        msg = JSON.parse(String(ev.data));
       } catch {
-        /* noop */
+        return;
+      }
+      if (msg.type === "error") this.setState("error", msg.message);
+      else if (msg.type === "pong") {
+        if (this.pingSentAt) this.rttMs = Math.max(0, Date.now() - this.pingSentAt);
+        this.hooks.onStats?.({ remoteViewers: this.remoteViewers, rttMs: this.rttMs });
+      } else if (msg.type === "viewers") {
+        this.remoteViewers = Number(msg.count) || 0;
+        this.hooks.onStats?.({ remoteViewers: this.remoteViewers, rttMs: this.rttMs });
       }
     };
 
@@ -72,6 +92,8 @@ export class UplinkClient {
       this.stopPing();
       if (this.ws !== ws) return;
       this.ws = null;
+      this.remoteViewers = 0;
+      this.rttMs = undefined;
       if (this.stopped) {
         this.setState("idle");
         return;
@@ -97,7 +119,12 @@ export class UplinkClient {
 
   private startPing(): void {
     this.stopPing();
-    this.pingTimer = setInterval(() => this.send({ type: "ping" }), 20000);
+    const ping = (): void => {
+      this.pingSentAt = Date.now();
+      this.send({ type: "ping" });
+    };
+    ping();
+    this.pingTimer = setInterval(ping, 20000);
   }
 
   private stopPing(): void {
@@ -114,7 +141,7 @@ export class UplinkClient {
     if (this.connected) this.ws!.send(JSON.stringify(msg));
   }
 
-  sendHello(hello: { languages: Languages; translates: boolean }): void {
+  sendHello(hello: { languages: Languages; translates: boolean; since?: number }): void {
     this.hello = hello;
     this.send({ type: "hello", ...hello });
   }
@@ -123,8 +150,8 @@ export class UplinkClient {
     this.send(msg);
   }
 
-  sendStatus(live: boolean, message?: string): void {
-    this.send({ type: "status", live, message });
+  sendStatus(live: boolean, message?: string, since?: number): void {
+    this.send({ type: "status", live, message, since });
   }
 
   disconnect(): void {

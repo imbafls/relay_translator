@@ -14,7 +14,15 @@ import * as path from "path";
 import * as fs from "fs";
 import { ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
-import { AppConfig, AudioDeviceInfo, ControlStatus, ServerToViewer, SessionState, UsageInfo } from "@callout-relay/shared";
+import {
+  AppConfig,
+  AudioDeviceInfo,
+  ControlStatus,
+  KeyValidation,
+  ServerToViewer,
+  SessionState,
+  UsageInfo,
+} from "@callout-relay/shared";
 
 // dev convenience: pick up DEEPGRAM_API_KEY / GEMINI_API_KEY from repo .env
 tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
@@ -88,8 +96,9 @@ function phoneUrl(): string | undefined {
   return `${base}/watch/${token}`;
 }
 
-/** the link shown front-and-center: internet link when configured, else local */
+/** the link shown front-and-center (tray, Stream Deck): follows the OUTPUT choice */
 function viewerUrl(): string | undefined {
+  if (config().output === "obs") return localViewerUrl();
   return phoneUrl() || localViewerUrl();
 }
 
@@ -108,6 +117,7 @@ async function startEmbeddedRelay(): Promise<void> {
     deepgramApiKey: cfg.deepgramApiKey,
     geminiApiKey: cfg.geminiApiKey,
     log,
+    onViewers: () => broadcastStatus(),
   });
   log("info", `local relay up on :${relay.port}`);
   startUplink();
@@ -141,10 +151,12 @@ function startUplink(): void {
       log("info", `uplink: ${uplinkState}${detail ? ` — ${detail}` : ""}`);
       broadcastStatus();
     },
+    onStats: () => broadcastStatus(),
   });
   uplink.connect({
     languages: cfg.languages,
-    translates: cfg.translationEnabled !== false,
+    translates: translationActive(cfg),
+    since: sessionStartedAt,
   });
   void syncRemoteViewerToken();
 }
@@ -201,9 +213,9 @@ function bridgeBroadcasts(): void {
         latency: msg.latency,
       });
     } else if (msg.type === "status") {
-      uplink.sendStatus(msg.live, msg.message);
+      uplink.sendStatus(msg.live, msg.message, msg.since);
     } else if (msg.type === "hello" && msg.live) {
-      uplink.sendHello({ languages: msg.languages, translates: msg.translates !== false });
+      uplink.sendHello({ languages: msg.languages, translates: msg.translates !== false, since: msg.since });
     }
   });
 }
@@ -215,6 +227,64 @@ async function refreshUsage(): Promise<void> {
     broadcastStatus();
   } catch {
     /* keep last */
+  }
+}
+
+/** translation runs only when enabled AND a Gemini key exists (onboarding may skip it) */
+function translationActive(cfg: AppConfig): boolean {
+  return cfg.translationEnabled !== false && !!cfg.geminiApiKey;
+}
+
+/**
+ * Cheap provider round-trips used by onboarding / the keys view.
+ * Deepgram: list projects (+ balance when the account exposes it).
+ * Gemini: list models. Never throws — returns {valid:false, detail}.
+ */
+async function validateKey(provider: "deepgram" | "gemini", key: string): Promise<KeyValidation> {
+  if (!key) return { valid: false, detail: "empty" };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    if (provider === "deepgram") {
+      const res = await fetch("https://api.deepgram.com/v1/projects", {
+        headers: { Authorization: `Token ${key}` },
+        signal: ctl.signal,
+      });
+      if (res.status === 401 || res.status === 403) return { valid: false, detail: "key rejected" };
+      if (!res.ok) return { valid: false, detail: `deepgram http ${res.status}` };
+      const data = (await res.json()) as { projects?: { project_id?: string }[] };
+      const projectId = data?.projects?.[0]?.project_id;
+      let creditUsd: number | undefined;
+      if (projectId) {
+        try {
+          const bal = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/balances`, {
+            headers: { Authorization: `Token ${key}` },
+            signal: ctl.signal,
+          });
+          if (bal.ok) {
+            const b = (await bal.json()) as { balances?: { amount?: number }[] };
+            const total = (b?.balances || []).reduce((sum, x) => sum + (Number(x?.amount) || 0), 0);
+            if (Number.isFinite(total) && total > 0) creditUsd = total;
+          }
+        } catch {
+          /* balance is optional */
+        }
+      }
+      return { valid: true, creditUsd };
+    }
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(key)}`,
+      { signal: ctl.signal },
+    );
+    if (res.ok) return { valid: true };
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      return { valid: false, detail: "key rejected" };
+    }
+    return { valid: false, detail: `gemini http ${res.status}` };
+  } catch (err) {
+    return { valid: false, detail: ctl.signal.aborted ? "timed out" : "no connection" };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -257,6 +327,9 @@ function currentStatus() {
       localViewerUrl: localViewerUrl(),
       remoteViewerUrl: phoneUrl(),
       uplinkState: uplinkState,
+      uplinkRttMs: uplink?.rttMs,
+      viewers: relay?.viewerCount() ?? 0,
+      remoteViewers: uplink?.remoteViewers ?? 0,
     },
     devices,
     config: cfg,
@@ -295,7 +368,8 @@ async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
     uplink?.connected &&
       uplink.sendHello({
         languages: cfg.languages,
-        translates: cfg.translationEnabled !== false,
+        translates: translationActive(cfg),
+        since: sessionStartedAt,
       });
   }
   win?.webContents.send("config:changed", cfg);
@@ -330,6 +404,12 @@ function registerIpc(): void {
   ipcMain.handle("open-external", (_e, url: string) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
   });
+
+  ipcMain.handle(
+    "keys:validate",
+    (_e, req: { provider: "deepgram" | "gemini"; key: string }): Promise<KeyValidation> =>
+      validateKey(req?.provider, String(req?.key || "")),
+  );
 
   ipcMain.handle("link:rotate", async () => {
     await rotateLink();
@@ -387,7 +467,7 @@ function createWindow(): void {
     minWidth: 720,
     title: APP_NAME,
     autoHideMenuBar: true,
-    backgroundColor: "#0e1117",
+    backgroundColor: "#131313",
     icon: path.join(__dirname, "..", "assets", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

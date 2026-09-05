@@ -31,6 +31,10 @@ export class ConfigStore {
       console.warn(`[companion] config file unreadable, using defaults: ${this.file}`);
     }
     this.cached = this.merge(DEFAULT_CONFIG, stored);
+    // migration: pre-0.3 configs chose OBS with a boolean instead of `output`
+    if (stored.output === undefined && stored.obsOverlay === true) {
+      this.cached.output = "obs";
+    }
     return this.cached;
   }
 

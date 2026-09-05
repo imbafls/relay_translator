@@ -10,6 +10,8 @@ export interface Languages {
   target: LanguageCode;
 }
 
+export type OutputTarget = "phone" | "obs" | "both";
+
 export interface AppConfig {
   /** STT model id, e.g. "deepgram-nova-3" */
   stt: string;
@@ -24,8 +26,10 @@ export interface AppConfig {
   showLatency: boolean;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
-  /** viewer link gets ?obs=1 appended for OBS browser source */
+  /** @deprecated superseded by `output`; kept so old config files still parse */
   obsOverlay: boolean;
+  /** where captions are shown: phone link (internet/LAN), OBS browser source, or both */
+  output: OutputTarget;
 
   /** secrets (stored in local config file / env, never shipped) */
   deepgramApiKey?: string;
@@ -51,6 +55,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   showLatency: true,
   linkMode: "unique",
   obsOverlay: false,
+  output: "phone",
   relayPort: 8787,
 };
 
@@ -100,10 +105,10 @@ export interface SubtitleLatency {
 }
 
 export type ServerToViewer =
-  | { type: "hello"; languages: Languages; live: boolean; translates: boolean }
+  | { type: "hello"; languages: Languages; live: boolean; translates: boolean; since?: number }
   | { type: "partial"; id: number; source: string }
   | { type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency }
-  | { type: "status"; live: boolean; message?: string }
+  | { type: "status"; live: boolean; message?: string; since?: number }
   | { type: "kicked"; reason: string }
   | { type: "pong" };
 
@@ -112,6 +117,7 @@ export type ViewerToServer = { type: "ping" } | { type: "sync" };
 export type ServerToPublisher =
   | { type: "ready"; sampleRate: number }
   | { type: "status"; live: boolean; message?: string }
+  | { type: "partial"; id: number; source: string }
   | { type: "subtitle"; id: number; source: string; target?: string; latency?: SubtitleLatency }
   | { type: "error"; message: string }
   | { type: "pong" };
@@ -137,12 +143,17 @@ export type PublisherToServer =
 // ---------------------------------------------------------------------------
 
 export type UplinkToServer =
-  | { type: "hello"; languages: Languages; translates: boolean }
+  | { type: "hello"; languages: Languages; translates: boolean; since?: number }
   | { type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency }
-  | { type: "status"; live: boolean; message?: string }
+  | { type: "status"; live: boolean; message?: string; since?: number }
   | { type: "ping" };
 
-export type ServerToUplink = { type: "ready" } | { type: "error"; message: string } | { type: "pong" };
+export type ServerToUplink =
+  | { type: "ready" }
+  | { type: "error"; message: string }
+  | { type: "pong" }
+  /** number of viewers currently attached to the remote relay */
+  | { type: "viewers"; count: number };
 
 // ---------------------------------------------------------------------------
 // Local control API (companion process <-> standalone UI <-> Stream Deck)
@@ -176,6 +187,12 @@ export interface ControlStatus {
     remoteViewerUrl?: string;
     /** uplink connection state to the remote relay (phone viewers) */
     uplinkState?: "off" | "connecting" | "connected" | "disconnected" | "error";
+    /** last measured uplink ping round-trip (ms) */
+    uplinkRttMs?: number;
+    /** viewers attached to the local relay (OBS + LAN phones) */
+    viewers?: number;
+    /** viewers attached to the remote relay via the uplink */
+    remoteViewers?: number;
   };
   devices: AudioDeviceInfo[];
   config: AppConfig;
@@ -199,6 +216,15 @@ export interface UsageInfo {
     /** rough USD estimate from model pricing (0 on free tier) */
     estCostUsd?: number;
   };
+}
+
+/** result of an API-key test request (see standalone `keys:validate`) */
+export interface KeyValidation {
+  valid: boolean;
+  /** short human reason when invalid / unreachable */
+  detail?: string;
+  /** Deepgram: remaining credit in USD when the API exposes it */
+  creditUsd?: number;
 }
 
 export interface ControlEvent {

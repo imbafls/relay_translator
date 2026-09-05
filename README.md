@@ -85,16 +85,32 @@ in `%APPDATA%\callout-relay\config.json` on Windows.
 
 Launch **Callout Relay** (Start Menu, desktop icon, or the portable exe).
 
-- Pick **Audio source**: `Default microphone` or `System audio (game + comms)`
-  (system audio uses Windows loopback capture — no stereo mix fiddling).
-- Languages default to `en -> vi`; models default to Nova-3 + Gemini 2.5 Flash.
-- Hit **Start session**, then **Copy** the viewer link and send it to your
-  friend. `unique` link mode mints a fresh link per session; rotate any time
-  with **New**.
+The window is a caption console: the live transcript is the whole stage, and
+every control sits in one signal-chain strip underneath it
+(`01 SOURCE -> 02 TRANSCRIBE -> 03 TRANSLATE -> 04 OUTPUT`).
+
+- **First run** walks you through three steps: a Deepgram key (required, checked
+  as you paste), a Gemini key (optional — skip it for English-only captions), and
+  your audio source plus where captions go.
+- **01 SOURCE** picks `Default microphone` or `System audio (game + comms)`
+  (system audio uses Windows loopback capture — no stereo mix fiddling). While
+  live it turns into an input level meter.
+- **03 TRANSLATE** holds the language pair and the on/off toggle. With no Gemini
+  key it greys out and the stage collapses to a single caption column.
+- **04 OUTPUT** chooses Phone, OBS, or Both. OBS is served entirely from this PC
+  and never needs a relay; phone links need one to leave your LAN.
+- Hit **START SESSION**, then **COPY** the link in the footer and send it to your
+  friend. `unique` link mode mints a fresh link per session; rotate any time with
+  **NEW**.
+- **KEYS** opens keys & relay settings, **LOG** shows the detailed session log
+  with per-line latency. `Esc` returns to the stage.
 - Closing the window hides to tray — capture keeps running mid-game. The tray
   menu can start/stop and rotate the link without opening the app.
 - Settings changes (model / language / audio source) apply live: the session
   restarts but the viewer link survives.
+
+The phone viewer, OBS overlay and Stream Deck property inspector share the same
+design; `DESIGN.md` is the spec they are all built against.
 
 ### Relay standalone (VPS / remote friend)
 

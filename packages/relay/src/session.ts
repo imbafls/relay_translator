@@ -1,4 +1,4 @@
-import { Languages, ServerToViewer, SubtitleLatency } from "@callout-relay/shared";
+import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
   createDeepgramStream,
@@ -41,13 +41,7 @@ export interface SessionDeps {
   /** fan-out to all viewers */
   toViewers(msg: ServerToViewer): void;
   /** echo subtitles to the publisher (in-app live log) */
-  toPublisher?(msg: {
-    type: "subtitle";
-    id: number;
-    source: string;
-    target?: string;
-    latency?: SubtitleLatency;
-  }): void;
+  toPublisher?(msg: Extract<ServerToPublisher, { type: "subtitle" | "partial" }>): void;
   /** aggregate translation usage (process lifetime) */
   geminiStats?: GeminiStats;
   /** aggregate STT audio (process lifetime) */
@@ -115,6 +109,7 @@ export class PublisherSession {
       },
       onPartial: (text: string) => {
         this.deps.toViewers({ type: "partial", id: this.segId + 1, source: text });
+        this.deps.toPublisher?.({ type: "partial", id: this.segId + 1, source: text });
       },
       onFinal: (text: string, meta?: { audioEndSec?: number }) => {
         const id = ++this.segId;

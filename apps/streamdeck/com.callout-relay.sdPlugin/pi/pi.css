@@ -1,0 +1,102 @@
+/* Stream Deck property inspector (DESIGN.md 3h) */
+:root {
+  --bg: #131313;
+  --ink: #efeae0;
+  --dim: #8a877f;
+  --mute: #3a3834;
+  --rule: rgba(239, 234, 224, 0.14);
+  --rule-2: rgba(239, 234, 224, 0.08);
+  --rule-3: rgba(239, 234, 224, 0.3);
+  --amber: #e0a43a;
+  --sans: Archivo, system-ui, "Segoe UI", sans-serif;
+  --mono: "Martian Mono", ui-monospace, Consolas, monospace;
+}
+@keyframes rl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 12px/1.4 var(--sans); }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+[hidden] { display: none !important; }
+.dim { color: var(--dim); }
+
+.pi { width: 100%; max-width: 320px; }
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-stretch: 75%;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.label .num { color: var(--ink); }
+
+.head { display: flex; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--rule); }
+.state { display: flex; align-items: center; gap: 8px; font-stretch: 75%; font-size: 10.5px; font-weight: 600; letter-spacing: 0.16em; color: var(--dim); }
+.state .dot { width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; }
+.state[data-state="on"] { color: var(--amber); }
+.state[data-state="on"] .dot { background: var(--amber); border-color: var(--amber); animation: rl-pulse 1.6s infinite; }
+.state[data-state="warn"] { color: var(--amber); }
+.key-hint { margin-left: auto; color: var(--dim); font-stretch: 75%; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; }
+
+.banner { padding: 10px 14px; border-bottom: 1px solid var(--rule-2); font: 10.5px var(--mono); color: var(--amber); }
+
+.link { padding: 12px 14px; border-bottom: 1px solid var(--rule-2); display: flex; flex-direction: column; gap: 6px; }
+.link-row { display: flex; gap: 12px; align-items: baseline; font: 11px var(--mono); }
+.link-row input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule-3);
+  color: var(--ink);
+  font: 11px var(--mono);
+  padding: 0 0 5px;
+  outline: none;
+  border-radius: 0;
+  text-overflow: ellipsis;
+}
+.link-row input::placeholder { color: var(--mute); }
+.link-row button { font: 11px var(--mono); color: var(--ink); }
+.link-row button.dim { color: var(--dim); }
+.link-row button:hover { color: var(--amber); }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; }
+.block { padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; min-width: 0; position: relative; }
+.block:nth-child(odd) { border-right: 1px solid var(--rule-2); }
+.block:nth-child(-n + 2) { border-bottom: 1px solid var(--rule-2); }
+.value { position: relative; display: flex; align-items: baseline; font-size: 13px; font-weight: 500; }
+.value select {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 0;
+  color: var(--ink);
+  font: 500 13px var(--sans);
+  padding: 0 14px 0 0;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  border-radius: 0;
+}
+.value select option { background: var(--bg); color: var(--ink); }
+.value .chev { position: absolute; right: 0; top: 0; color: var(--dim); pointer-events: none; }
+.value.pair { gap: 6px; }
+.value.pair select { flex: 0 1 auto; width: auto; padding-right: 0; }
+.value.pair .arrow { color: var(--dim); }
+.toggle { margin-left: auto; color: var(--ink); font: inherit; letter-spacing: inherit; text-transform: inherit; }
+.toggle.off { color: var(--dim); }
+.block.off .value select { color: var(--mute); }
+.block.off::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(239, 234, 224, 0.025) 6px 7px);
+  pointer-events: none;
+}
+
+.foot { padding: 10px 14px; border-top: 1px solid var(--rule-2); font: 10.5px var(--mono); color: var(--dim); }

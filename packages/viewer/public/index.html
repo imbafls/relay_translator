@@ -3,99 +3,88 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#0b0e14" />
-  <title>Callout Relay</title>
+  <meta name="theme-color" content="#131313" />
+  <title>Relay</title>
+  <link rel="stylesheet" href="fonts/fonts.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main id="stage">
-    <header id="hud" class="hud">
-      <span id="dot" class="dot off"></span>
-      <span id="statusText">connecting…</span>
-      <span id="langs"></span>
+  <!-- ============ LIVE ============ -->
+  <main id="live" class="screen">
+    <header class="hud">
+      <span id="hudState" class="hud-state" data-state="off"><span class="hud-dot"></span><span id="hudText">CONNECTING</span></span>
+      <span id="hudLangs" class="hud-langs"></span>
+      <span id="hudClock" class="hud-clock mono">00:00:00</span>
+      <button id="openDisplay" class="hud-aa" aria-label="Display settings">AA</button>
     </header>
-
     <section id="lines" class="lines" aria-live="polite"></section>
-
-    <div id="kicked" class="kicked hidden">
-      <h2>Link closed</h2>
-      <p id="kickedReason"></p>
-      <p class="dim">Ask for a fresh link from the Callout Relay app.</p>
-    </div>
   </main>
 
-  <button id="gear" class="gear" title="Display settings" aria-label="Display settings">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-  </button>
-
-  <aside id="settingsPanel" class="panel hidden" aria-label="Display settings">
-    <div class="panel-head">
-      <b>How subtitles look</b>
-      <button id="closeSettings" class="icon-btn" aria-label="Close">✕</button>
+  <!-- ============ DISPLAY SETTINGS ============ -->
+  <section id="display" class="screen" hidden>
+    <header class="hud hud-plain">
+      <button id="closeDisplay" class="hud-back">← BACK</button>
+      <span class="hud-right">DISPLAY</span>
+    </header>
+    <div id="previewRow" class="preview"></div>
+    <div class="display-body">
+      <div class="theme-bar" id="themeBar">
+        <button data-theme="dark">Dark</button>
+        <button data-theme="light">Light</button>
+        <button data-theme="obs-black">OBS black</button>
+        <button data-theme="obs-clear">OBS clear</button>
+      </div>
+      <div class="drow drow-size">
+        <div class="drow-head"><span>Size</span><span id="sizeVal" class="mono dim">21</span></div>
+        <div class="slider"><span class="a-sm">A</span><input id="setSize" type="range" min="14" max="40" step="1" /><span class="a-lg">A</span></div>
+      </div>
+      <label class="drow"><span>Show original</span><input id="setShowSource" type="checkbox" class="sq" /></label>
+      <label class="drow"><span>Show translation</span><input id="setShowTranslation" type="checkbox" class="sq" /></label>
+      <label class="drow"><span>Timestamps</span><input id="setTimestamps" type="checkbox" class="sq" /></label>
+      <label class="drow"><span>Text shadow</span><input id="setShadow" type="checkbox" class="sq" /></label>
+      <label class="drow drow-pick"><span>Font</span><span class="pick mono dim"><span id="fontVal">RELAY</span> ›</span>
+        <select id="setFont">
+          <option value="relay">Relay (Archivo)</option>
+          <option value="system">System default</option>
+          <option value="verdana">Verdana (clear)</option>
+          <option value="georgia">Georgia (serif)</option>
+          <option value="mono">Monospace</option>
+          <option value="impact">Impact (bold)</option>
+        </select>
+      </label>
+      <label class="drow drow-pick"><span>Alignment</span><span class="pick mono dim"><span id="alignVal">LEFT</span> ›</span>
+        <select id="setAlign"><option value="left">Left</option><option value="center">Center</option></select>
+      </label>
+      <label class="drow drow-pick"><span>Lines kept</span><span class="pick mono dim"><span id="linesVal">8</span> ›</span>
+        <select id="setLines"></select>
+      </label>
+      <div class="drow"><span>Colors</span>
+        <span class="swatches">
+          <label class="swatch" title="Text"><span id="swFg"></span><input id="setFg" type="color" /></label>
+          <label class="swatch" title="Accent"><span id="swAccent"></span><input id="setAccent" type="color" /></label>
+          <label class="swatch" title="Background"><span id="swBg"></span><input id="setBg" type="color" /></label>
+        </span>
+      </div>
     </div>
+    <footer class="display-foot"><button id="resetStyle">RESET</button><span>SAVED ON THIS DEVICE</span></footer>
+  </section>
 
-    <div class="presets">
-      <button data-preset="dark">Dark</button>
-      <button data-preset="light">Light</button>
-      <button data-preset="obs-black">OBS Black</button>
-      <button data-preset="obs-clear">OBS Clear</button>
+  <!-- ============ ENDED ============ -->
+  <section id="ended" class="screen" hidden>
+    <header class="hud">
+      <span class="hud-state" data-state="off"><span class="hud-dot"></span><span>OFF AIR</span></span>
+      <span id="endedAt" class="hud-clock mono"></span>
+    </header>
+    <div class="ended-body">
+      <div class="label">THIS LINK HAS ENDED</div>
+      <h1 class="ended-title">The session was stopped, or a new link was made.</h1>
+      <p class="ended-text">Ask the streamer for the current one. Your display settings are kept.</p>
+      <div class="ended-actions">
+        <button id="tryAgain" class="ink-cell">TRY AGAIN</button>
+        <span id="savedCount" class="dim-cell">0 LINES SAVED</span>
+      </div>
     </div>
-
-    <label class="row">Subtitle font
-      <select id="setFont">
-        <option value="system">System default</option>
-        <option value="verdana">Verdana (clear)</option>
-        <option value="georgia">Georgia (serif)</option>
-        <option value="mono">Consolas (mono)</option>
-        <option value="print">Handwritten</option>
-        <option value="impact">Impact (bold)</option>
-      </select>
-    </label>
-
-    <label class="row">Subtitle size <span class="val" id="setSizeVal"></span>
-      <input type="range" id="setSize" min="16" max="72" step="1" />
-    </label>
-
-    <label class="row toggle">Show original line
-      <input type="checkbox" id="setShowSource" />
-    </label>
-
-    <label class="row toggle">Show translation
-      <input type="checkbox" id="setShowTranslation" />
-    </label>
-
-    <label class="row">Original line size <span class="val" id="setSrcSizeVal"></span>
-      <input type="range" id="setSrcSize" min="10" max="40" step="1" />
-    </label>
-
-    <div class="row-colors">
-      <label>Text <input type="color" id="setFg" /></label>
-      <label>Accent <input type="color" id="setAccent" /></label>
-      <label>Line bg <input type="color" id="setBg" /></label>
-    </div>
-
-    <label class="row">Background opacity <span class="val" id="setBgOpVal"></span>
-      <input type="range" id="setBgOp" min="0" max="100" step="1" />
-    </label>
-
-    <label class="row toggle">Text shadow (readability over video)
-      <input type="checkbox" id="setShadow" />
-    </label>
-
-    <label class="row">Alignment
-      <select id="setAlign">
-        <option value="left">Left</option>
-        <option value="center">Center</option>
-      </select>
-    </label>
-
-    <label class="row">Lines kept in history <span class="val" id="setLinesVal"></span>
-      <input type="range" id="setLines" min="3" max="15" step="1" />
-    </label>
-
-    <button id="resetStyle" class="ghost">Reset to defaults</button>
-    <p class="hint">Saved on this device only. OBS users: set it up here once, the ?obs=1 link reuses it.</p>
-  </aside>
+  </section>
 
   <script src="app.js"></script>
 </body>

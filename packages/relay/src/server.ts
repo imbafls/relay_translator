@@ -7,6 +7,7 @@ import {
   DEFAULT_CONFIG,
   PublisherToServer,
   ServerToPublisher,
+  ServerToUplink,
   ServerToViewer,
   UplinkToServer,
   UsageInfo,
@@ -22,6 +23,8 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".json": "application/json",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 };
 
 /**
@@ -72,6 +75,8 @@ export interface RelayOptions {
   mockStt?: boolean;
   mockGemini?: boolean;
   log?: (level: "info" | "warn" | "error", message: string) => void;
+  /** called whenever the number of attached viewers changes */
+  onViewers?: (count: number) => void;
 }
 
 export interface RelayHandle {
@@ -85,6 +90,8 @@ export interface RelayHandle {
   onBroadcast(cb: (msg: ServerToViewer) => void): () => void;
   /** Deepgram balance + Gemini usage counters */
   getUsage(): Promise<UsageInfo>;
+  /** viewers currently attached to this relay */
+  viewerCount(): number;
   close(): Promise<void>;
 }
 
@@ -128,8 +135,48 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   let currentLanguages = { ...DEFAULT_CONFIG.languages };
   let currentTranslates = DEFAULT_CONFIG.translationEnabled !== false;
   const broadcastListeners = new Set<(msg: ServerToViewer) => void>();
+  /** epoch ms when the current stream went live (viewers run a session clock from it) */
+  let liveSince: number | undefined;
 
-  const toViewers = (msg: ServerToViewer): void => {
+  /** track live-since and attach it to status/hello messages */
+  const stamp = (msg: ServerToViewer): ServerToViewer => {
+    if (msg.type === "status") {
+      if (msg.live) {
+        if (msg.since) liveSince = msg.since;
+        else if (!liveSince) liveSince = Date.now();
+      } else {
+        liveSince = undefined;
+      }
+      return { ...msg, since: liveSince };
+    }
+    if (msg.type === "hello") {
+      if (msg.live && msg.since) liveSince = msg.since;
+      if (msg.live && !liveSince) liveSince = Date.now();
+      return { ...msg, since: msg.live ? liveSince : undefined };
+    }
+    return msg;
+  };
+
+  const sendUplink = (ws: WebSocket, msg: ServerToUplink): void => {
+    try {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    } catch {
+      /* noop */
+    }
+  };
+
+  const viewersChanged = (): void => {
+    const count = viewers.size;
+    if (uplink) sendUplink(uplink, { type: "viewers", count });
+    try {
+      opts.onViewers?.(count);
+    } catch {
+      /* listener errors must not break the relay */
+    }
+  };
+
+  const toViewers = (raw: ServerToViewer): void => {
+    const msg = stamp(raw);
     const payload = JSON.stringify(msg);
     for (const cb of broadcastListeners) {
       try {
@@ -199,6 +246,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       /* noop */
     }
     viewers.delete(token);
+    viewersChanged();
   }
 
   // -------------------------------------------------------------------------
@@ -395,6 +443,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   function onViewer(ws: WebSocket, token: string): void {
     kickViewer(token, "another device opened this link");
     viewers.set(token, ws);
+    viewersChanged();
 
     ws.send(
       JSON.stringify({
@@ -402,6 +451,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         languages: currentLanguages,
         live: isLive(),
         translates: currentTranslates,
+        since: isLive() ? liveSince : undefined,
       } satisfies ServerToViewer),
     );
 
@@ -416,6 +466,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
               languages: currentLanguages,
               live: isLive(),
               translates: currentTranslates,
+              since: isLive() ? liveSince : undefined,
             } satisfies ServerToViewer),
           );
         }
@@ -425,10 +476,16 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     });
 
     ws.on("close", () => {
-      if (viewers.get(token) === ws) viewers.delete(token);
+      if (viewers.get(token) === ws) {
+        viewers.delete(token);
+        viewersChanged();
+      }
     });
     ws.on("error", () => {
-      if (viewers.get(token) === ws) viewers.delete(token);
+      if (viewers.get(token) === ws) {
+        viewers.delete(token);
+        viewersChanged();
+      }
     });
   }
 
@@ -443,6 +500,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     }
     uplink = ws;
     log("info", "uplink connected (remote subtitle mirror)");
+    sendUplink(ws, { type: "ready" });
+    sendUplink(ws, { type: "viewers", count: viewers.size });
 
     ws.on("message", (data: RawData) => {
       if (uplink !== ws) return;
@@ -453,7 +512,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         return;
       }
       if (msg.type === "ping") {
-        sendPublisher(ws, { type: "pong" });
+        sendUplink(ws, { type: "pong" });
         return;
       }
       if (msg.type === "hello") {
@@ -464,6 +523,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           languages: currentLanguages,
           live: true,
           translates: currentTranslates,
+          since: msg.since,
         });
         return;
       }
@@ -479,7 +539,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         return;
       }
       if (msg.type === "status") {
-        toViewers({ type: "status", live: msg.live, message: msg.message });
+        toViewers({ type: "status", live: msg.live, message: msg.message, since: msg.since });
       }
     });
 
@@ -545,6 +605,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           broadcastListeners.add(cb);
           return () => broadcastListeners.delete(cb);
         },
+        viewerCount: () => viewers.size,
         async getUsage(): Promise<UsageInfo> {
           return {
             deepgram: {

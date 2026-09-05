@@ -52,19 +52,19 @@ function New-Icon {
 $sd = "apps\streamdeck\com.callout-relay.sdPlugin\imgs"
 
 # plugin + category icons (20x20)
-New-Icon -Path "$sd\plugin\icon.png" -Size 20 -Bg "#46e0a0" -Fg "#06281a" -Text "R" -FontScale 0.6
-New-Icon -Path "$sd\category\icon.png" -Size 20 -Bg "#46e0a0" -Fg "#06281a" -Text "R" -FontScale 0.6
+New-Icon -Path "$sd\plugin\icon.png" -Size 20 -Bg "#131313" -Fg "#efeae0" -Text "R" -FontScale 0.6
+New-Icon -Path "$sd\category\icon.png" -Size 20 -Bg "#131313" -Fg "#efeae0" -Text "R" -FontScale 0.6
 
 # action icon (72x72)
-New-Icon -Path "$sd\actions\toggle\icon.png" -Size 72 -Bg "#46e0a0" -Fg "#06281a" -Text "CR" -FontScale 0.4
+New-Icon -Path "$sd\actions\toggle\icon.png" -Size 72 -Bg "#131313" -Fg "#efeae0" -Text "CR" -FontScale 0.4
 
 # key states: off (dark) / on (green)
-New-Icon -Path "$sd\actions\toggle\key-off.png" -Size 144 -Bg "#1d2432" -Fg "#8b93a7" -Text "RELAY" -FontScale 0.2
-New-Icon -Path "$sd\actions\toggle\key-off@2x.png" -Size 288 -Bg "#1d2432" -Fg "#8b93a7" -Text "RELAY" -FontScale 0.2
-New-Icon -Path "$sd\actions\toggle\key-on.png" -Size 144 -Bg "#46e0a0" -Fg "#06281a" -Text "LIVE" -FontScale 0.2
-New-Icon -Path "$sd\actions\toggle\key-on@2x.png" -Size 288 -Bg "#46e0a0" -Fg "#06281a" -Text "LIVE" -FontScale 0.2
+New-Icon -Path "$sd\actions\toggle\key-off.png" -Size 144 -Bg "#131313" -Fg "#8a877f" -Text "RELAY" -FontScale 0.2
+New-Icon -Path "$sd\actions\toggle\key-off@2x.png" -Size 288 -Bg "#131313" -Fg "#8a877f" -Text "RELAY" -FontScale 0.2
+New-Icon -Path "$sd\actions\toggle\key-on.png" -Size 144 -Bg "#e0a43a" -Fg "#131313" -Text "LIVE" -FontScale 0.2
+New-Icon -Path "$sd\actions\toggle\key-on@2x.png" -Size 288 -Bg "#e0a43a" -Fg "#131313" -Text "LIVE" -FontScale 0.2
 
 # standalone tray icons (16x16) + app icon (256x256)
-New-Icon -Path "apps\standalone\assets\tray.png" -Size 16 -Bg "#3a4356" -Fg "#e8eaf0" -Text "R" -FontScale 0.62
-New-Icon -Path "apps\standalone\assets\tray-live.png" -Size 16 -Bg "#46e0a0" -Fg "#06281a" -Text "R" -FontScale 0.62
-New-Icon -Path "apps\standalone\assets\icon.png" -Size 256 -Bg "#46e0a0" -Fg "#06281a" -Text "R" -FontScale 0.6
+New-Icon -Path "apps\standalone\assets\tray.png" -Size 16 -Bg "#131313" -Fg "#efeae0" -Text "R" -FontScale 0.62
+New-Icon -Path "apps\standalone\assets\tray-live.png" -Size 16 -Bg "#e0a43a" -Fg "#131313" -Text "R" -FontScale 0.62
+New-Icon -Path "apps\standalone\assets\icon.png" -Size 256 -Bg "#131313" -Fg "#efeae0" -Text "R" -FontScale 0.6

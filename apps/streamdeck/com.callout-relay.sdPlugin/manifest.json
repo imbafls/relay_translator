@@ -1,0 +1,35 @@
+{
+  "Name": "Callout Relay",
+  "Version": "0.1.0",
+  "Author": "callout-relay",
+  "Actions": [
+    {
+      "UUID": "com.callout-relay.toggle",
+      "Name": "Toggle Relay",
+      "Tooltip": "Start or stop the Callout Relay session",
+      "Icon": "imgs/actions/toggle/icon",
+      "PropertyInspector": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/toggle/key-off",
+          "TitleAlignment": "middle",
+          "FontSize": "14"
+        },
+        {
+          "Image": "imgs/actions/toggle/key-on",
+          "TitleAlignment": "middle",
+          "FontSize": "14"
+        }
+      ]
+    }
+  ],
+  "Category": "Callout Relay",
+  "CategoryIcon": "imgs/category/icon",
+  "CodePath": "bin/plugin.js",
+  "Description": "Start/stop your translated comms relay and grab the viewer link.",
+  "Icon": "imgs/plugin/icon",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "6.4" },
+  "OS": [{ "Platform": "windows", "MinimumVersion": "10" }]
+}

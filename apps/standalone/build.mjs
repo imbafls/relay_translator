@@ -55,5 +55,7 @@ await build({
 mkdirSync("dist/renderer", { recursive: true });
 cpSync("renderer/index.html", "dist/renderer/index.html");
 cpSync("renderer/style.css", "dist/renderer/style.css");
+// self-hosted fonts are shared with the viewer page (single source of truth)
+cpSync(path.join(viewerPublic, "fonts"), "dist/renderer/fonts", { recursive: true });
 
 console.log("standalone built -> dist (main.js, preload.js, renderer/, viewer/)");

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Relay</title>
+  <link rel="stylesheet" href="fonts/fonts.css" />
+  <link rel="stylesheet" href="pi.css" />
+</head>
+<body>
+  <div class="pi">
+    <header class="head">
+      <span id="state" class="state" data-state="off"><span class="dot"></span><span id="stateText">CHECKING</span></span>
+      <span id="keyHint" class="key-hint">KEY = START</span>
+    </header>
+
+    <div id="notRunning" class="banner" hidden>RELAY APP NOT REACHABLE — START THE DESKTOP APP</div>
+
+    <section class="link">
+      <div class="label">LINK</div>
+      <div class="link-row">
+        <input id="viewerUrl" readonly placeholder="— appears on start" />
+        <button id="copyBtn">COPY</button>
+        <button id="rotateBtn" class="dim">NEW</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="block">
+        <div class="label"><span class="num">01</span>SOURCE</div>
+        <div class="value"><select id="audioSource"></select><span class="chev">▾</span></div>
+      </div>
+      <div class="block">
+        <div class="label"><span class="num">02</span>TRANSCRIBE</div>
+        <div class="value"><select id="stt"></select><span class="chev">▾</span></div>
+      </div>
+      <div class="block" id="blkTranslate">
+        <div class="label"><span class="num">03</span>TRANSLATE<button id="translateToggle" class="toggle">ON</button></div>
+        <div class="value pair">
+          <select id="langSource"></select><span class="arrow">→</span><select id="langTarget"></select><span class="chev">▾</span>
+        </div>
+      </div>
+      <div class="block">
+        <div class="label"><span class="num">04</span>MODEL</div>
+        <div class="value"><select id="translation"></select><span class="chev">▾</span></div>
+      </div>
+    </section>
+
+    <footer class="foot">SYSTEM AUDIO relays game + comms instead of mic</footer>
+  </div>
+  <script src="pi.js"></script>
+</body>
+</html>

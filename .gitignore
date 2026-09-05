@@ -21,11 +21,15 @@ relay-state.json
 apps/standalone/release/
 release/
 
-# streamdeck build output
-apps/streamdeck/*.sdPlugin/
+# streamdeck: bin/ and imgs/ are generated; manifest + property inspector are source
+apps/streamdeck/*.sdPlugin/bin/
+apps/streamdeck/*.sdPlugin/imgs/
 
 # SEA build artifacts
 packages/relay/sea/sea-prep.blob
 packages/relay/sea/*.exe
 packages/relay/sea/callout-relay-server*
 packages/relay/sea/relay-bundle.cjs
+
+# local dev tooling (browser preview / mock relay launch config)
+.claude/

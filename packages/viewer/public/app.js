@@ -1,53 +1,55 @@
-/* Callout Relay viewer: token from /watch/<token>, WS to same origin.
- * Display settings (font/colors/etc.) are per-device, saved in localStorage. */
+/* Relay viewer: token from /watch/<token>, WS to same origin.
+ * Screens: live (3d/3j) · display settings (3e) · ended (3f) · OBS overlay (?obs=1, 3g).
+ * Display settings are per-device (localStorage). */
 (() => {
   "use strict";
 
   const token = (location.pathname.match(/\/watch\/([A-Za-z0-9_-]+)/) || [])[1] || "";
-  const obs = new URLSearchParams(location.search).get("obs") === "1";
-  const allowSettings = new URLSearchParams(location.search).get("settings") === "1";
+  const params = new URLSearchParams(location.search);
+  const obs = params.get("obs") === "1";
+  const settingsInObs = params.get("settings") === "1";
   if (obs) document.body.classList.add("obs");
-  if (obs && allowSettings) document.body.classList.add("gear-on");
 
   const $ = (id) => document.getElementById(id);
-  const dot = $("dot");
-  const statusText = $("statusText");
-  const langsEl = $("langs");
-  const lines = $("lines");
-  const kicked = $("kicked");
-  const kickedReason = $("kickedReason");
+  const linesEl = $("lines");
 
   // ---------------------------------------------------------------------------
   // display settings
   // ---------------------------------------------------------------------------
 
   const FONT_STACKS = {
+    relay: 'Archivo, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     verdana: "Verdana, Geneva, Tahoma, sans-serif",
     georgia: 'Georgia, "Times New Roman", serif',
-    mono: 'Consolas, "Cascadia Mono", "Courier New", monospace',
-    print: '"Segoe Print", "Bradley Hand", "Comic Sans MS", cursive',
+    mono: '"Martian Mono", Consolas, "Cascadia Mono", monospace',
     impact: 'Impact, "Arial Black", "Franklin Gothic Bold", sans-serif',
   };
+  const FONT_NAMES = { relay: "RELAY", system: "SYSTEM", verdana: "VERDANA", georgia: "GEORGIA", mono: "MONO", impact: "IMPACT" };
 
+  const DARK = { fg: "#efeae0", accent: "#e0a43a", bg: "#131313", shadow: false };
+  const THEMES = {
+    dark: DARK,
+    light: { fg: "#131313", accent: "#b8801f", bg: "#f0eee9", shadow: false },
+    "obs-black": { fg: "#ffffff", accent: "#e0a43a", bg: "#000000", shadow: true },
+    "obs-clear": { fg: "#ffffff", accent: "#e0a43a", bg: "#000000", shadow: true },
+  };
   const DEFAULT_STYLE = {
-    font: "system",
-    size: 21,
+    theme: obs ? "obs-clear" : "dark",
+    font: "relay",
+    size: 18,
     showSource: true,
-    srcSize: 14,
-    fg: "#e8eaf0",
-    accent: "#46e0a0",
-    bg: "#161b26",
-    bgOp: 3,
-    shadow: false,
+    showTranslation: true,
+    timestamps: true,
+    shadow: obs,
     align: "left",
     lines: 8,
-    showTranslation: true,
+    fg: obs ? "#ffffff" : DARK.fg,
+    accent: DARK.accent,
+    bg: obs ? "#000000" : DARK.bg,
   };
-
-  const STYLE_KEY = "callout-style-v1";
+  const STYLE_KEY = "relay-style-v2";
   let style = loadStyle();
-  let maxPairs = style.lines;
 
   function loadStyle() {
     try {
@@ -55,20 +57,15 @@
       if (!raw) return { ...DEFAULT_STYLE };
       const parsed = JSON.parse(raw);
       const merged = { ...DEFAULT_STYLE };
-      for (const k of Object.keys(DEFAULT_STYLE)) {
-        if (parsed[k] !== undefined) merged[k] = parsed[k];
-      }
-      // sanity clamps
-      merged.size = Math.min(72, Math.max(16, Number(merged.size) || 21));
-      merged.srcSize = Math.min(40, Math.max(10, Number(merged.srcSize) || 14));
+      for (const k of Object.keys(DEFAULT_STYLE)) if (parsed[k] !== undefined) merged[k] = parsed[k];
+      merged.size = Math.min(40, Math.max(14, Number(merged.size) || 18));
       merged.lines = Math.min(15, Math.max(3, Number(merged.lines) || 8));
-      merged.bgOp = Math.min(100, Math.max(0, Number(merged.bgOp) || 0));
+      if (!FONT_STACKS[merged.font]) merged.font = "relay";
       return merged;
     } catch {
       return { ...DEFAULT_STYLE };
     }
   }
-
   function saveStyle() {
     try {
       localStorage.setItem(STYLE_KEY, JSON.stringify(style));
@@ -77,273 +74,313 @@
     }
   }
 
-  function hexToRgba(hex, opPct) {
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
-    if (!m) return `rgba(255,255,255,${opPct / 100})`;
-    const n = parseInt(m[1], 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${opPct / 100})`;
-  }
+  let serverTranslates = true;
 
   function applyStyle() {
-    const root = document.documentElement;
+    const root = document.documentElement.style;
     const body = document.body;
-    root.style.setProperty("--font-main", FONT_STACKS[style.font] || FONT_STACKS.system);
-    root.style.setProperty("--target-size", `${style.size}px`);
-    root.style.setProperty("--source-size", `${style.srcSize}px`);
-    root.style.setProperty("--pair-accent", style.accent);
-    root.style.setProperty("--pair-bg", hexToRgba(style.bg, style.bgOp));
-    body.classList.toggle("no-source", !style.showSource);
-    body.classList.toggle("shadow", !!style.shadow);
-    body.classList.toggle("center-align", style.align === "center");
-    applyVisibility();
-    maxPairs = style.lines;
-    trimLines();
+    root.setProperty("--cap-font", FONT_STACKS[style.font] || FONT_STACKS.relay);
+    root.setProperty("--size", `${style.size}px`);
+    root.setProperty("--fg", style.fg);
+    root.setProperty("--accent", style.accent);
+    root.setProperty("--bgc", obs && style.theme === "obs-clear" ? "transparent" : style.bg);
+    root.setProperty("--shadow", style.shadow ? "0 2px 6px rgba(0,0,0,.7)" : "none");
+    body.classList.toggle("light", style.theme === "light");
+    body.classList.toggle("obs-black", obs && style.theme === "obs-black");
+    body.classList.toggle("no-src", !style.showSource);
+    body.classList.toggle("no-tgt", !serverTranslates || !style.showTranslation);
+    body.classList.toggle("no-ts", !style.timestamps);
+    body.classList.toggle("center", style.align === "center");
+    trimRows();
   }
 
-  /** hide translations if the host disabled them OR the viewer opted out */
-  function applyVisibility() {
-    document.body.classList.toggle("no-translation", !serverTranslates || !style.showTranslation);
+  function themeMatches(name) {
+    const t = THEMES[name];
+    return style.theme === name && style.fg === t.fg && style.bg === t.bg;
   }
 
-  const PRESETS = {
-    dark: { ...DEFAULT_STYLE },
-    light: {
-      ...DEFAULT_STYLE,
-      fg: "#10131a",
-      accent: "#0a7d4d",
-      bg: "#ffffff",
-      bgOp: 85,
-      shadow: false,
-    },
-    "obs-black": {
-      ...DEFAULT_STYLE,
-      size: 30,
-      fg: "#ffffff",
-      bg: "#000000",
-      bgOp: 55,
-      shadow: true,
-    },
-    "obs-clear": {
-      ...DEFAULT_STYLE,
-      size: 30,
-      fg: "#ffffff",
-      bg: "#000000",
-      bgOp: 0,
-      shadow: true,
-    },
-  };
+  function syncDisplayUI() {
+    for (const b of $("themeBar").querySelectorAll("button")) b.classList.toggle("active", themeMatches(b.dataset.theme));
+    $("setSize").value = style.size;
+    $("sizeVal").textContent = String(style.size);
+    $("setShowSource").checked = !!style.showSource;
+    $("setShowTranslation").checked = !!style.showTranslation;
+    $("setTimestamps").checked = !!style.timestamps;
+    $("setShadow").checked = !!style.shadow;
+    $("setFont").value = style.font;
+    $("fontVal").textContent = FONT_NAMES[style.font] || "RELAY";
+    $("setAlign").value = style.align;
+    $("alignVal").textContent = style.align.toUpperCase();
+    $("setLines").value = String(style.lines);
+    $("linesVal").textContent = String(style.lines);
+    $("setFg").value = style.fg;
+    $("setAccent").value = style.accent;
+    $("setBg").value = style.bg;
+    $("swFg").style.background = style.fg;
+    $("swAccent").style.background = style.accent;
+    $("swBg").style.background = style.bg;
+    renderPreview();
+  }
 
-  function initSettingsUI() {
-    const gear = $("gear");
-    const panel = $("settingsPanel");
-    if (!gear || !panel) return;
+  function update(patch) {
+    Object.assign(style, patch);
+    applyStyle();
+    saveStyle();
+    syncDisplayUI();
+  }
 
-    gear.addEventListener("click", () => panel.classList.toggle("hidden"));
-    $("closeSettings").addEventListener("click", () => panel.classList.add("hidden"));
-
-    const syncUI = () => {
-      $("setFont").value = style.font;
-      $("setSize").value = style.size;
-      $("setSizeVal").textContent = `${style.size}px`;
-      $("setShowSource").checked = !!style.showSource;
-      $("setSrcSize").value = style.srcSize;
-      $("setSrcSizeVal").textContent = `${style.srcSize}px`;
-      $("setShowTranslation").checked = !!style.showTranslation;
-      $("setFg").value = style.fg;
-      $("setAccent").value = style.accent;
-      $("setBg").value = style.bg;
-      $("setBgOp").value = style.bgOp;
-      $("setBgOpVal").textContent = `${style.bgOp}%`;
-      $("setShadow").checked = !!style.shadow;
-      $("setAlign").value = style.align;
-      $("setLines").value = style.lines;
-      $("setLinesVal").textContent = String(style.lines);
-    };
-
-    const update = (patch) => {
-      Object.assign(style, patch);
-      applyStyle();
-      saveStyle();
-      syncUI();
-    };
-
-    $("setFont").addEventListener("change", () => update({ font: $("setFont").value }));
+  function initDisplayUI() {
+    const sel = $("setLines");
+    for (let n = 3; n <= 15; n++) {
+      const o = document.createElement("option");
+      o.value = String(n);
+      o.textContent = String(n);
+      sel.appendChild(o);
+    }
+    $("openDisplay").addEventListener("click", () => showScreen("display"));
+    $("closeDisplay").addEventListener("click", () => showScreen("live"));
+    for (const b of $("themeBar").querySelectorAll("button")) {
+      b.addEventListener("click", () => update({ theme: b.dataset.theme, ...THEMES[b.dataset.theme] }));
+    }
     $("setSize").addEventListener("input", () => update({ size: Number($("setSize").value) }));
     $("setShowSource").addEventListener("change", () => update({ showSource: $("setShowSource").checked }));
-    $("setShowTranslation").addEventListener("change", () =>
-      update({ showTranslation: $("setShowTranslation").checked }),
-    );
-    $("setSrcSize").addEventListener("input", () => update({ srcSize: Number($("setSrcSize").value) }));
+    $("setShowTranslation").addEventListener("change", () => update({ showTranslation: $("setShowTranslation").checked }));
+    $("setTimestamps").addEventListener("change", () => update({ timestamps: $("setTimestamps").checked }));
+    $("setShadow").addEventListener("change", () => update({ shadow: $("setShadow").checked }));
+    $("setFont").addEventListener("change", () => update({ font: $("setFont").value }));
+    $("setAlign").addEventListener("change", () => update({ align: $("setAlign").value }));
+    $("setLines").addEventListener("change", () => update({ lines: Number($("setLines").value) }));
     $("setFg").addEventListener("input", () => update({ fg: $("setFg").value }));
     $("setAccent").addEventListener("input", () => update({ accent: $("setAccent").value }));
     $("setBg").addEventListener("input", () => update({ bg: $("setBg").value }));
-    $("setBgOp").addEventListener("input", () => update({ bgOp: Number($("setBgOp").value) }));
-    $("setShadow").addEventListener("change", () => update({ shadow: $("setShadow").checked }));
-    $("setAlign").addEventListener("change", () => update({ align: $("setAlign").value }));
-    $("setLines").addEventListener("input", () => update({ lines: Number($("setLines").value) }));
+    $("resetStyle").addEventListener("click", () => update({ ...DEFAULT_STYLE }));
+    syncDisplayUI();
+    if (obs && !settingsInObs) $("openDisplay").hidden = true;
+  }
 
-    for (const btn of panel.querySelectorAll("[data-preset]")) {
-      btn.addEventListener("click", () => {
-        Object.assign(style, PRESETS[btn.dataset.preset] || {});
-        applyStyle();
-        saveStyle();
-        syncUI();
-      });
+  function renderPreview() {
+    const box = $("previewRow");
+    const latest = linesEl.querySelector(".row.latest");
+    box.innerHTML = "";
+    if (latest) {
+      box.appendChild(latest.cloneNode(true));
+      return;
     }
-
-    $("resetStyle").addEventListener("click", () => {
-      Object.assign(style, DEFAULT_STYLE);
-      applyStyle();
-      saveStyle();
-      syncUI();
-    });
-
-    syncUI();
+    const row = makeRowEl("45:21", "He's one shot, behind the box", "Nó còn một viên, sau cái hộp");
+    row.classList.add("latest", "has-tgt");
+    box.appendChild(row);
   }
 
   // ---------------------------------------------------------------------------
-  // connection + subtitles
+  // screens + clock
+  // ---------------------------------------------------------------------------
+
+  function showScreen(name) {
+    for (const id of ["live", "display", "ended"]) $(id).hidden = id !== name;
+    if (name === "display") syncDisplayUI();
+  }
+
+  let liveSince = null;
+  let isLive = false;
+  function pad(n) {
+    return n < 10 ? `0${n}` : String(n);
+  }
+  function tick() {
+    let ms = 0;
+    if (isLive && liveSince) ms = Date.now() - liveSince;
+    const s = Math.max(0, Math.floor(ms / 1000));
+    $("hudClock").textContent = `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  }
+  setInterval(tick, 1000);
+
+  function setHud(state, text) {
+    $("hudState").dataset.state = state;
+    $("hudText").textContent = text;
+  }
+
+  // ---------------------------------------------------------------------------
+  // rows
+  // ---------------------------------------------------------------------------
+
+  const rows = new Map();
+  let interim = null;
+
+  function stamp() {
+    const d = new Date();
+    return `${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  function makeRowEl(ts, src, tgt) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const t = document.createElement("span");
+    t.className = "ts";
+    t.textContent = ts;
+    const body = document.createElement("div");
+    const s = document.createElement("div");
+    s.className = "src";
+    s.textContent = src;
+    const g = document.createElement("div");
+    g.className = "tgt" + (tgt ? "" : " pending");
+    g.textContent = tgt || "…";
+    body.append(s, g);
+    row.append(t, body);
+    return row;
+  }
+
+  function trimRows() {
+    const finals = [...linesEl.querySelectorAll(".row:not(.interim)")];
+    while (finals.length > style.lines) {
+      const el = finals.shift();
+      for (const [id, r] of rows) if (r === el) rows.delete(id);
+      el.remove();
+    }
+  }
+
+  function markLatest() {
+    let latestId = -1;
+    for (const id of rows.keys()) if (id > latestId) latestId = id;
+    for (const [id, el] of rows) el.classList.toggle("latest", id === latestId);
+  }
+
+  function showPartial(msg) {
+    if (!msg.source || rows.has(msg.id)) return;
+    if (!interim) {
+      interim = makeRowEl(stamp(), "", "");
+      interim.classList.add("interim");
+      interim.querySelector(".tgt").remove();
+      linesEl.appendChild(interim);
+    }
+    interim.dataset.id = msg.id;
+    const src = interim.querySelector(".src");
+    src.textContent = msg.source;
+    const c = document.createElement("span");
+    c.className = "cursor";
+    src.appendChild(c);
+  }
+
+  function showSubtitle(msg) {
+    let el = rows.get(msg.id);
+    if (!el) {
+      if (interim) {
+        interim.remove();
+        interim = null;
+      }
+      el = makeRowEl(stamp(), msg.source, msg.target);
+      rows.set(msg.id, el);
+      linesEl.appendChild(el);
+    }
+    el.querySelector(".src").textContent = msg.source;
+    if (msg.target != null) {
+      const g = el.querySelector(".tgt");
+      g.textContent = msg.target;
+      g.classList.remove("pending");
+      el.classList.add("has-tgt");
+    }
+    if (msg.latency) {
+      const total = (msg.latency.stt || 0) + (msg.latency.translate || 0);
+      if (total > 0) el.title = `${(total / 1000).toFixed(1)}s behind`;
+    }
+    markLatest();
+    trimRows();
+    if (!$("display").hidden) renderPreview();
+  }
+
+  // ---------------------------------------------------------------------------
+  // connection
   // ---------------------------------------------------------------------------
 
   let ws = null;
   let closedByKick = false;
-  let serverTranslates = true;
 
-  function setStatus(cls, text) {
-    dot.className = "dot " + cls;
-    statusText.textContent = text;
+  function langsLabel(msg) {
+    const src = (msg.languages && msg.languages.source ? msg.languages.source : "").toUpperCase();
+    const tgt = (msg.languages && msg.languages.target ? msg.languages.target : "").toUpperCase();
+    return msg.translates === false ? src : `${src} → ${tgt}`;
   }
 
-  function trimLines() {
-    while (lines.children.length > maxPairs) lines.firstChild.remove();
-  }
-
-  function clearPending() {
-    const pending = lines.querySelector(".pair.pending");
-    if (pending) pending.remove();
-  }
-
-  function makePair(source) {
-    clearPending();
-    const pair = document.createElement("div");
-    pair.className = "pair pending";
-
-    const src = document.createElement("div");
-    src.className = "source";
-    src.textContent = source;
-
-    const tgt = document.createElement("div");
-    tgt.className = "target";
-
-    const lat = document.createElement("span");
-    lat.className = "lat";
-
-    pair.append(src, tgt, lat);
-    lines.appendChild(pair);
-    trimLines();
-    lines.scrollTop = lines.scrollHeight;
-    return pair;
-  }
-
-  function showPartial(id, source) {
-    let pending = lines.querySelector(".pair.pending");
-    if (!pending) pending = makePair(source);
-    pending.querySelector(".source").textContent = source;
-  }
-
-  function latencyLabel(lat) {
-    if (!lat) return "";
-    const stt = lat.stt || 0;
-    const tr = lat.translate || 0;
-    const total = stt + tr;
-    if (total <= 0) return "";
-    return `⚡${(total / 1000).toFixed(1)}s`;
-  }
-
-  function latencyTitle(lat) {
-    if (!lat) return "";
-    const parts = [];
-    if (lat.stt != null) parts.push(`speech→text ${lat.stt} ms`);
-    if (lat.translate != null) parts.push(`translate ${lat.translate} ms`);
-    return parts.join(" · ");
-  }
-
-  function showSubtitle(msg) {
-    let pair = null;
-    for (const el of lines.children) {
-      if (Number(el.dataset.id) === msg.id) { pair = el; break; }
-    }
-    if (!pair) pair = makePair(msg.source);
-    pair.dataset.id = msg.id;
-    pair.classList.remove("pending");
-    pair.querySelector(".source").textContent = msg.source;
-    if (msg.target != null) pair.querySelector(".target").textContent = msg.target;
-    if (msg.latency) {
-      const lat = pair.querySelector(".lat");
-      lat.textContent = latencyLabel(msg.latency);
-      lat.title = latencyTitle(msg.latency);
-    }
-    lines.scrollTop = lines.scrollHeight;
+  function applyLive(live, since) {
+    isLive = !!live;
+    if (live) liveSince = since || liveSince || Date.now();
+    setHud(live ? "on" : "off", live ? "ON AIR" : "OFF AIR");
+    tick();
   }
 
   function connect() {
     if (closedByKick) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    setStatus("warn", "connecting…");
+    setHud("off", "CONNECTING");
     try {
       ws = new WebSocket(`${proto}://${location.host}/ws/viewer?token=${encodeURIComponent(token)}`);
     } catch {
-      setStatus("warn", "bad link");
+      setHud("warn", "BAD LINK");
       return;
     }
-
-    ws.onopen = () => setStatus("off", "waiting for stream…");
-
+    ws.onopen = () => setHud("off", "OFF AIR");
     ws.onmessage = (ev) => {
       let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
       switch (msg.type) {
         case "hello":
           serverTranslates = msg.translates !== false;
-          applyVisibility();
-          langsEl.textContent = msg.translates === false
-            ? `${msg.languages.source} (no translation)`
-            : `${msg.languages.source} → ${msg.languages.target}`;
-          setStatus(msg.live ? "on" : "off", msg.live ? "live" : "waiting for stream…");
+          applyStyle();
+          $("hudLangs").textContent = langsLabel(msg);
+          applyLive(msg.live, msg.since);
           break;
         case "status":
-          setStatus(msg.live ? "on" : "off", msg.live ? "live" : (msg.message || "idle"));
+          applyLive(msg.live, msg.since);
+          if (!msg.live && interim) {
+            interim.remove();
+            interim = null;
+          }
           break;
         case "partial":
-          showPartial(msg.id, msg.source);
+          showPartial(msg);
           break;
         case "subtitle":
           showSubtitle(msg);
           break;
-        case "kicked":
+        case "kicked": {
           closedByKick = true;
-          kickedReason.textContent = msg.reason || "";
-          kicked.classList.remove("hidden");
-          try { ws.close(); } catch {}
+          const d = new Date();
+          $("endedAt").textContent = `ENDED ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          const n = rows.size;
+          $("savedCount").textContent = `${n} LINE${n === 1 ? "" : "S"} SAVED`;
+          showScreen("ended");
+          try {
+            ws.close();
+          } catch {
+            /* noop */
+          }
           break;
+        }
         default:
           break;
       }
     };
-
     ws.onclose = () => {
       if (closedByKick) return;
-      setStatus("warn", "disconnected — retrying…");
+      setHud("warn", "RECONNECTING");
       setTimeout(connect, 2000);
     };
     ws.onerror = () => {};
   }
 
+  $("tryAgain").addEventListener("click", () => location.reload());
+
   applyStyle();
-  initSettingsUI();
+  initDisplayUI();
+  tick();
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && ws && ws.readyState > WebSocket.OPEN) connect();
+    if (document.visibilityState === "visible" && ws && ws.readyState > WebSocket.OPEN) {
+      closedByKick = false;
+      connect();
+    }
   });
 
   connect();

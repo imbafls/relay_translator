@@ -7,6 +7,14 @@
   "assets": {
     "viewer/index.html": "../../viewer/public/index.html",
     "viewer/app.js": "../../viewer/public/app.js",
-    "viewer/style.css": "../../viewer/public/style.css"
+    "viewer/style.css": "../../viewer/public/style.css",
+    "viewer/fonts/fonts.css": "../../viewer/public/fonts/fonts.css",
+    "viewer/fonts/archivo-latin.woff2": "../../viewer/public/fonts/archivo-latin.woff2",
+    "viewer/fonts/archivo-latin-ext.woff2": "../../viewer/public/fonts/archivo-latin-ext.woff2",
+    "viewer/fonts/archivo-vietnamese.woff2": "../../viewer/public/fonts/archivo-vietnamese.woff2",
+    "viewer/fonts/martian-mono-latin.woff2": "../../viewer/public/fonts/martian-mono-latin.woff2",
+    "viewer/fonts/martian-mono-latin-ext.woff2": "../../viewer/public/fonts/martian-mono-latin-ext.woff2",
+    "viewer/fonts/martian-mono-cyrillic.woff2": "../../viewer/public/fonts/martian-mono-cyrillic.woff2",
+    "viewer/fonts/martian-mono-cyrillic-ext.woff2": "../../viewer/public/fonts/martian-mono-cyrillic-ext.woff2"
   }
 }

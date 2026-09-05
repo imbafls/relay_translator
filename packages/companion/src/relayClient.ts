@@ -41,6 +41,8 @@ export class RelayPublisherClient {
       onError?: (message: string) => void;
       /** live subtitles echoed back by the relay (source + translation + latency) */
       onSubtitle?: (seg: { id: number; source: string; target?: string; latency?: { stt?: number; translate?: number } }) => void;
+      /** interim (not yet final) transcript for the upcoming segment */
+      onPartial?: (seg: { id: number; source: string }) => void;
     } = {},
   ) {}
 
@@ -95,6 +97,8 @@ export class RelayPublisherClient {
         this.setState("connected");
         this.hooks.onReady?.();
         this.startPing();
+      } else if (msg.type === "partial") {
+        this.hooks.onPartial?.({ id: msg.id, source: msg.source });
       } else if (msg.type === "subtitle") {
         this.hooks.onSubtitle?.({
           id: msg.id,

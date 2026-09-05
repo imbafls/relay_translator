@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppConfig, AudioDeviceInfo, ControlStatus, SessionState } from "@callout-relay/shared";
+import type { AppConfig, AudioDeviceInfo, ControlStatus, KeyValidation, SessionState } from "@callout-relay/shared";
 
 export interface RendererBridge {
   getConfig(): Promise<AppConfig>;
@@ -12,6 +12,8 @@ export interface RendererBridge {
     config: AppConfig;
   }>;
   rotateLink(): Promise<string | undefined>;
+  /** test an API key with a cheap request against the provider */
+  validateKey(provider: "deepgram" | "gemini", key: string): Promise<KeyValidation>;
   openExternal(url: string): Promise<void>;
   reportState(state: SessionState, error?: string): void;
   reportDevices(devices: AudioDeviceInfo[]): void;
@@ -35,4 +37,6 @@ contextBridge.exposeInMainWorld("cr", {
     ipcRenderer.on("config:changed", (_e, cfg) => cb(cfg)),
   onStatus: (cb: (status: ControlStatus) => void) =>
     ipcRenderer.on("status:changed", (_e, status) => cb(status)),
+  validateKey: (provider: "deepgram" | "gemini", key: string) =>
+    ipcRenderer.invoke("keys:validate", { provider, key }),
 } satisfies RendererBridge);
