@@ -931,3 +931,35 @@ same mirror step.
   source an error handler. Re-measured: 25 aborts, 0 undestroyed. Reverting the
   fix turns the test red with `RESULT: 12 leaked`.
 - **Status**: PASSED
+
+---
+
+### Turn 33/40 - Client UI (finishing what turn 9 started, partly)
+
+Audit finding 3, which is a correction to my own turn 9 work.
+
+- **Tests Added**: 3 in `packages/companion/test/controlServer.test.ts`, and
+  `view-secret` added to the list of secrets every existing assertion checks -
+  so the whole file now fails if the viewer token appears anywhere, not just
+  the API keys.
+- **Issue/Gap Uncovered**: Turn 9 masked the four `SECRET_FIELDS` and I called
+  the control API safe. A viewer link is `<origin>/watch/<viewerToken>`, so
+  `relay.viewerUrl` carried the token in a different shape and went out
+  unmasked on `/status`, on `/events`, on every broadcast and in the replies to
+  `/start`, `/stop` and `/config`. Masking the field and leaving the URL hands
+  out the same power: whoever holds the link watches the stream. I fixed the
+  keys and left the door open, and it took an adversarial audit to notice.
+- **Enhancement Shipped**: `redact()` masks the token inside `viewerUrl`,
+  `localViewerUrl` and `remoteViewerUrl` as well as the fields.
+- **Not closed, and marked in the code**: `GET /link` returns the unredacted
+  status on purpose - handing out the viewer link is what that route is for -
+  and it has no credential to check. `allowedOrigin` admits `Origin: null`,
+  which is exactly what a sandboxed iframe on any web page sends, so a page you
+  visit can still ask for the link. The real fix is the one the audit names: a
+  per-launch token the app writes and the Stream Deck property inspector
+  presents, gating reads as well as writes. That needs the inspector wired to
+  receive it, which cannot be tested from here, and the `Origin: null`
+  allowance is load-bearing for a `file://` inspector - removing it blind would
+  break the integration silently. Shipping half-wired auth would be worse than
+  the honest partial fix, so the remaining hole is commented at the route.
+- **Status**: PASSED

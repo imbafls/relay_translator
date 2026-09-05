@@ -68,7 +68,7 @@ const post = (base: string, path: string, body?: unknown, headers: Record<string
   });
 
 /** every secret the fixture holds, so a test cannot pass by checking only one */
-const SECRETS = [DEEPGRAM, GEMINI, "pub-secret"];
+const SECRETS = [DEEPGRAM, GEMINI, "pub-secret", "view-secret"];
 
 function expectNoSecrets(text: string): void {
   for (const secret of SECRETS) expect(text, `leaked ${secret}`).not.toContain(secret);
@@ -136,6 +136,50 @@ describe("secrets in the control API", () => {
     const pushed = new TextDecoder().decode((await reader.read()).value);
     expectNoSecrets(pushed);
     await reader.cancel();
+  });
+});
+
+describe("the viewer link", () => {
+  it("does not hand out the token embedded in the URL", async () => {
+    // redacting `viewerToken` and leaving the link alone gives away the same
+    // power in a different shape: whoever holds the link watches the stream
+    const base = await serve();
+    const body = (await (await fetch(`${base}/status`)).json()) as ControlStatus;
+    expect(body.relay.viewerUrl).not.toContain("view-secret");
+    expect(body.relay.viewerUrl).toContain("/watch/");
+  });
+
+  it("masks it on the SSE stream too", async () => {
+    const base = await serve();
+    const res = await fetch(`${base}/events`);
+    const reader = res.body!.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    expectNoSecrets(first);
+    await reader.cancel();
+  });
+
+  it("masks every viewer link the status carries", async () => {
+    handle = await startControlServer(
+      {
+        getStatus: () => ({
+          ...status(),
+          relay: {
+            mode: "embedded",
+            url: "http://127.0.0.1:8787",
+            viewerUrl: "https://relay.supr.systems/watch/view-secret",
+            localViewerUrl: "http://192.168.1.5:8787/watch/view-secret",
+            remoteViewerUrl: "https://relay.supr.systems/watch/view-secret?obs=1",
+          },
+        }),
+        start: async () => {},
+        stop: async () => {},
+        patchConfig: async () => status(),
+        rotateLink: async () => {},
+      },
+      { port: 0 },
+    );
+    const text = await (await fetch(`http://127.0.0.1:${handle.port}/status`)).text();
+    expectNoSecrets(text);
   });
 });
 
