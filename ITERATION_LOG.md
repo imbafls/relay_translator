@@ -209,3 +209,37 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   and leaves every correct one alone. Also adds `baseUrl` and `backoffMs` seams,
   which is what makes any of this testable against a real server.
 - **Status**: PASSED
+
+---
+
+### Turn 8/100 - The model download pipeline, and the open archive bug
+
+- **Tests Added**: `apps/standalone/test/models.test.ts`, 9 tests over the real
+  `ModelStore` - download plan, staging folder, bz2 and tar pipeline, size gate,
+  publish-by-rename and cleanup all executing against a real 190-byte tar.bz2
+  fixture on a real disk. Only the transport is stood in for, since the
+  catalogue points at Hugging Face and the real archives are hundreds of MB.
+  `ModelStore` turned out to have no Electron imports at all, so none of this
+  needed the harness I expected to have to build.
+- **Issue/Gap Uncovered**: The pipeline is sound - declared entries extract
+  under the names the worker wants, undeclared entries stay out, the staging
+  folder is published with one rename, and a missing entry, a short entry or an
+  HTTP error each fail without leaving anything that looks installed. The gap
+  was diagnostic. A stream that stops early and one that arrives corrupted both
+  surfaced as the same decoder error, which is what makes the open archive bug
+  read as "the archive is bad" when the transport may be what broke.
+- **What this says about the open bug**: Probing the decoder directly, a
+  truncated bz2 stream reports `input stream ended prematurely` or a
+  `Cannot read properties of undefined` TypeError - *not* the
+  `crc32 do not match` the bug report carries. That is evidence against plain
+  truncation, though not proof: the fixture is a single small block and a real
+  118 MB archive is many blocks, where a partially received block could
+  plausibly fail its CRC. It cannot be settled from here, which is exactly why
+  the instrumentation matters.
+- **Enhancement Shipped**: `fetchArchive` counts the bytes that actually arrive
+  and compares them to `content-length`. A failure now says either "the download
+  stopped early: N of M bytes (P%)" or "the archive would not unpack after all N
+  bytes arrived", so the next person to hit this knows which half to look at
+  instead of inferring it from a crc message. Also a `catalogue` seam on
+  `ModelStore`, which is what lets a test drive it with a small model.
+- **Status**: PASSED

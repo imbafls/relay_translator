@@ -22,6 +22,8 @@ export class ModelStore {
     readonly dir: string,
     private readonly onChange: () => void,
     private readonly log: (level: "info" | "warn" | "error", message: string) => void,
+    /** the models this store knows about; the shipped catalogue unless overridden */
+    private readonly catalogue: SttModelInfo[] = STT_MODELS,
   ) {}
 
   /** same rule the relay applies before it starts a local session */
@@ -30,7 +32,7 @@ export class ModelStore {
   }
 
   status(): LocalModelStatus[] {
-    return STT_MODELS.filter((m) => m.provider === "local").map((m) => {
+    return this.catalogue.filter((m) => m.provider === "local").map((m) => {
       const run = this.active.get(m.id);
       return {
         id: m.id,
@@ -43,7 +45,7 @@ export class ModelStore {
   }
 
   async download(id: string): Promise<void> {
-    const info = STT_MODELS.find((m) => m.id === id);
+    const info = this.catalogue.find((m) => m.id === id);
     if (!info || info.provider !== "local" || !info.files) throw new Error(`unknown local model ${id}`);
     if (this.active.has(id)) return;
     const controller = new AbortController();
@@ -145,21 +147,41 @@ export class ModelStore {
     const wanted = new Map<string, string>();
     for (const [local, entry] of Object.entries(archive.pick)) wanted.set(entry, local);
 
+    // A stream that stops early and one that arrives corrupted both surface as
+    // the same decoder error ("crc32 do not match"), which sends you looking at
+    // the archive when the transport is what broke. Count what actually arrives
+    // so the message can tell the two apart.
+    const declared = Number(res.headers.get("content-length")) || archive.size || 0;
+    let received = 0;
     const body = Readable.fromWeb(res.body as never);
-    body.on("data", tick);
-    await pipeline(
-      body,
-      unbzip2(),
-      tar.x({
-        cwd: staging,
-        strip: 1,
-        // without this a failed write (a full disk, a lock) is only a warning:
-        // tar drops the rest of that entry, the pipeline resolves, and a
-        // truncated ONNX would sail through as a finished model
-        strict: true,
-        filter: (p: string) => wanted.has(path.posix.basename(p)),
-      }),
-    );
+    body.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      tick(chunk);
+    });
+    try {
+      await pipeline(
+        body,
+        unbzip2(),
+        tar.x({
+          cwd: staging,
+          strip: 1,
+          // without this a failed write (a full disk, a lock) is only a warning:
+          // tar drops the rest of that entry, the pipeline resolves, and a
+          // truncated ONNX would sail through as a finished model
+          strict: true,
+          filter: (p: string) => wanted.has(path.posix.basename(p)),
+        }),
+      );
+    } catch (err) {
+      const detail = String((err as Error).message || err);
+      if (declared > 0 && received < declared) {
+        const pct = Math.floor((received / declared) * 100);
+        throw new Error(
+          `the download stopped early: ${received} of ${declared} bytes (${pct}%) - ${detail}`,
+        );
+      }
+      throw new Error(`the archive would not unpack after all ${received} bytes arrived - ${detail}`);
+    }
 
     // the catalog carries the exact unpacked size of every entry. A short file
     // is the shape a swallowed write error takes, so it fails the download; a
@@ -197,7 +219,7 @@ export class ModelStore {
 
   /** remove every file of a model (the VAD is shared, so it stays) */
   remove(id: string): void {
-    const info = STT_MODELS.find((m) => m.id === id);
+    const info = this.catalogue.find((m) => m.id === id);
     if (!info || info.provider !== "local") return;
     this.cancel(id);
     this.errors.delete(id);

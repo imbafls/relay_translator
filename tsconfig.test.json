@@ -4,5 +4,7 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["packages/*/test", "apps/*/test"]
+  // the ambient .d.ts files come too: a test that imports app source pulls in
+  // whatever that source declares for its untyped dependencies
+  "include": ["packages/*/test", "apps/*/test", "apps/*/src/*.d.ts", "packages/*/src/*.d.ts"]
 }
