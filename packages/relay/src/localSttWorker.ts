@@ -22,7 +22,7 @@ type Sherpa = any;
 
 export interface LocalSttInit {
   type: "init";
-  engine: "zipformer-online" | "nemo-transducer" | "sense-voice" | "whisper";
+  engine: "zipformer-online" | "nemotron-online" | "nemo-transducer" | "sense-voice" | "whisper" | "moonshine";
   modelDir: string;
   vadModel: string;
   channels: number;
@@ -85,6 +85,7 @@ function modelConfig(i: LocalSttInit): Record<string, unknown> {
   const base = { tokens: f("tokens.txt"), numThreads: threads, provider: "cpu", debug: 0 };
   switch (i.engine) {
     case "zipformer-online":
+    case "nemotron-online":
       return {
         ...base,
         transducer: { encoder: f("encoder.int8.onnx"), decoder: f("decoder.int8.onnx"), joiner: f("joiner.int8.onnx") },
@@ -97,6 +98,16 @@ function modelConfig(i: LocalSttInit): Record<string, unknown> {
       };
     case "sense-voice":
       return { ...base, senseVoice: { model: f("model.int8.onnx"), language: i.language || "auto", useInverseTextNormalization: 1 } };
+    case "moonshine":
+      return {
+        ...base,
+        moonshine: {
+          preprocessor: f("preprocess.onnx"),
+          encoder: f("encode.int8.onnx"),
+          uncachedDecoder: f("uncached_decode.int8.onnx"),
+          cachedDecoder: f("cached_decode.int8.onnx"),
+        },
+      };
     case "whisper":
       return {
         ...base,
@@ -109,9 +120,11 @@ function setup(i: LocalSttInit): void {
   sherpa = loadSherpa();
   init = i;
   const channels = clampChannels(i.channels);
-  if (i.engine === "zipformer-online") {
+  const online = i.engine === "zipformer-online" || i.engine === "nemotron-online";
+  if (online) {
     onlineRec = new sherpa.OnlineRecognizer({
-      featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+      // Nemotron was exported with 128 mel bins; the zipformers use 80
+      featConfig: { sampleRate: SAMPLE_RATE, featureDim: i.engine === "nemotron-online" ? 128 : 80 },
       modelConfig: modelConfig(i),
       decodingMethod: "greedy_search",
       enableEndpoint: true,
@@ -138,8 +151,18 @@ function setup(i: LocalSttInit): void {
       window: new Float32Array(VAD_WINDOW),
       windowLen: 0,
     };
-    if (onlineRec) st.online = onlineRec.createStream();
-    else {
+    if (onlineRec) {
+      st.online = onlineRec.createStream();
+      // multilingual streaming models read the language off each stream;
+      // leaving it unset means auto-detect
+      if (i.engine === "nemotron-online" && /^[a-z]{2}$/.test(i.language || "")) {
+        try {
+          st.online.setOption("language", i.language);
+        } catch {
+          /* older builds have no per-stream options: auto-detect */
+        }
+      }
+    } else {
       st.vad = new sherpa.Vad(
         {
           sileroVad: {
