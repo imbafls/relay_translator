@@ -118,8 +118,9 @@ jobs:
           npx --yes postject callout-relay-server-linux NODE_SEA_BLOB packages/relay/sea/sea-prep.blob \
             --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
           chmod +x callout-relay-server-linux
-          ./callout-relay-server-linux --version >/dev/null 2>&1 || true
+          # no smoke run here: the relay has no --version and would listen forever
           ls -la callout-relay-server-linux
+          test -s callout-relay-server-linux
 
       - uses: actions/upload-artifact@v4
         with:
