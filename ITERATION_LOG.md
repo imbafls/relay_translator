@@ -386,3 +386,31 @@ first-party runtime source.
   retry of its own. `scheduleRetry` clears before it sets, so two timers can
   never be armed at once. Reverting either file turns its stacking test red.
 - **Status**: PASSED
+
+---
+
+### Turn 14/100 - Client UI (the control client and its hand-rolled SSE)
+
+- **Tests Added**: `packages/companion/test/controlClient.test.ts`, 12 tests
+  pairing the real `ControlClient` with the real `ControlServer`, plus a raw HTTP
+  server for the cases where what matters is how the client parses bytes rather
+  than what a server means: a keepalive comment between events, an event split
+  across two chunks, a frame that is not valid JSON, an event that is not a
+  status, two broadcasts back to back, unsubscribe, and recovery when the server
+  restarts underneath it.
+- **Issue/Gap Uncovered**: The SSE parser itself is sound - every framing case
+  above passed first time, including the ones a well-behaved server never
+  produces. What is wrong is narrower: the subscriber callback was invoked
+  *inside* the try that exists to catch malformed JSON. A consumer whose handler
+  throws - a render bug in the Stream Deck plugin, say - had its exception
+  swallowed and filed as "ignore malformed frame", so a real bug in the one
+  place this data is used became invisible. The Stream Deck plugin itself is a
+  clean singleton with no leak: one client, one subscription, and `instances`
+  added and removed on appear and disappear.
+- **Enhancement Shipped**: Parse and dispatch are separated. A frame that will
+  not parse is skipped, and a subscriber that throws is caught on its own and
+  reported, rather than being mistaken for bad input. Letting it out instead
+  would tear down the stream and reconnect, so the stream survives and the error
+  is visible - which is the same choice turn 8 made about the archive download:
+  say which thing broke.
+- **Status**: PASSED

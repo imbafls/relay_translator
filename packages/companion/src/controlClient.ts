@@ -89,11 +89,22 @@ export class ControlClient {
               buf = buf.slice(idx + 2);
               const line = frame.split("\n").find((l) => l.startsWith("data: "));
               if (!line) continue;
+              let evt: { type?: string; status?: ControlStatus } | undefined;
               try {
-                const evt = JSON.parse(line.slice(6));
-                if (evt.type === "status") cb(evt.status as ControlStatus);
+                evt = JSON.parse(line.slice(6));
               } catch {
-                /* ignore malformed frame */
+                /* not a frame we can read; the next one may be */
+                continue;
+              }
+              if (evt?.type !== "status") continue;
+              // deliberately outside the parse guard: a subscriber that throws
+              // is a bug in the subscriber, and swallowing it here files it as
+              // a malformed frame and hides it. Letting it out instead would
+              // tear down the stream, so it is reported and the stream lives.
+              try {
+                cb(evt.status as ControlStatus);
+              } catch (err) {
+                console.error(`[control] status subscriber threw: ${String(err)}`);
               }
             }
           }
