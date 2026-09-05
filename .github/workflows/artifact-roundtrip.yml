@@ -1,0 +1,91 @@
+name: Artifact round-trip
+
+# Does upload-artifact@v7 hand off correctly to download-artifact@v8?
+#
+# The release workflow uploads from two jobs under different names and then
+# downloads everything into one directory, and that handoff is the only part of
+# it CI never exercises - so a break there would first appear on a real tag,
+# after the installer had already been built.
+#
+# This mirrors that shape exactly: two named uploads, one download of all of
+# them, the same `cp dl/<name>/...` lay-out, and then a check that the bytes
+# survived. Run it by hand after bumping either action.
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Make something to carry
+        shell: bash
+        run: |
+          mkdir -p out
+          # a binary-ish file, because the installer is one and zipping is
+          # where a version mismatch would show up
+          head -c 1048576 /dev/urandom > out/CalloutRelay-Setup-0.0.0.exe
+          printf 'version: 0.0.0\n' > out/latest.yml
+          sha256sum out/* | tee windows.sums
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: out/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-sums
+          path: windows.sums
+
+  upload-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make something to carry
+        run: |
+          head -c 2097152 /dev/urandom > callout-relay-server-linux
+          sha256sum callout-relay-server-linux | tee linux.sums
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: callout-relay-server-linux
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-sums
+          path: linux.sums
+
+  download-and-check:
+    needs: [upload-windows, upload-linux]
+    runs-on: ubuntu-latest
+    steps:
+      # no `name`, so this pulls every artifact into dl/<name>/ - exactly what
+      # the release workflow's publish job does
+      - uses: actions/download-artifact@v8
+        with:
+          path: dl
+
+      - name: Lay them out the way the release does
+        run: |
+          set -euo pipefail
+          ls -la dl
+          mkdir -p out
+          cp dl/windows/* out/
+          cp dl/linux/callout-relay-server-linux out/
+          ls -la out
+
+      - name: The bytes have to be the ones that went in
+        run: |
+          set -euo pipefail
+          cd out
+          sha256sum CalloutRelay-Setup-0.0.0.exe latest.yml > ../got-windows.sums
+          sha256sum callout-relay-server-linux > ../got-linux.sums
+          cd ..
+
+          # the uploading jobs recorded their own hashes with a path prefix;
+          # compare the hash column alone
+          norm() { awk '{print $1}' "$1" | sort; }
+
+          diff <(norm dl/windows-sums/windows.sums) <(norm got-windows.sums)
+          diff <(norm dl/linux-sums/linux.sums) <(norm got-linux.sums)
+          echo "ROUND-TRIP OK: every byte survived upload-artifact@v7 -> download-artifact@v8"
