@@ -42,6 +42,12 @@ export function defaultWorkerPath(): string {
 /** models whose load has already been proved in this process */
 const verified = new Set<string>();
 
+/** how long a probe may run before the model counts as unloadable */
+const PROBE_TIMEOUT_MS = 180000;
+
+/** s16le 16 kHz: one second of one channel */
+const BYTES_PER_SEC_PER_CHANNEL = 16000 * 2;
+
 /**
  * Load the model once in a throwaway child process. sherpa-onnx aborts the
  * process outright on some models instead of throwing, which would take the
@@ -68,7 +74,7 @@ function probeModel(workerPath: string, init: LocalSttInit): Promise<string | nu
     const timer = setTimeout(() => {
       child.kill();
       resolve("it took too long to load");
-    }, 180000);
+    }, PROBE_TIMEOUT_MS);
     child.on("error", (err) => {
       clearTimeout(timer);
       resolve(String(err?.message || err));
@@ -108,7 +114,18 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   /** the worker is gone (or never came up) and onClose has fired */
   let done = false;
   let killTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Audio spoken before the worker is ready waits here. Since the crash guard
+   * landed, that window covers two sequential loads of the same model - the
+   * probe child, then the worker - so the budget follows the probe timeout
+   * instead of a fixed frame count. Overflow is reported, never silent.
+   */
   const pending: Buffer[] = [];
+  const bytesPerSec = BYTES_PER_SEC_PER_CHANNEL * Math.max(1, cfg.channels);
+  const maxPendingBytes = bytesPerSec * (PROBE_TIMEOUT_MS / 1000);
+  let pendingBytes = 0;
+  let droppedBytes = 0;
 
   const send = (msg: LocalSttToWorker, transfer?: ArrayBuffer[]): void => {
     try {
@@ -152,6 +169,12 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
       if (!closing) events.onOpen?.();
       for (const b of pending) sendAudio(b);
       pending.length = 0;
+      pendingBytes = 0;
+      if (droppedBytes > 0) {
+        const secs = Math.round(droppedBytes / bytesPerSec);
+        events.onError?.(`the model took so long to start that ${secs}s of speech was dropped`);
+        droppedBytes = 0;
+      }
       if (closing) requestClose();
     } else if (msg.type === "partial") {
       if (!closing) events.onPartial?.(msg.text, msg.channel);
@@ -195,8 +218,13 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   function sendAudio(chunk: Buffer): void {
     if (done) return;
     if (!ready) {
-      // a few seconds at most: the model is loading
-      if (pending.length < 300) pending.push(Buffer.from(chunk));
+      // still probing and loading the model; hold the audio rather than lose it
+      if (pendingBytes + chunk.length <= maxPendingBytes) {
+        pending.push(Buffer.from(chunk));
+        pendingBytes += chunk.length;
+      } else {
+        droppedBytes += chunk.length;
+      }
       return;
     }
     // copy into a standalone ArrayBuffer so it can be transferred
