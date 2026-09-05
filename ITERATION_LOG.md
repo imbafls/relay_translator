@@ -92,3 +92,32 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   rather than delivery jitter. The mock STT now reports `audioEndSec` like the
   real engines, so timing bugs cannot hide behind it again.
 - **Status**: PASSED
+
+---
+
+### Turn 4/100 - Message orchestration (a bad hello takes the relay down)
+
+- **Tests Added**: `packages/relay/test/server.test.ts`, 7 tests booting the real
+  relay on a real port and talking to it over real sockets. Five malformed
+  publisher hellos, plus two that confirm a good hello is still accepted -
+  asserted through the viewer language broadcast, which is the observable proof
+  that `buildSession` ran.
+- **Issue/Gap Uncovered**: All three `JSON.parse` sites are guarded, so malformed
+  *JSON* was already handled. Malformed *shape* was not. The publisher handler's
+  try/catch covers only the parse, then dereferences `msg.languages.source`
+  outside any guard. A publisher that is past the token check - an old build, a
+  half-written client, anyone holding the token - sending `{"type":"hello"}`
+  throws a TypeError inside a `ws.on("message")` handler, and there is no
+  `uncaughtException` handler anywhere in the codebase, so that is the relay
+  process dying and taking every viewer with it. Reverting the fix showed a
+  second vector I had not spotted: a hello with no `stt` reaches
+  `isLocalStt(undefined)` and dies on `.startsWith`. Vitest reported both as
+  Unhandled Errors.
+- **Enhancement Shipped**: A `publisherHello` validator that treats the payload
+  as untrusted even though the token checked out. It requires
+  `languages.source` and `languages.target` as strings, fills `stt`,
+  `translation`, `channels` and `channelLabels` from defaults when they are
+  missing or the wrong type, and rejects with an error message to the publisher
+  rather than throwing. The relay now survives all five malformed shapes and
+  keeps serving.
+- **Status**: PASSED

@@ -128,6 +128,30 @@ function lanAddress(): string {
   return candidates[0] || "127.0.0.1";
 }
 
+/**
+ * A publisher hello arrives over a socket, so none of it can be trusted even
+ * though the token checked out: an old build, a half-written client or a
+ * malicious one can all send a shape that does not match the type. Returns the
+ * session config, or null when there is not enough to caption anything.
+ */
+function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConfig | null {
+  const raw = msg as unknown as Record<string, unknown>;
+  const langs = raw.languages as { source?: unknown; target?: unknown } | undefined;
+  if (!langs || typeof langs.source !== "string" || typeof langs.target !== "string") return null;
+  const str = (v: unknown, fallback: string): string => (typeof v === "string" ? v : fallback);
+  return {
+    stt: str(raw.stt, DEFAULT_CONFIG.stt),
+    translation: str(raw.translation, DEFAULT_CONFIG.translation),
+    languages: { source: langs.source, target: langs.target },
+    translationEnabled: raw.translationEnabled !== false,
+    latencyVisible: raw.latencyVisible !== false,
+    channels: clampChannels(raw.channels),
+    channelLabels: Array.isArray(raw.channelLabels)
+      ? raw.channelLabels.map((l) => String(l).slice(0, 12))
+      : undefined,
+  };
+}
+
 export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const log = opts.log || (() => {});
   const dataDir = opts.dataDir || ".";
@@ -486,23 +510,21 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
       if (msg.type === "ping") sendPublisher(ws, { type: "pong" });
       if (msg.type === "hello") {
-        const channels = clampChannels(msg.channels);
+        const cfg = publisherHello(msg);
+        if (!cfg) {
+          log("warn", "publisher hello rejected: languages.source and languages.target are required");
+          sendPublisher(ws, { type: "error", message: "hello needs languages.source and languages.target" });
+          return;
+        }
+        const { channels, languages } = cfg;
         log(
           "info",
-          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}${msg.latencyVisible === false ? " (latency hidden)" : ""}${channels > 1 ? ` (${channels} channels: ${(msg.channelLabels || []).join("/")})` : ""}`,
+          `publisher session: stt=${cfg.stt} translation=${cfg.translation} ${languages.source}->${languages.target}${cfg.translationEnabled === false ? " (translation off)" : ""}${cfg.latencyVisible === false ? " (latency hidden)" : ""}${channels > 1 ? ` (${channels} channels: ${(cfg.channelLabels || []).join("/")})` : ""}`,
         );
-        buildSession(ws, {
-          stt: msg.stt,
-          translation: msg.translation,
-          languages: msg.languages,
-          translationEnabled: msg.translationEnabled !== false,
-          latencyVisible: msg.latencyVisible !== false,
-          channels,
-          channelLabels: Array.isArray(msg.channelLabels) ? msg.channelLabels.map((l) => String(l).slice(0, 12)) : undefined,
-        });
+        buildSession(ws, cfg);
         toViewers({
           type: "hello",
-          languages: msg.languages,
+          languages,
           live: true,
           translates: currentTranslates,
         });
