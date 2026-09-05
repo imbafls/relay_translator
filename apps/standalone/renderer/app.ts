@@ -71,7 +71,6 @@ const STT_SHORT: Record<string, string> = {
   "local-zipformer-en-20m": "Zipformer 20M",
   "local-parakeet-tdt-0.6b-v3": "Parakeet 0.6B",
   "local-sense-voice": "SenseVoice",
-  "local-whisper-small": "Whisper Small",
   "local-moonshine-tiny": "Moonshine Tiny",
   "local-moonshine-base": "Moonshine Base",
   "local-whisper-tiny-en": "Whisper Tiny EN",
@@ -87,7 +86,6 @@ const STT_TAG: Record<string, string> = {
   "local-zipformer-en-20m": "STREAMING · EN",
   "local-parakeet-tdt-0.6b-v3": "BEST · EN +24",
   "local-sense-voice": "ZH EN JA KO",
-  "local-whisper-small": "100 LANGS",
   "local-moonshine-tiny": "FAST · EN",
   "local-moonshine-base": "ACCURATE · EN",
   "local-whisper-tiny-en": "SMALLEST · EN",
@@ -1904,6 +1902,11 @@ function bind(): void {
 
 async function boot(): Promise<void> {
   config = await cr.getConfig();
+  // a model can leave the catalogue between versions; never strand the app on one
+  if (!sttModel(config.stt)) {
+    log(`"${config.stt}" is no longer available - falling back to ${sttFull(lastCloudStt)}`, "err");
+    config = await cr.setConfig({ stt: lastCloudStt });
+  }
   if (!isLocalStt(config.stt)) lastCloudStt = config.stt;
   bind();
   syncControlsFromConfig();

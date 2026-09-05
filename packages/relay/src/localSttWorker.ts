@@ -26,6 +26,8 @@ export interface LocalSttInit {
   modelDir: string;
   vadModel: string;
   channels: number;
+  /** mel bins the model was exported with (80 unless the catalog says otherwise) */
+  melBins?: number;
   language: string;
   numThreads?: number;
 }
@@ -116,6 +118,25 @@ function modelConfig(i: LocalSttInit): Record<string, unknown> {
   }
 }
 
+/**
+ * Probe mode. sherpa-onnx aborts the whole process on some models rather than
+ * throwing, so the desktop app loads every model here first: this child dies
+ * instead of the app, and its exit code says whether the model is usable.
+ *   node localSttWorker.js --probe '<LocalSttInit json>'
+ */
+function runProbe(): boolean {
+  const at = process.argv.indexOf("--probe");
+  if (at === -1) return false;
+  try {
+    const init = JSON.parse(process.argv[at + 1] || "{}") as LocalSttInit;
+    setup({ ...init, channels: 1 });
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`${String((err as Error)?.message || err)}\n`);
+    process.exit(3);
+  }
+}
+
 function setup(i: LocalSttInit): void {
   sherpa = loadSherpa();
   init = i;
@@ -124,7 +145,7 @@ function setup(i: LocalSttInit): void {
   if (online) {
     onlineRec = new sherpa.OnlineRecognizer({
       // Nemotron was exported with 128 mel bins; the zipformers use 80
-      featConfig: { sampleRate: SAMPLE_RATE, featureDim: i.engine === "nemotron-online" ? 128 : 80 },
+      featConfig: { sampleRate: SAMPLE_RATE, featureDim: i.melBins || (i.engine === "nemotron-online" ? 128 : 80) },
       modelConfig: modelConfig(i),
       decodingMethod: "greedy_search",
       enableEndpoint: true,
@@ -135,7 +156,7 @@ function setup(i: LocalSttInit): void {
     });
   } else {
     offlineRec = new sherpa.OfflineRecognizer({
-      featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+      featConfig: { sampleRate: SAMPLE_RATE, featureDim: i.melBins || 80 },
       modelConfig: modelConfig(i),
       decodingMethod: "greedy_search",
     });
@@ -307,6 +328,9 @@ function flush(): void {
     }
   }
 }
+
+// --probe loads the model and exits; nothing below runs in that mode
+runProbe();
 
 parentPort?.on("message", (msg: LocalSttToWorker) => {
   try {

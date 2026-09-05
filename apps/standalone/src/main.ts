@@ -37,6 +37,17 @@ tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
  * CPU and RAM do not change while the app runs, so the model-tier
  * recommendation is worked out once at startup and rides along with status.
  */
+/**
+ * The worker runs both as a thread and as the model-load probe, and the probe
+ * is a real child process, so it needs a path outside the asar. electron-builder
+ * unpacks it (see asarUnpack); fall back to the packed path in dev.
+ */
+function sttWorkerPath(): string {
+  const packed = path.join(__dirname, "localSttWorker.js");
+  const unpacked = packed.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+  return unpacked !== packed && fs.existsSync(unpacked) ? unpacked : packed;
+}
+
 const hardware: HardwareInfo = (() => {
   const cpus = os.cpus();
   const threads = cpus.length || 4;
@@ -142,7 +153,7 @@ async function startEmbeddedRelay(): Promise<void> {
     deepgramApiKey: cfg.deepgramApiKey,
     geminiApiKey: cfg.geminiApiKey,
     // the worker is bundled next to main.js (see build.mjs)
-    localStt: { modelsDir, workerPath: path.join(__dirname, "localSttWorker.js") },
+    localStt: { modelsDir, workerPath: sttWorkerPath() },
     log,
     onViewers: () => broadcastStatus(),
   });
