@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#131313" />
+  <title>Relay: your speech, transcribed and streamed</title>
+  <meta name="description" content="Relay transcribes your own speech on your PC and streams it as live captions to a phone or an OBS overlay, translated as it lands." />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
+  <style>
+    :root {
+      --bg: #131313; --ink: #efeae0; --ink-2: #b8b3a8; --dim: #8a877f; --mute: #3a3834;
+      --rule: rgba(239,234,224,.14); --rule-2: rgba(239,234,224,.08); --amber: #e0a43a;
+      --sans: Archivo, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: "Martian Mono", ui-monospace, Consolas, monospace;
+    }
+    @keyframes rl-pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+    * { box-sizing: border-box }
+    html { height: 100% }
+    body { margin: 0; min-height: 100%; display: flex; flex-direction: column;
+           background: var(--bg); color: var(--ink); font: 13px/1.4 var(--sans); -webkit-font-smoothing: antialiased }
+    a { color: inherit }
+    .label { font-stretch: 75%; font-size: 10.5px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--dim) }
+    .mono { font-family: var(--mono) }
+
+    .bar { display: flex; align-items: center; height: 40px; padding: 0 20px; border-bottom: 1px solid var(--rule) }
+    .wordmark { font-weight: 800; font-size: 15px; letter-spacing: .14em; font-stretch: 75% }
+    .state { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: .14em; font-stretch: 75%; font-weight: 600; color: var(--dim) }
+    .dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid currentColor }
+    .state.up { color: var(--amber) } .state.up .dot { background: var(--amber); border-color: var(--amber); animation: rl-pulse 1.6s infinite }
+
+    .wrap { max-width: 1080px; width: 100%; margin: 0 auto; padding: 0 20px; flex: 1; display: flex; flex-direction: column }
+    .hero { flex: 1; display: grid; grid-template-columns: 1.05fr .95fr; gap: 0; border-bottom: 1px solid var(--rule) }
+    @media (max-width: 860px) { .hero { grid-template-columns: 1fr } }
+    .pitch { padding: 56px 44px 44px; border-right: 1px solid var(--rule) }
+    @media (max-width: 860px) { .pitch { border-right: 0; border-bottom: 1px solid var(--rule); padding: 40px 20px 32px } }
+    h1 { font-size: 34px; line-height: 1.12; font-weight: 500; margin: 14px 0 0; text-wrap: pretty; max-width: 15ch }
+    .sub { font-size: 15px; line-height: 1.55; color: var(--dim); margin: 16px 0 0; max-width: 44ch }
+
+    .cta { margin-top: 36px; display: flex; align-items: stretch; width: max-content; max-width: 100% }
+    .dl { display: flex; align-items: center; gap: 12px; padding: 15px 26px; background: var(--ink); color: var(--bg);
+          font-weight: 700; font-size: 13px; letter-spacing: .1em; font-stretch: 75%; text-transform: uppercase; text-decoration: none }
+    .dl:hover { background: var(--amber) }
+    .dl .arrow { font: 12px var(--mono) }
+    .dl[aria-disabled="true"] { background: transparent; color: var(--mute); border: 1px solid rgba(239,234,224,.2); pointer-events: none }
+    .cta-meta { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 0 0 18px; font: 10.5px var(--mono); color: var(--dim) }
+    /* on a phone the row is wider than the screen, which dragged the whole page sideways */
+    @media (max-width: 860px) {
+      .cta { flex-direction: column; align-items: stretch; width: 100% }
+      .dl { justify-content: center }
+      .cta-meta { padding: 12px 0 0; gap: 4px }
+      h1 { font-size: 30px; max-width: none }
+      .sub { max-width: none }
+    }
+
+    .demo { display: flex; flex-direction: column; min-height: 360px }
+    .demo-head { display: grid; grid-template-columns: 1fr 1fr }
+    .demo-head span { padding: 10px 20px; border-bottom: 1px solid var(--rule-2) }
+    .demo-head span + span { border-left: 1px solid var(--rule) }
+    /* one grid, so each caption and its translation always share a row, and the
+       split sits at 50% to line up with the two header cells */
+    .lines { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-content: end;
+             row-gap: 18px; padding: 0 0 26px; position: relative }
+    .lines::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--rule) }
+    .en { display: grid; grid-template-columns: 46px 1fr; gap: 12px; padding: 0 20px }
+    .vi { padding: 0 20px }
+    .t { font: 10.5px var(--mono); padding-top: 5px; color: var(--dim); white-space: nowrap }
+    .en > span:last-child, .vi { font-size: 17px; line-height: 1.3; color: var(--dim) }
+    .now .t { color: var(--amber) }
+    .now > span:last-child, .vi.now { color: var(--ink) }
+    .caret { display: inline-block; width: 2px; height: 15px; background: var(--amber); margin-left: 4px; vertical-align: -2px; animation: rl-pulse 1s infinite }
+    @media (max-width: 1000px) { .demo { display: none } }
+
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--rule) }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr } }
+    .cell { padding: 22px 20px 26px }
+    .cell + .cell { border-left: 1px solid var(--rule) }
+    @media (max-width: 860px) { .cell + .cell { border-left: 0; border-top: 1px solid var(--rule-2) } }
+    .cell h2 { margin: 0 0 9px; font: inherit }
+    .cell p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--dim) }
+    .n { color: var(--ink); margin-right: 8px }
+
+    .next { display: flex; align-items: baseline; gap: 20px; padding: 20px 20px 22px; border-bottom: 1px solid var(--rule) }
+    @media (max-width: 860px) { .next { flex-direction: column; gap: 8px } }
+    .next .soon { flex: none; color: var(--mute) }
+    .next p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--dim); max-width: 78ch }
+    .next b { color: var(--ink-2); font-weight: 500 }
+
+    footer { padding: 18px 20px 40px; display: flex; gap: 20px; flex-wrap: wrap; font: 10.5px var(--mono); color: var(--mute) }
+    footer a { color: var(--dim); text-decoration: underline; text-underline-offset: 3px }
+    footer a:hover { color: var(--ink) }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <div class="wordmark">RELAY</div>
+    <div class="state" id="state"><span class="dot"></span><span id="stateText">CHECKING</span></div>
+  </div>
+
+  <div class="wrap">
+    <section class="hero">
+      <div class="pitch">
+        <div class="label">Live caption relay</div>
+        <h1>Your speech, transcribed and streamed.</h1>
+        <p class="sub">
+          Relay turns what you say into captions on your own PC, then streams them to a
+          friend's phone or straight into OBS. Translation is optional and stays off until
+          you add a key.
+        </p>
+
+        <div class="cta">
+          <a class="dl" id="dl" href="/download"><span class="arrow">&#8595;</span><span id="dlText">Download for Windows</span></a>
+          <div class="cta-meta">
+            <span id="ver">&mdash;</span>
+            <span id="size">WINDOWS 10 / 11 &middot; 64-BIT</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo" aria-hidden="true">
+        <div class="demo-head"><span class="label">English &middot; source</span><span class="label">Tiếng Việt &middot; translation</span></div>
+        <div class="lines">
+          <span class="en"><span class="t">45:14</span><span>Rotate A, spike's down</span></span><span class="vi">Đảo sang A, spike đã đặt</span>
+          <span class="en"><span class="t">45:21</span><span>He's one shot, behind the box</span></span><span class="vi">Nó còn một viên, sau cái hộp</span>
+          <span class="en now"><span class="t">45:24</span><span>Reloading, cover me<span class="caret"></span></span></span><span class="vi now">Đang nạp đạn, che tôi</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="cell">
+        <h2 class="label"><span class="n">01</span>Your speech, on your PC</h2>
+        <p>Your microphone is transcribed on the machine you play on. This server only forwards finished captions, so your audio never leaves your computer.</p>
+      </div>
+      <div class="cell">
+        <h2 class="label"><span class="n">02</span>Phone or OBS</h2>
+<p>Send a link for a phone, or drop the local one into an OBS browser source as a transparent overlay. Both at once works too.</p>
+      </div>
+      <div class="cell">
+        <h2 class="label"><span class="n">03</span>Updates itself</h2>
+        <p>The installed app checks for new builds in the background and applies them on the next restart, so a session is never interrupted.</p>
+      </div>
+    </section>
+
+    <section class="next">
+      <span class="label soon">Coming next</span>
+      <p><b>Voice chat, not just you.</b> Transcribing and streaming everyone in the call, so whoever is reading follows the whole conversation instead of half of it.</p>
+    </section>
+
+    <footer>
+      <span id="host">RELAY ENDPOINT</span>
+      <a href="/health">HEALTH</a>
+      <span>BRING YOUR OWN DEEPGRAM + GEMINI KEYS</span>
+    </footer>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  $("host").textContent = "RELAY ENDPOINT · " + location.host.toUpperCase();
+
+  fetch("/health", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((h) => {
+      const el = $("state");
+      if (!h) return;
+      el.classList.toggle("up", !!h.live);
+      $("stateText").textContent = h.live ? "ON AIR" : "STANDBY";
+    })
+    .catch(() => { $("stateText").textContent = "OFFLINE"; });
+
+  // the download button mirrors whatever the update feed currently advertises
+  fetch("/updates/latest.yml", { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : null))
+    .then((yml) => {
+      if (!yml) throw new Error("no feed");
+      const version = (/^version:\s*(.+)$/m.exec(yml) || [])[1];
+      const size = Number((/^\s+size:\s*(\d+)$/m.exec(yml) || [])[1]);
+      if (version) $("ver").textContent = "VERSION " + version.trim();
+      if (size) $("size").textContent = (size / 1048576).toFixed(0) + " MB · WINDOWS 10 / 11 · 64-BIT";
+    })
+    .catch(() => {
+      const dl = $("dl");
+      dl.setAttribute("aria-disabled", "true");
+      $("dlText").textContent = "No build published yet";
+      $("ver").textContent = "";
+    });
+})();
+</script>
+</body>
+</html>

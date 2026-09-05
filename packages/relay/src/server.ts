@@ -364,24 +364,18 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       return;
     }
 
-    // viewer page + assets
-    if (url.pathname === "/" || url.pathname === "/watch" || url.pathname === "/watch/") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(
-        `<!doctype html><meta charset="utf-8"><title>Callout Relay</title>` +
-          `<body style="font-family:system-ui;background:#0b0e14;color:#e6e6e6;display:grid;place-items:center;height:100vh;margin:0">` +
-          `<div style="text-align:center"><h1>Callout Relay</h1><p>Relay is running. Open the share link from the app.</p>` +
-          `<p style="opacity:.5">GET /health &middot; WS /ws/publisher &middot; WS /ws/viewer</p></div></body>`,
-      );
-      return;
-    }
-
+    // landing page, viewer page, and their shared assets
     const watchMatch = url.pathname.match(/^\/watch\/([A-Za-z0-9_-]+)$/);
     let rel = "";
-    if (watchMatch) {
+    if (url.pathname === "/" || url.pathname === "/watch" || url.pathname === "/watch/") {
+      rel = "home.html";
+    } else if (watchMatch) {
       rel = "index.html";
     } else if (url.pathname.startsWith("/watch/")) {
       rel = url.pathname.slice("/watch/".length);
+    } else if (url.pathname.startsWith("/fonts/")) {
+      // the landing page loads these from the root, the viewer from /watch/
+      rel = url.pathname.slice(1);
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("not found");
@@ -395,7 +389,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       return;
     }
     const type = MIME[path.extname(rel).toLowerCase()] || "application/octet-stream";
-    res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Cache-Control": rel.startsWith("fonts/") ? "public, max-age=604800" : "no-cache",
+    });
     res.end(asset);
   });
 
