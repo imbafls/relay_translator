@@ -811,3 +811,33 @@ the green tick is believed.
   styles. The real repo still passes - 116, 32 and 14 ids resolving - and
   removing a page now exits 1 where it used to exit 0.
 - **Status**: PASSED
+
+---
+
+### Turn 29/40 - Message orchestration (the check that keeps a stream private)
+
+Started by verifying the last unchecked guard. `pnpm smoke` is in CI and the
+release gate, and nothing had confirmed it fails when it should - so I disabled
+the relay's admin auth and ran it: `FAIL admin endpoint auth`, one failure,
+exit 1. It has teeth, and all four of its catch blocks either record a failure
+or only guard a JSON parse.
+
+- **Tests Added**: `packages/relay/test/viewerAuth.test.ts`, 9 tests against a
+  real relay: the real token admitted, a wrong one refused, no token refused,
+  the *publisher's* token refused, a prefix of the real token refused, the page
+  still served to anyone, and three for rotation - the old token stops working,
+  the new one is admitted, and whoever was already watching is hung up on.
+- **Issue/Gap Uncovered**: A coverage hole rather than a defect, in the one
+  place it matters most. The viewer page is served to anybody by design, so a
+  link can be opened before a session starts, and the token is enforced at the
+  WebSocket instead. That single check is the whole of what keeps a stream
+  private, and nothing tested it - smoke asserts the page is public and that a
+  *publisher* with a bad token is refused, never a viewer. Worse, its rotate
+  block is titled "old viewer token dies" and only asserts that the token
+  changed: the heading promised a check that was not there. The behaviour is
+  correct on all nine counts, rotation hanging up on the connected viewer
+  included, which I did not expect to hold.
+- **Enhancement Shipped**: The property is now asserted rather than assumed.
+  Disabling the viewer token check turns five of the nine red - and before this
+  turn it would have turned nothing red anywhere in the repo.
+- **Status**: PASSED
