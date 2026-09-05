@@ -16,6 +16,21 @@ try {
 }
 tryLoadDotenv(dotenvDirs);
 
+/**
+ * This runs unattended on a public host, so the useful failure mode is a
+ * logged error and a relay that is still up rather than a clean exit and every
+ * viewer disconnected. Node warns the process may be in an undefined state
+ * after this, and that is a real cost - but the alternative here is one
+ * malformed request ending the stream for everyone, and systemd restarting
+ * into the same request until it gives up on the unit.
+ */
+process.on("uncaughtException", (err) => {
+  console.error(`[relay] uncaught: ${err?.stack || String(err)}`);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error(`[relay] unhandled rejection: ${String(reason)}`);
+});
+
 async function main(): Promise<void> {
   const handle = await startRelay({
     port: process.env.RELAY_PORT ? Number(process.env.RELAY_PORT) : undefined,

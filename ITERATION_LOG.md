@@ -867,3 +867,34 @@ or only guard a JSON parse.
   `package.json` to `package.js`; and a failed backup left injected test text in
   the document, which the guard's own assertion then flagged.
 - **Status**: PASSED
+
+---
+
+### Turn 31/40 - Message orchestration (the unauthenticated kill)
+
+First of the audit's findings. The audit ran for two hours over 338 agents and
+came back with 36 confirmed defects, several of them worse than anything the
+previous thirty turns found - including this one, which is live on the VPS.
+
+- **Tests Added**: `packages/relay/test/hostileRequests.test.ts`, 8 tests firing
+  request targets over a raw socket, because `fetch` normalises them away and
+  the internet does not: `//%25`, `/updates/%C0%80`, a lone `%`, a truncated
+  `%E0%A4`, a bad escape in the query, a backslash host, and the same target on
+  the WebSocket upgrade path.
+- **Issue/Gap Uncovered**: Node's HTTP parser accepts targets `new URL` refuses.
+  `//%25` reads as an invalid host and throws `ERR_INVALID_URL`;
+  `decodeURIComponent` on the `/updates/` route throws `URIError` on an overlong
+  or truncated escape. Both are outside any try, both run before any token
+  check, and there was no `uncaughtException` handler anywhere. Proved against a
+  real built process rather than under vitest, which installs its own handlers
+  and hides it: `/health` answered 200, then `GET //%25` exited the process with
+  code 1 and every publisher and viewer socket went with it. Anyone could do
+  this to `relay.supr.systems`, repeatedly, with one line of curl. Turn 4 found
+  the same shape behind the publisher token; this needs nothing at all.
+- **Enhancement Shipped**: `parseTarget` answers 400 instead of throwing, on
+  both the request and upgrade paths; the `/updates/` decode is guarded; and
+  `cli.ts` logs an uncaught exception rather than exiting - deliberately, since
+  the alternative on an unattended public host is one malformed request ending
+  the stream for everyone and systemd restarting into the same request. Same
+  probe after the fix: 400, 404, 404, process alive, `/health` still 200.
+- **Status**: PASSED

@@ -152,6 +152,22 @@ function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConf
   };
 }
 
+/**
+ * The request target as a URL, or null when it is not one.
+ *
+ * Node's HTTP parser accepts targets `new URL` refuses - `//%25` reads as an
+ * invalid host, and this relay is on a public port where the handler runs
+ * before any token check. Throwing here is an unauthenticated way to stop the
+ * process, so it is caught and answered instead.
+ */
+function parseTarget(req: http.IncomingMessage): URL | null {
+  try {
+    return new URL(req.url || "/", "http://localhost");
+  } catch {
+    return null;
+  }
+}
+
 export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const log = opts.log || (() => {});
   const dataDir = opts.dataDir || ".";
@@ -299,7 +315,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   };
 
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url || "/", `http://localhost`);
+    const url = parseTarget(req);
+    if (!url) {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("bad request target");
+      return;
+    }
 
     if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -346,7 +367,16 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
 
     // update feed + installers (electron-updater reads latest.yml from here)
     if (url.pathname.startsWith("/updates/")) {
-      const rel = decodeURIComponent(url.pathname.slice("/updates/".length));
+      // an escape the decoder rejects - "%C0%80", a truncated "%E0%A4" - throws
+      // a URIError, and this route is reached without a token
+      let rel: string;
+      try {
+        rel = decodeURIComponent(url.pathname.slice("/updates/".length));
+      } catch {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+        return;
+      }
       if (!rel || !/^[A-Za-z0-9._-]+$/.test(rel) || rel.includes("..")) {
         res.writeHead(404, { "Content-Type": "text/plain" });
         res.end("not found");
@@ -449,7 +479,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url || "/", `http://localhost`);
+    // reached before any token check, so a throw here is an unauthenticated kill
+    const url = parseTarget(req);
+    if (!url) {
+      socket.destroy();
+      return;
+    }
     const token = url.searchParams.get("token") || "";
 
     if (url.pathname === "/ws/publisher") {
