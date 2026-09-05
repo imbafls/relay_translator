@@ -53,15 +53,18 @@ jobs:
           fi
           echo "releasing $tag"
 
+      # shared emits the .d.ts every other package typechecks against,
+      # so the build has to come first on a clean checkout
+      - name: Build workspace
+        run: pnpm -r build
+
       - name: Typecheck
         run: pnpm -r typecheck
 
       # installer + portable + latest.yml. --publish never: the publish job
       # below owns the release so both build jobs attach to the same one
       - name: Build desktop app
-        run: |
-          pnpm --filter @callout-relay/standalone run build
-          pnpm --filter @callout-relay/standalone exec electron-builder --win --publish never
+        run: pnpm --filter @callout-relay/standalone exec electron-builder --win --publish never
 
       - name: Build Windows relay server
         run: pnpm dist:relay
@@ -107,7 +110,7 @@ jobs:
       # the SEA blob is portable; inject it into this runner's own node binary
       - name: Build Linux relay server
         run: |
-          pnpm --filter @callout-relay/relay build
+          pnpm -r build
           node scripts/build-relay-bundle.mjs
           node --experimental-sea-config packages/relay/sea/sea-config.json
           cp "$(command -v node)" callout-relay-server-linux

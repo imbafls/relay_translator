@@ -28,11 +28,13 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm -r typecheck
-
+      # shared emits the .d.ts every other package typechecks against,
+      # so the build has to come first on a clean checkout
       - name: Build
         run: pnpm -r build
+
+      - name: Typecheck
+        run: pnpm -r typecheck
 
       # catches a renderer that references an element id the markup no longer has
       - name: Check renderer element ids
