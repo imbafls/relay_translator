@@ -606,3 +606,30 @@ the caveat stands: the CI job is how that gets answered.
   the commit says so. Adding the attribute changed nothing that is already
   stored, which is the check that it was a no-op.
 - **Status**: PASSED
+
+---
+
+### Turn 22/100 - Stream & audio transport (what the source pickers offer)
+
+- **Tests Added**: `packages/companion/test/capture.test.ts`, 8 tests over
+  `listDevices`. `BrowserAudioCapture` is otherwise thoroughly browser-bound,
+  but this method is plain mapping over one call, so only that call is stood in
+  for: the two built-in sources always coming first, surviving an
+  `enumerateDevices` that throws because permission has not been granted,
+  filtering non-inputs and entries with no id, naming a microphone the browser
+  will not name, and the platform's pseudo-devices.
+- **Issue/Gap Uncovered**: `default` was filtered - it is already offered as the
+  first entry - but `communications` was not. Windows exposes it alongside
+  `default` as a second alias for a device that is in the list already, so the
+  picker offered two entries that are the same input. That is the exact shape of
+  the confusion the handoff documents at length: two sources that turn out to be
+  the same one, two channels transcribing the same voice, and nothing anywhere
+  saying why. It does not explain the Wave Link case in the handoff, which is a
+  genuine mix-routing question, but it is another way to arrive at the same
+  symptom - and this one is ours.
+- **Enhancement Shipped**: Both alias ids are filtered, named as what they are.
+  Also worth recording for whoever writes the next browser-facing test: Node
+  ships its own `navigator` and it is getter-only, so it has to be redefined
+  rather than assigned - all 8 tests failed on that before they failed on
+  anything real.
+- **Status**: PASSED

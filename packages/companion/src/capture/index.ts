@@ -5,6 +5,9 @@ export const TARGET_SAMPLE_RATE = 16000;
 export const SOURCE_DEFAULT_MIC = "default-mic";
 export const SOURCE_SYSTEM_LOOPBACK = "system-loopback";
 
+/** ids the platform hands out for "whatever is currently the default" */
+const PSEUDO_DEVICE_IDS = new Set(["default", "communications"]);
+
 /**
  * Renderer-side audio capture: mic (getUserMedia) or system loopback
  * (getDisplayMedia - Electron main must install a display-media request
@@ -28,7 +31,11 @@ export class BrowserAudioCapture {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       mics = devices
-        .filter((d) => d.kind === "audioinput" && d.deviceId && d.deviceId !== "default")
+        // "default" and "communications" are aliases Windows adds for devices
+        // that are already in this list, and the first is offered above anyway.
+        // Listing them again gives the picker two entries that are the same
+        // input, which is the exact confusion the second source already causes.
+        .filter((d) => d.kind === "audioinput" && d.deviceId && !PSEUDO_DEVICE_IDS.has(d.deviceId))
         .map((d, i) => ({
           id: d.deviceId,
           label: d.label || `Microphone ${i + 1}`,
