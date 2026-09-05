@@ -53,8 +53,8 @@ Prebuilt installers live in `release/`:
 
 | File | What it is |
 | --- | --- |
-| `Callout Relay Setup 0.1.0.exe` | Windows installer (desktop + Start Menu shortcuts) |
-| `CalloutRelay-Portable-0.1.0.exe` | Portable single exe — run from anywhere, nothing installed |
+| `Callout Relay Setup 0.2.1.exe` | Windows installer (desktop + Start Menu shortcuts) |
+| `CalloutRelay-Portable-0.2.1.exe` | Portable single exe — run from anywhere, nothing installed |
 | `callout-relay-server.exe` | Standalone relay server (for a VPS / second PC) |
 | `SHA256SUMS.txt` | Checksums for the above |
 
