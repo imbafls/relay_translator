@@ -8,6 +8,7 @@ import {
   TRANSLATION_MODELS,
   clampChannels,
   isLocalStt,
+  modelDiskBytes,
   recommendTier,
   sttModel,
 } from "../src/index";
@@ -70,6 +71,22 @@ describe("local models carry everything the loader needs", () => {
       ).toBeLessThan(0.02);
     },
   );
+
+  it("says how much disk each model needs, VAD included where it is required", () => {
+    const vad = LOCAL_VAD.files!.reduce((n, f) => n + f.size, 0);
+    for (const m of local) {
+      const files = (m.files ?? []).reduce((n, f) => n + f.size, 0);
+      const expected = m.kind === "offline" ? files + vad : files;
+      expect(modelDiskBytes(m), m.id).toBe(expected);
+      expect(modelDiskBytes(m)).toBeGreaterThan(0);
+    }
+  });
+
+  it("shows that an archive needs more room than it downloads", () => {
+    // the reason the helper exists: sizeMb answers how long, not whether it fits
+    const turbo = sttModel("local-whisper-turbo")!;
+    expect(modelDiskBytes(turbo)).toBeGreaterThan(turbo.archive!.size * 1.5);
+  });
 
   it("only ever claims a mel-bin count the exports actually use", () => {
     for (const m of local) {

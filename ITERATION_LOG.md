@@ -525,3 +525,30 @@ milliseconds and megabytes - the class turn 3's latency bug belonged to.
   surfacing it is a renderer change rather than a data fix and does not belong
   in this turn.
 - **Status**: PASSED
+
+---
+
+### Turn 19/100 - Stream & audio transport (room for the model before it starts)
+
+Taking the follow-up turn 18 deferred, in the form that helps rather than the
+form that only informs.
+
+- **Tests Added**: 4 in `apps/standalone/test/models.test.ts` for the pre-flight
+  - refused when the drive is short, both numbers named in the message, allowed
+  when there is room, and allowed when the platform will not report free space -
+  plus 2 in the catalogue tests for `modelDiskBytes`, including that an archive
+  needs more room than it downloads.
+- **Issue/Gap Uncovered**: `sizeMb` answers how long a download takes, not
+  whether it fits, and the two differ a lot for archive models: the archive
+  streams through memory and never lands on disk, so what has to be free is the
+  unpacked size. whisper turbo fetches 564 MB and leaves 1037 MB; nemotron 475
+  against 682. Nothing checked, so running out of space meant a long download,
+  then a failure deep in the extract, on a disk that is now also full.
+- **Enhancement Shipped**: `modelDiskBytes` in shared - unpacked files plus the
+  silero VAD where an offline model needs it - and a pre-flight in
+  `ModelStore.download` that refuses before fetching anything, naming what is
+  needed and what is there. An unknown answer never blocks: `statfs` is not
+  available everywhere, and a probe that cannot tell must not stop a download
+  that would have worked. The probe is injectable, which is what makes the four
+  cases testable without a full disk.
+- **Status**: PASSED

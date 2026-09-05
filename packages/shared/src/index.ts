@@ -465,6 +465,21 @@ export function sttModel(id: string): SttModelInfo | undefined {
   return STT_MODELS.find((m) => m.id === id);
 }
 
+/**
+ * Bytes this model occupies once it is installed, which is not what it
+ * downloads. An archive streams through memory and never lands on disk, so the
+ * space that has to be free is what it unpacks to - and for the bigger models
+ * that is close to twice the download: whisper turbo fetches 564 MB and leaves
+ * 1037 MB behind. `sizeMb` answers "how long is this going to take"; this
+ * answers "will it fit".
+ */
+export function modelDiskBytes(info: SttModelInfo): number {
+  const files = (info.files ?? []).reduce((n, f) => n + f.size, 0);
+  // offline models also need the shared VAD alongside them
+  const vad = info.kind === "offline" ? (LOCAL_VAD.files ?? []).reduce((n, f) => n + f.size, 0) : 0;
+  return files + vad;
+}
+
 /** download state of one local model (desktop app -> renderer / control API) */
 export interface LocalModelStatus {
   id: string;

@@ -11,8 +11,18 @@ import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import * as tar from "tar";
 import unbzip2 from "unbzip2-stream";
-import { LOCAL_VAD, LocalModelStatus, STT_MODELS, SttModelInfo } from "@callout-relay/shared";
+import { LOCAL_VAD, LocalModelStatus, STT_MODELS, SttModelInfo, modelDiskBytes } from "@callout-relay/shared";
 import { localModelReady } from "@callout-relay/relay";
+
+/** free bytes on the volume holding `dir`, or -1 if the platform will not say */
+function defaultFreeBytes(dir: string): number {
+  try {
+    const st = fs.statfsSync(dir);
+    return Number(st.bsize) * Number(st.bavail);
+  } catch {
+    return -1;
+  }
+}
 
 export class ModelStore {
   private active = new Map<string, { controller: AbortController; progress: number }>();
@@ -24,6 +34,8 @@ export class ModelStore {
     private readonly log: (level: "info" | "warn" | "error", message: string) => void,
     /** the models this store knows about; the shipped catalogue unless overridden */
     private readonly catalogue: SttModelInfo[] = STT_MODELS,
+    /** free space at a path, or -1 when it cannot be determined */
+    private readonly freeBytes: (dir: string) => number = defaultFreeBytes,
   ) {}
 
   /** same rule the relay applies before it starts a local session */
@@ -76,6 +88,18 @@ export class ModelStore {
     };
 
     try {
+      // An archive downloads far less than it installs - whisper turbo fetches
+      // 564 MB and leaves 1037 MB - so the download size is no guide to whether
+      // it will fit. Running out part way through means a long wait, a failure
+      // deep in the extract, and a disk that is now full as well.
+      const needed = modelDiskBytes(info);
+      const free = this.freeBytes(this.dir);
+      if (free >= 0 && free < needed) {
+        const mb = (n: number): string => `${Math.round(n / 1e6)} MB`;
+        throw new Error(
+          `needs ${mb(needed)} free once unpacked and this drive has ${mb(free)}`,
+        );
+      }
       for (const { info: target, file } of plan) {
         const folder = path.join(this.dir, target.id);
         fs.mkdirSync(folder, { recursive: true });

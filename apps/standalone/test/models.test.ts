@@ -84,12 +84,13 @@ function serve(body: Buffer, opts: { status?: number; declared?: number } = {}):
   }) as typeof fetch;
 }
 
-function store(info: SttModelInfo = model()): ModelStore {
+function store(info: SttModelInfo = model(), freeBytes?: (dir: string) => number): ModelStore {
   return new ModelStore(
     dir,
     () => {},
     (level, message) => logs.push({ level, message }),
     [info],
+    freeBytes,
   );
 }
 
@@ -116,6 +117,44 @@ describe("unpacking an archive model", () => {
     serve(FIXTURE);
     await store().download("test-archive-model");
     expect(fs.existsSync(`${modelDir()}.part`)).toBe(false);
+  });
+});
+
+describe("checking there is room before starting", () => {
+  it("refuses when the drive cannot hold the unpacked model", async () => {
+    serve(FIXTURE);
+    // 96 bytes unpack out of a 190-byte archive; offer 50
+    await store(model(), () => 50).download("test-archive-model");
+
+    expect(failure()).toMatch(/needs 0 MB free once unpacked and this drive has 0 MB/);
+    // and it did not download anything first
+    expect(fs.existsSync(modelDir())).toBe(false);
+  });
+
+  it("names both numbers so the message is actionable", async () => {
+    serve(FIXTURE);
+    const big = model({ files: [{ name: "encoder.onnx", url: "", size: 2_000_000_000 }] });
+    await store(big, () => 500_000_000).download("test-archive-model");
+
+    expect(failure()).toMatch(/needs 2000 MB free/);
+    expect(failure()).toMatch(/drive has 500 MB/);
+  });
+
+  it("goes ahead when there is room", async () => {
+    serve(FIXTURE);
+    await store(model(), () => 10_000_000_000).download("test-archive-model");
+
+    expect(failure()).toBe("");
+    expect(fs.readFileSync(path.join(modelDir(), "encoder.onnx")).length).toBe(64);
+  });
+
+  it("goes ahead when the platform will not say how much is free", async () => {
+    serve(FIXTURE);
+    // statfs is not available everywhere; an unknown answer must not block
+    await store(model(), () => -1).download("test-archive-model");
+
+    expect(failure()).toBe("");
+    expect(fs.existsSync(modelDir())).toBe(true);
   });
 });
 
