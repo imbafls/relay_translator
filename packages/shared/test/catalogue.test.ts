@@ -55,6 +55,22 @@ describe("local models carry everything the loader needs", () => {
     expect(MODEL_TIERS.map((t) => t.id)).toContain(m.tier);
   });
 
+  it.each(local.map((m) => [m.id, m] as const))(
+    "%s advertises the size it will actually download",
+    (_id, m) => {
+      // sizeMb is what the DOWNLOAD button shows. Every formatter divides by
+      // 1000, so this field is decimal MB; the archive entries were quietly in
+      // MiB, which understated each of them by about five percent.
+      const bytes = m.archive ? m.archive.size : (m.files ?? []).reduce((n, f) => n + f.size, 0);
+      const claimed = (m.sizeMb ?? 0) * 1e6;
+      const drift = Math.abs(claimed - bytes) / bytes;
+      expect(
+        drift,
+        `${m.id} says ${m.sizeMb} MB but downloads ${(bytes / 1e6).toFixed(1)} MB`,
+      ).toBeLessThan(0.02);
+    },
+  );
+
   it("only ever claims a mel-bin count the exports actually use", () => {
     for (const m of local) {
       if (m.melBins !== undefined) expect([80, 128]).toContain(m.melBins);

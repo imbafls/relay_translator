@@ -495,3 +495,33 @@ are where the sharp edges are. This is the last one in the tree.
   value with real spaces gets written deliberately. A shell `export` prefix is
   accepted, since these files are often sourced as well as parsed.
 - **Status**: PASSED
+
+---
+
+### Turn 18/100 - Unit conversions (two units in one field)
+
+Sweeping every place a number crosses between bytes, samples, seconds,
+milliseconds and megabytes - the class turn 3's latency bug belonged to.
+
+- **Tests Added**: one invariant in `packages/shared/test/catalogue.test.ts`,
+  applied per model: the advertised `sizeMb` must be within 2% of the bytes the
+  download actually fetches. It fails with the two numbers in the message, so a
+  future mis-entry says what it says and what it should have said.
+- **Issue/Gap Uncovered**: The catalogue was using two units in one field. The
+  three per-file models had `sizeMb` in decimal MB (44 for 43.6, 670 for 670.5);
+  the seven archive models had it in MiB (113 for 112.6, 537 for 537.7). Every
+  formatter divides by 1000, so decimal is the intended unit and each archive
+  model understated its download by about five percent. Most of the other
+  conversions in the sweep came out sound: the STT billing seconds, the
+  per-channel multiplier Deepgram charges on, the retry backoffs, the pending
+  audio budget from turn 1 and the latency arithmetic from turn 3.
+- **Enhancement Shipped**: The seven archive values now state decimal MB, and
+  the invariant holds the field to one unit as models are added. Running it
+  against the old catalogue fails all seven with the numbers named.
+- **Left deliberately**: archive models unpack to far more than they download -
+  whisper-turbo fetches 564 MB and lands 1037 MB on disk, nemotron 475 MB
+  against 682 MB - and nothing tells the user that before they start. The
+  catalogue already carries the unpacked sizes, so the number is available, but
+  surfacing it is a renderer change rather than a data fix and does not belong
+  in this turn.
+- **Status**: PASSED
