@@ -85,4 +85,10 @@ class ToggleAction extends SingletonAction {
   }
 }
 
+// The @action decorator only stamps the UUID onto the class - it does not
+// register anything. Without this line ToggleAction is never constructed, so
+// no onKeyDown or onWillAppear listener is ever attached: the key appears in
+// Stream Deck, and pressing it does nothing at all.
+streamDeck.actions.registerAction(new ToggleAction());
+
 streamDeck.connect();

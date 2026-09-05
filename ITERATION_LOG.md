@@ -996,3 +996,32 @@ Audit finding 2, and the route it travels - finding 3's still-open `/config`.
   narrow who can choose the feed; signing is what would make the download itself
   trustworthy.
 - **Status**: PASSED
+
+---
+
+### Turn 35/40 - Client UI (the Stream Deck key that never did anything)
+
+Audit finding 5.
+
+- **Tests Added**: `packages/shared/test/streamdeckPlugin.test.ts`, 6 tests over
+  the source, the manifest and the built bundle: every `@action`-decorated class
+  is registered, registration happens before `connect()`, every declared action
+  has a manifest entry, every manifest entry has an action behind it, and the
+  bundle Stream Deck actually loads constructs the action by name.
+- **Issue/Gap Uncovered**: `streamDeck.connect()` was the plugin's only runtime
+  statement. `@action` stamps a UUID onto the class and nothing more;
+  `registerAction` is the sole place listeners are attached and `connect()`
+  performs no discovery. So `ToggleAction` was never constructed - confirmed in
+  the built bundle, where `new ToggleAction` appeared zero times and the only
+  two `registerAction` hits were the SDK's own method and its doc comment. The
+  key shows up in Stream Deck, and every press does nothing. It has shipped that
+  way. The UUIDs did match, so registration was the whole of it.
+- **A test of mine that would have lied**: the bundle assertion first matched
+  the *shape* `registerAction(new X())`, on the theory that esbuild might rename
+  the class. The SDK's doc comment contains
+  `registerAction(new MyCustomAction());`, so that regex passed against the
+  broken bundle. It now requires the declared class name, and reverting the fix
+  turns three tests red instead of one.
+- **Enhancement Shipped**: the action is registered before `connect()`, with a
+  comment saying why the decorator alone is not enough.
+- **Status**: PASSED
