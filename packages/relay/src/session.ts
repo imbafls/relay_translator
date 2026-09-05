@@ -26,6 +26,12 @@ export interface SessionConfig {
   channelLabels?: string[];
 }
 
+/**
+ * Capture posts a frame every 100 ms while it is running, so five missed in a
+ * row is a real stall rather than delivery jitter.
+ */
+const GAP_MS = 500;
+
 export interface GeminiStats {
   count: number;
   cacheHits: number;
@@ -82,6 +88,15 @@ export class PublisherSession {
   private closing = false;
   /** wall clock of the first audio byte (STT word timings are relative to it) */
   private streamWallStart = 0;
+  /** wall clock of the most recent audio byte */
+  private lastAudioAt = 0;
+  /**
+   * How long the publisher sent no audio at all - muted, or capture stalled.
+   * The STT clock cannot advance across a gap but the wall clock does, so
+   * without this every latency figure for the rest of the session reads the
+   * total muted time too high.
+   */
+  private silentMs = 0;
   /** whether Gemini runs for this session */
   translates = true;
   readonly local: boolean;
@@ -154,7 +169,7 @@ export class PublisherSession {
         const finalAt = Date.now();
         const sttMs =
           meta.audioEndSec !== undefined && this.streamWallStart > 0
-            ? Math.max(0, Math.round(finalAt - this.streamWallStart - meta.audioEndSec * 1000))
+            ? Math.max(0, Math.round(finalAt - this.streamWallStart - this.silentMs - meta.audioEndSec * 1000))
             : undefined;
         const latency: SubtitleLatency = sttMs !== undefined ? { stt: sttMs } : {};
         const viewerLatency = this.cfg.latencyVisible !== false ? latency : undefined;
@@ -239,7 +254,10 @@ export class PublisherSession {
   }
 
   audio(chunk: Buffer): void {
-    if (this.streamWallStart === 0) this.streamWallStart = Date.now();
+    const now = Date.now();
+    if (this.streamWallStart === 0) this.streamWallStart = now;
+    else if (now - this.lastAudioAt > GAP_MS) this.silentMs += now - this.lastAudioAt;
+    this.lastAudioAt = now;
     if (this.deps.sttStats) {
       // bytes -> seconds of (mono-equivalent) audio; Deepgram bills every channel
       const seconds = chunk.length / (SAMPLE_RATE * 2 * Math.max(1, this.cfg.channels));

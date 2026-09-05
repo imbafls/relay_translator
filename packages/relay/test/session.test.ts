@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ServerToViewer } from "@callout-relay/shared";
 import { PublisherSession } from "../src/session";
 import type { Translator } from "../src/gemini";
@@ -139,5 +139,60 @@ describe("stopping while a translation is still running", () => {
     session.stop();
     const outstanding = await session.drain(120);
     expect(outstanding).toBe(1);
+  });
+});
+
+describe("latency across a gap in the audio", () => {
+  // only Date is faked, so the session's own async work still runs for real
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** one 100 ms frame of 16 kHz mono s16le, the size capture actually posts */
+  const frame = (): Buffer => Buffer.alloc(16000 * 2 * 0.1, 1);
+
+  /** feed `seconds` of audio in real 100 ms frames, advancing the clock with it */
+  function speak(session: PublisherSession, seconds: number, at: number): number {
+    for (let i = 0; i < seconds * 10; i += 1) {
+      at += 100;
+      vi.setSystemTime(at);
+      session.audio(frame());
+    }
+    return at;
+  }
+
+  const latencies = (viewers: ServerToViewer[]) =>
+    viewers
+      .filter((m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle")
+      .map((m) => m.latency?.stt)
+      .filter((v): v is number => v !== undefined);
+
+  it("stays honest after the publisher mutes for half a minute", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+
+    const { session, viewers } = makeSession(slowTranslator(0));
+    session.start();
+    await tick();
+
+    // two seconds of speech, wall clock and audio clock advancing together
+    let at = speak(session, 2, t0);
+    const beforeMute = latencies(viewers);
+    expect(beforeMute).toHaveLength(1);
+    expect(beforeMute[0]).toBeLessThan(500);
+
+    // muted: the worklet emits nothing at all, so no audio arrives for 30 s
+    at += 30_000;
+    vi.setSystemTime(at);
+
+    // unmute and speak again
+    speak(session, 2, at);
+    const after = latencies(viewers);
+    expect(after).toHaveLength(2);
+    // without the gap accounting this reads ~30000 and never recovers
+    expect(after[1]).toBeLessThan(500);
+
+    session.stop();
   });
 });

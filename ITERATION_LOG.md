@@ -63,3 +63,32 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   `close()` now awaits it before tearing down viewer sockets. `inflight` finally
   has a reader.
 - **Status**: PASSED
+
+---
+
+### Turn 3/100 - Stream & audio transport (the audio clock across a mute)
+
+- **Tests Added**: `packages/companion/test/workletSource.test.ts`, 8 tests over
+  the capture resampler. The worklet ships as a source string the browser
+  evaluates, so the tests evaluate that exact string with the three globals it
+  expects - the resampler under test is the one that ships, not a
+  reimplementation. Covers output rate at 48 kHz, 44.1 kHz (non-integer ratio),
+  16 kHz and 8 kHz, the 100 ms frame size the relay's buffering depends on,
+  two-channel interleaving without bleed, and mute. Plus one test in
+  `session.test.ts` for what mute does downstream.
+- **Issue/Gap Uncovered**: The resampler is sound - rate holds with no
+  cumulative drift at every ratio tested, frames are exactly 100 ms, channels
+  stay separate. What the mute test exposed is downstream. Muting emits *nothing*
+  rather than silence, so it puts a hole in the stream, and latency is computed
+  as `finalAt - streamWallStart - audioEndSec`: wall time counts the mute, the
+  STT audio clock cannot. Every latency badge after a mute reads that much too
+  high, cumulatively, for the rest of the session. Confirmed by reverting the
+  fix: a 30 s mute gave `expected 29900 to be less than 500`. It was invisible
+  until now partly because the mock STT never reported `audioEndSec`, the one
+  field the real engines always send.
+- **Enhancement Shipped**: The session tracks time when no audio arrived at all
+  and subtracts it, so the badge measures pipeline latency rather than how long
+  the mic was off. Threshold is five missed 100 ms frames, which is a stall
+  rather than delivery jitter. The mock STT now reports `audioEndSec` like the
+  real engines, so timing bugs cannot hide behind it again.
+- **Status**: PASSED

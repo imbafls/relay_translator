@@ -141,7 +141,9 @@ export function createMockSttStream(events: SttEvents, channels = 1): SttStream 
         const channel = channels > 1 ? line % channels : 0;
         line += 1;
         events.onPartial?.(text, channel);
-        events.onFinal?.(text, { channel });
+        // the real engines always report where the final sits on the audio
+        // clock; the mock has to as well or it hides every timing bug
+        events.onFinal?.(text, { audioEndSec: bytesSeen / (SAMPLE_RATE * 2 * channels), channel });
         nextAt = bytesSeen + bytesPerLine;
       }
     },
