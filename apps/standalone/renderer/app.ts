@@ -1386,6 +1386,11 @@ function renderOnboarding(): void {
         obStep > 2 ? (config.geminiApiKey && config.translationEnabled !== false ? "2 TRANSLATION ✓" : "2 TRANSLATION SKIPPED") : "2 TRANSLATION";
     }
   }
+  // step 1 local turns the right pane into the model browser; the list needs
+  // the height, and the left pane keeps the copy and CONTINUE
+  const browsing = obStep === 1 && obMode === "local";
+  $("obPreview").hidden = browsing;
+  $("obModelPane").hidden = !browsing;
   $("obStep1").hidden = obStep !== 1;
   $("obStep2").hidden = obStep !== 2;
   $("obStep3").hidden = obStep !== 3;
@@ -1396,8 +1401,9 @@ function renderOnboarding(): void {
     $("obLocal").hidden = obMode !== "local";
     setSeg("obSttSeg", obMode);
     if (obMode === "local") {
-      $("obTitle").textContent = "Pick a local model.";
-      $("obBody").textContent = "Free and private - nothing leaves this PC. It costs CPU and one download.";
+      $("obTitle").textContent = "Pick a model to run on this PC.";
+      $("obBody").textContent =
+        "Local speech-to-text is free and private - nothing leaves your machine. It costs CPU and a download; cloud Deepgram is a little faster.";
       renderTierPicker();
       renderPickedDetail();
       renderModelList($("obModels"), {

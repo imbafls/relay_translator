@@ -173,17 +173,9 @@
         </div>
 
         <div id="obLocal" class="ob-sub" hidden>
-          <div class="field field-bare">
-            <div class="field-label">SPEECH MODEL<span id="obModelStatus" class="field-status mute">PICK ONE</span></div>
-            <div id="obHardware" class="hw mono"></div>
-            <div class="seg seg-tier" id="obTierSeg">
-              <button data-value="light">LIGHT</button>
-              <button data-value="medium">MEDIUM</button>
-              <button data-value="heavy">HEAVY</button>
-            </div>
-            <div id="obTierBlurb" class="tier-blurb"></div>
-            <div id="obModels" class="model-list model-list-lg"></div>
-            <div id="obModelNote" class="model-note"></div>
+          <div class="help">
+            <div class="help-row"><span class="arrow ink">→</span><span>Pick a model on the right. It downloads once into this PC's app data.</span></div>
+            <div class="help-row"><span class="arrow">→</span><span>Local models use your CPU. Expect a second or so from the end of a sentence to the caption.</span></div>
           </div>
         </div>
 
@@ -242,6 +234,20 @@
       </div>
     </div>
     <div id="obPreview" class="ob-right"></div>
+    <div id="obModelPane" class="ob-right ob-model-pane" hidden>
+      <div class="preview-head label">SPEECH MODELS<span id="obModelStatus" class="field-status mute">PICK ONE</span></div>
+      <div class="model-pane-body">
+        <div id="obHardware" class="hw mono"></div>
+        <div class="seg seg-tier" id="obTierSeg">
+          <button data-value="light">LIGHT</button>
+          <button data-value="medium">MEDIUM</button>
+          <button data-value="heavy">HEAVY</button>
+        </div>
+        <div id="obTierBlurb" class="tier-blurb"></div>
+        <div id="obModels" class="model-list model-list-lg"></div>
+        <div id="obModelNote" class="model-note"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ================= SIGNAL CHAIN ================= -->
