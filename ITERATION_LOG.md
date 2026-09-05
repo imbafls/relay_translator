@@ -274,3 +274,29 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   the keys behind it in the first place. `ControlHandle.port` now reports the
   bound port.
 - **Status**: PASSED
+
+---
+
+### Turn 10/100 - Resilience & state (the config file holding the API keys)
+
+- **Tests Added**: `packages/companion/test/config.test.ts`, 17 tests over
+  `ConfigStore` against real files: round-trip, partial language merge, unknown
+  keys surviving a downgrade, env fallback filling a gap without overriding a
+  saved key, both pre-0.3 and pre-0.4 migrations, and four shapes a file takes
+  when a write did not finish.
+- **Issue/Gap Uncovered**: Three, all confirmed by running the tests against the
+  original. `config.json` holds the user's whole setup and both API keys, and
+  `persist()` was a plain `writeFileSync`, so a crash part way through left JSON
+  that does not parse. `load()` answered that by falling back to
+  `DEFAULT_CONFIG` behind a `console.warn` - the keys and the entire setup gone
+  silently, and made permanent by the next save. A file holding a bare `null`
+  crashed `load()` outright with `TypeError: Cannot convert undefined or null to
+  object`, because `Object.entries` runs outside the try that guards the parse.
+  A file holding a bare string merged in as numeric keys, `{0:'h',1:'e',...}`.
+- **Enhancement Shipped**: `persist()` writes beside the file and renames over
+  the top, and keeps the copy it is replacing as `.bak` - but only while that
+  copy still parses, so a good backup is never overwritten by a torn one.
+  `load()` reads the backup before it considers defaults, so a half-written save
+  costs a settings change rather than the API keys. A root that is not a plain
+  object is rejected instead of being merged.
+- **Status**: PASSED

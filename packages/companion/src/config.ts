@@ -22,13 +22,34 @@ export class ConfigStore {
     return path.join(this.dataDir, "config.json");
   }
 
-  load(): AppConfig {
-    let stored: Partial<AppConfig> = {};
+  /** parse one config file, or undefined if it is missing, torn or not an object */
+  private read(file: string): Partial<AppConfig> | undefined {
     try {
-      const raw = fs.readFileSync(this.file, "utf8").replace(/^\uFEFF/, "");
-      stored = JSON.parse(raw);
+      const raw = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "");
+      const parsed: unknown = JSON.parse(raw);
+      // a bare null, string or array is not a config, and merging one either
+      // throws or writes numeric keys into the settings
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+      return parsed as Partial<AppConfig>;
     } catch {
-      console.warn(`[companion] config file unreadable, using defaults: ${this.file}`);
+      return undefined;
+    }
+  }
+
+  load(): AppConfig {
+    let stored = this.read(this.file);
+    if (!stored) {
+      // this file holds the user's API keys and their whole setup. Resetting to
+      // defaults because a write was cut short loses all of it silently, so the
+      // last known-good copy gets a turn first.
+      const previous = this.read(`${this.file}.bak`);
+      if (previous) {
+        console.warn(`[companion] config unreadable, recovered the previous one: ${this.file}`);
+        stored = previous;
+      } else {
+        console.warn(`[companion] config file unreadable, using defaults: ${this.file}`);
+        stored = {};
+      }
     }
     this.cached = this.merge(DEFAULT_CONFIG, stored);
     // migration: pre-0.3 configs chose OBS with a boolean instead of `output`
@@ -56,7 +77,19 @@ export class ConfigStore {
   persist(): void {
     if (!this.cached) return;
     fs.mkdirSync(this.dataDir, { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify(this.cached, null, 2), "utf8");
+    // keep the copy we are about to replace, but only while it still parses,
+    // so a good backup is never overwritten by a torn one
+    try {
+      if (this.read(this.file)) fs.copyFileSync(this.file, `${this.file}.bak`);
+    } catch {
+      /* a backup is a nicety; failing to make one must not block the save */
+    }
+    // write beside it and rename over the top: a crash part way through a
+    // plain write leaves JSON that does not parse, and that used to read as
+    // "no config", taking the user's keys with it
+    const tmp = `${this.file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(this.cached, null, 2), "utf8");
+    fs.renameSync(tmp, this.file);
   }
 
   private merge(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
