@@ -12,6 +12,7 @@ import {
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
 import {
@@ -21,6 +22,8 @@ import {
   KeyValidation,
   ServerToViewer,
   SessionState,
+  HardwareInfo,
+  recommendTier,
   UpdateStatus,
   UsageInfo,
 } from "@callout-relay/shared";
@@ -29,6 +32,22 @@ import { ModelStore } from "./models";
 
 // dev convenience: pick up DEEPGRAM_API_KEY / GEMINI_API_KEY from repo .env
 tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
+
+/**
+ * CPU and RAM do not change while the app runs, so the model-tier
+ * recommendation is worked out once at startup and rides along with status.
+ */
+const hardware: HardwareInfo = (() => {
+  const cpus = os.cpus();
+  const threads = cpus.length || 4;
+  const ramGb = Math.max(1, Math.round(os.totalmem() / 1024 ** 3));
+  return {
+    threads,
+    cpu: (cpus[0]?.model || "Unknown CPU").replace(/\s+/g, " ").trim(),
+    ramGb,
+    recommended: recommendTier(threads, ramGb),
+  };
+})();
 
 const APP_VERSION = app.getVersion();
 const APP_NAME = "Callout Relay";
@@ -346,6 +365,7 @@ function currentStatus() {
     usage: usageCache,
     update: updater?.current,
     localModels: models.status(),
+    hardware,
   };
 }
 

@@ -9,9 +9,12 @@ import {
   AppConfig,
   AudioDeviceInfo,
   ControlStatus,
+  HardwareInfo,
   KeyValidation,
   LANGUAGES,
   LocalModelStatus,
+  MODEL_TIERS,
+  ModelTier,
   OutputTarget,
   SessionState,
   STT_MODELS,
@@ -52,6 +55,8 @@ const keyCheck: { deepgram?: KeyValidation | "checking"; gemini?: KeyValidation 
 let update: UpdateStatus | null = null;
 /** local STT models on disk / downloading (from the main process) */
 let localModels: LocalModelStatus[] = [];
+/** CPU / RAM of this PC, for the tier recommendation (from the main process) */
+let hardware: HardwareInfo | undefined;
 
 // ---------------------------------------------------------------------------
 // small helpers
@@ -65,6 +70,13 @@ const STT_SHORT: Record<string, string> = {
   "local-parakeet-tdt-0.6b-v3": "Parakeet 0.6B",
   "local-sense-voice": "SenseVoice",
   "local-whisper-small": "Whisper Small",
+  "local-moonshine-tiny": "Moonshine Tiny",
+  "local-moonshine-base": "Moonshine Base",
+  "local-whisper-tiny-en": "Whisper Tiny EN",
+  "local-whisper-turbo": "Whisper Turbo",
+  "local-zipformer-en": "Zipformer EN",
+  "local-parakeet-tdt-0.6b-v2": "Parakeet 0.6B v2",
+  "local-nemotron-streaming": "Nemotron 0.6B",
 };
 const STT_TAG: Record<string, string> = {
   "deepgram-nova-3": "FASTEST",
@@ -74,6 +86,13 @@ const STT_TAG: Record<string, string> = {
   "local-parakeet-tdt-0.6b-v3": "BEST · EN +24",
   "local-sense-voice": "ZH EN JA KO",
   "local-whisper-small": "100 LANGS",
+  "local-moonshine-tiny": "FAST · EN",
+  "local-moonshine-base": "ACCURATE · EN",
+  "local-whisper-tiny-en": "SMALLEST · EN",
+  "local-whisper-turbo": "100 LANGS · SLOW",
+  "local-zipformer-en": "STREAMING · EN",
+  "local-parakeet-tdt-0.6b-v2": "BEST · EN",
+  "local-nemotron-streaming": "STREAMING · EN +24",
 };
 const TR_SHORT: Record<string, string> = {
   "gemini-3.1-flash-lite": "Flash-Lite",
@@ -898,13 +917,40 @@ function fmtMb(mb: number): string {
   return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
 }
 
+/** the local models in one tier, catalog order preserved */
+function modelsInTier(tier?: ModelTier): SttModelInfo[] {
+  const local = STT_MODELS.filter((x) => x.provider === "local");
+  return tier ? local.filter((m) => (m.tier || "medium") === tier) : local;
+}
+
+/** a 1-5 rating as five bordered cells, filled ones in ink (DESIGN.md SegmentedBar) */
+function ratingRow(label: string, value: number): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "rate";
+  const l = document.createElement("span");
+  l.className = "rate-label";
+  l.textContent = label;
+  const cells = document.createElement("span");
+  cells.className = "cells";
+  for (let i = 1; i <= 5; i++) {
+    const c = document.createElement("i");
+    if (i <= value) c.className = "on";
+    cells.appendChild(c);
+  }
+  row.append(l, cells);
+  return row;
+}
+
 /**
  * One row per local model: pick (radio), download / cancel / remove, progress.
  * Rendering is idempotent so status broadcasts can redraw it freely.
  */
-function renderModelList(box: HTMLElement, opts: { picked: string; pick: (id: string) => void }): void {
+function renderModelList(
+  box: HTMLElement,
+  opts: { picked: string; pick: (id: string) => void; tier?: ModelTier; detail?: boolean },
+): void {
   box.innerHTML = "";
-  for (const m of STT_MODELS.filter((x) => x.provider === "local")) {
+  for (const m of modelsInTier(opts.tier)) {
     const st = modelState(m.id);
     const row = document.createElement("div");
     row.className = "model-row" + (opts.picked === m.id ? " picked" : "");
@@ -918,6 +964,19 @@ function renderModelList(box: HTMLElement, opts: { picked: string; pick: (id: st
     meta.className = "meta";
     meta.textContent = `${m.languages || ""} · ${fmtMb(m.sizeMb || 0)} · ${m.kind === "streaming" ? "streaming" : "utterances"}`;
     body.append(name, meta);
+    if (opts.detail) {
+      const rates = document.createElement("div");
+      rates.className = "rates";
+      if (m.speed) rates.appendChild(ratingRow("SPEED", m.speed));
+      if (m.accuracy) rates.appendChild(ratingRow("ACCURACY", m.accuracy));
+      if (rates.children.length) body.appendChild(rates);
+      if (m.note) {
+        const note = document.createElement("div");
+        note.className = "note";
+        note.textContent = m.note;
+        body.appendChild(note);
+      }
+    }
     const act = document.createElement("div");
     act.className = "act";
     const btn = (text: string, cls: string, onClick: () => void): HTMLButtonElement => {
@@ -1060,6 +1119,57 @@ let obGemini: KeyValidation | "checking" | undefined;
 let obMode: "cloud" | "local" = "cloud";
 /** local model picked in step 1 */
 let obModel = "local-parakeet-tdt-0.6b-v3";
+/** tier the step 1 list is filtered to; follows the hardware until the user picks */
+let obTier: ModelTier = "medium";
+/** true once the user picks a tier themselves, so hardware stops overriding it */
+let obTierPicked = false;
+
+/** keep the picked model inside the visible tier, or CONTINUE gates on a hidden row */
+function ensureModelInTier(): void {
+  if (modelsInTier(obTier).some((m) => m.id === obModel)) return;
+  const first = modelsInTier(obTier)[0];
+  if (first) obModel = first.id;
+}
+
+/**
+ * Step 1 opens on the tier of the local model already in use, and otherwise on
+ * what this PC can run. A tier the user picked by hand always wins.
+ */
+function syncTierToHardware(): void {
+  if (obTierPicked) return;
+  const inUse = isLocalStt(config.stt) ? sttModel(config.stt)?.tier : undefined;
+  obTier = inUse || hardware?.recommended || "medium";
+  ensureModelInTier();
+}
+
+/** mono line naming the CPU, RAM and the tier they suggest */
+function renderHardwareLine(): void {
+  const el = $("obHardware");
+  if (!hardware) {
+    el.textContent = "";
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const tier = MODEL_TIERS.find((t) => t.id === hardware!.recommended);
+  metaSpans(el, [
+    { text: `${hardware.threads} THREADS` },
+    { text: `${hardware.ramGb} GB RAM` },
+    { text: `SUGGESTS ${tier?.label || hardware.recommended.toUpperCase()}`, cls: "ink" },
+  ]);
+  el.title = hardware.cpu;
+}
+
+/** the tier segmented control, its blurb, and the filtered model list */
+function renderTierPicker(): void {
+  syncTierToHardware();
+  setSeg("obTierSeg", obTier);
+  for (const b of $("obTierSeg").querySelectorAll<HTMLButtonElement>("button")) {
+    b.classList.toggle("suggested", !!hardware && b.dataset.value === hardware.recommended);
+  }
+  $("obTierBlurb").textContent = MODEL_TIERS.find((t) => t.id === obTier)?.blurb || "";
+  renderHardwareLine();
+}
 
 /** the model step 1 will save */
 function obSttChoice(): string {
@@ -1277,8 +1387,11 @@ function renderOnboarding(): void {
       $("obTitle").textContent = "Pick a model to run on this PC.";
       $("obBody").textContent =
         "Local speech-to-text is free and private - nothing leaves your machine. It costs CPU and a download; cloud Deepgram is a little faster.";
+      renderTierPicker();
       renderModelList($("obModels"), {
         picked: obModel,
+        tier: obTier,
+        detail: true,
         pick: (id) => {
           obModel = id;
           renderOnboarding();
@@ -1637,6 +1750,12 @@ function bind(): void {
     obMode = v === "local" ? "local" : "cloud";
     renderOnboarding();
   });
+  bindSeg("obTierSeg", (v) => {
+    obTier = v as ModelTier;
+    obTierPicked = true;
+    ensureModelInTier();
+    renderOnboarding();
+  });
   $("obContinue1").onclick = async () => {
     const patch: Partial<AppConfig> = { stt: obSttChoice() };
     if (obMode === "cloud") patch.deepgramApiKey = inp("obDeepgramKey").value.trim();
@@ -1680,6 +1799,8 @@ function bind(): void {
   });
   cr.onStatus((s) => {
     status = s;
+    // CPU / RAM never change, so the first broadcast that carries them wins
+    if (s.hardware) hardware = s.hardware;
     // setLocalModels re-renders the chain strip itself
     if (s.localModels) setLocalModels(s.localModels);
     else renderChain();
