@@ -579,6 +579,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       } catch {
         return;
       }
+      // JSON.parse("null") succeeds, and so do "123", '"a string"' and "[]" -
+      // the property read below is what throws, outside the try. The hello
+      // validator runs after it, so it never sees any of these.
+      if (!msg || typeof msg !== "object") return;
       if (msg.type === "ping") sendPublisher(ws, { type: "pong" });
       if (msg.type === "hello") {
         const cfg = publisherHello(msg);
@@ -684,6 +688,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       } catch {
         return;
       }
+      if (!msg || typeof msg !== "object") return;
       if (msg.type === "ping") {
         sendUplink(ws, { type: "pong" });
         return;

@@ -1025,3 +1025,33 @@ Audit finding 5.
 - **Enhancement Shipped**: the action is registered before `connect()`, with a
   comment saying why the decorator alone is not enough.
 - **Status**: PASSED
+
+---
+
+### Turn 36/40 - Message orchestration (a four-byte frame the hello validator never saw)
+
+Audit finding 18, and like turn 33 it is a correction to my own earlier work.
+
+- **Tests Added**: 16 in `packages/relay/test/hostileRequests.test.ts` plus
+  `packages/relay/scripts/frame-probe.cjs`, a real-process probe the suite runs.
+  Five bodies that parse cleanly but are not objects - `null`, `123`,
+  `"a string"`, `[]`, `true` - against all three socket roles.
+- **Issue/Gap Uncovered**: On `/ws/publisher` and `/ws/uplink` the try covers
+  only `JSON.parse`; the property read after it sits outside. `JSON.parse("null")`
+  succeeds and `msg.type` throws. The `publisherHello` validator I added in turn
+  4 runs *after* that read, so it never saw any of this - I hardened the payload
+  and left the dereference. `onViewer` keeps its reads inside the try, which is
+  what shows the omission was accidental rather than considered.
+- **Why "the relay survived" was not good enough**: it survived before the fix
+  too. Turn 31 added an `uncaughtException` handler to `cli.ts`, so the
+  standalone server logs and carries on - which makes that backstop
+  load-bearing rather than belt-and-braces, and makes liveness a useless
+  observable. The probe looks for the throw in stderr instead:
+  `uncaught: TypeError: Cannot read properties of null (reading 'type')` before,
+  nothing after. It matters because the embedded relay in the desktop app never
+  goes through `cli.ts` and has no handler at all, so the same frame ends the
+  app rather than a request.
+- **Enhancement Shipped**: both handlers reject a parsed value that is not an
+  object before reading anything off it. Reverting turns the probe red with the
+  TypeError named.
+- **Status**: PASSED

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { WebSocket } from "ws";
 import { startRelay } from "../src/server";
 import type { RelayHandle } from "../src/server";
 
@@ -107,4 +109,94 @@ describe("request targets that are not valid URLs", () => {
 
     expect(await stillUp(), "the relay died on an upgrade with a bad target").toBe(true);
   });
+});
+
+/** open a socket, send one text frame verbatim, and let the relay react */
+function sendFrame(pathAndToken: string, frame: string): Promise<void> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${relay.port}${pathAndToken}`);
+    const done = (): void => {
+      try {
+        ws.close();
+      } catch {
+        /* gone */
+      }
+      resolve();
+    };
+    const timer = setTimeout(done, 3000);
+    ws.once("open", () => {
+      ws.send(frame);
+      setTimeout(() => {
+        clearTimeout(timer);
+        done();
+      }, 400);
+    });
+    ws.once("error", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+describe("websocket frames that parse to something that is not an object", () => {
+  const bodies: [string, string][] = [
+    ["null", "null"],
+    ["a bare number", "123"],
+    ["a bare string", '"hello"'],
+    ["an array", "[]"],
+    ["true", "true"],
+  ];
+
+  it.each(bodies)("survives %s from the publisher", async (_name, frame) => {
+    // JSON.parse succeeds and the property read after it does not - and the
+    // hello validator added in turn 4 runs after that read, so it never sees this
+    await sendFrame(`/ws/publisher?token=${relay.state.publisherToken}`, frame);
+    expect(await stillUp(), `the relay died on a publisher frame of ${frame}`).toBe(true);
+  });
+
+  it.each(bodies)("survives %s from the uplink", async (_name, frame) => {
+    await sendFrame(`/ws/uplink?token=${relay.state.publisherToken}`, frame);
+    expect(await stillUp(), `the relay died on an uplink frame of ${frame}`).toBe(true);
+  });
+
+  it.each(bodies)("survives %s from a viewer", async (_name, frame) => {
+    // this handler already kept its property reads inside the try
+    await sendFrame(`/ws/viewer?token=${relay.state.viewerToken}`, frame);
+    expect(await stillUp(), `the relay died on a viewer frame of ${frame}`).toBe(true);
+  });
+
+  it("still accepts a real hello afterwards", async () => {
+    await sendFrame(`/ws/publisher?token=${relay.state.publisherToken}`, "null");
+    await sendFrame(
+      `/ws/publisher?token=${relay.state.publisherToken}`,
+      JSON.stringify({
+        type: "hello",
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        channels: 1,
+      }),
+    );
+    expect(await stillUp()).toBe(true);
+  });
+});
+
+describe("nothing throws on those frames, which is the part that matters", () => {
+  it("runs clean in a real process", () => {
+    // The tests above assert the relay is still answering, and it would be
+    // either way: cli.ts has an uncaughtException handler, so the process
+    // survives a throw. "Still alive" therefore proves nothing. This looks for
+    // the throw itself in the server's stderr - and the embedded relay in the
+    // desktop app has no such handler, so a throw here is a dead app there.
+    const probe = path.resolve(__dirname, "..", "scripts", "frame-probe.cjs");
+    let out: string;
+    try {
+      out = execFileSync(process.execPath, [probe], { encoding: "utf8", stdio: "pipe" });
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string };
+      out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+    expect(out, out.trim()).toContain("RESULT: nothing threw");
+  }, 60000);
 });
