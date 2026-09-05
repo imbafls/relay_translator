@@ -38,6 +38,10 @@ export interface CreateTranslatorOpts {
   timeoutMs?: number;
   /** optional usage accounting (cache hits + tokens) */
   stats?: GeminiUsageReporter;
+  /** override the API origin (tests, a proxy, a regional endpoint) */
+  baseUrl?: string;
+  /** backoff before each attempt, ms; the first is always immediate */
+  backoffMs?: number[];
 }
 
 function systemInstruction(source: LanguageCode, target: LanguageCode): string {
@@ -93,7 +97,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
   const { apiKey, model, source, target, timeoutMs = 6000 } = opts;
-  const url = `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
+  const url = `${opts.baseUrl || API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
   const cache = new TranslationCache();
 
   async function attempt(text: string, signal: AbortSignal): Promise<string> {
@@ -126,7 +130,13 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
         const out = Array.isArray(parts)
           ? parts.map((p: any) => p?.text ?? "").join("").trim()
           : "";
-        if (!out) throw new Error("gemini: empty response");
+        if (!out) {
+          // a 200 with no candidates is a safety block or a refusal, and
+          // asking again word for word gets the same answer
+          const empty = new Error("gemini: empty response") as Error & { permanent?: boolean };
+          empty.permanent = true;
+          throw empty;
+        }
         opts.stats?.onUse({
           cached: false,
           tokensIn: Number(data?.usageMetadata?.promptTokenCount) || 0,
@@ -146,7 +156,7 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
 
       // retry with backoff on 429 (quota) / 5xx - short so latency stays low
       let lastErr: unknown;
-      const backoff = [0, 1200, 3000];
+      const backoff = opts.backoffMs ?? [0, 1200, 3000];
       for (let i = 0; i < backoff.length; i += 1) {
         if (backoff[i] > 0) await sleep(backoff[i]);
         const controller = new AbortController();
@@ -157,8 +167,13 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
           return out;
         } catch (err) {
           lastErr = err;
-          const status = (err as Error & { status?: number }).status;
-          const retryable = status === 429 || (status !== undefined && status >= 500) || /abort/i.test(String(err));
+          const e = err as Error & { status?: number; permanent?: boolean };
+          // No status means the request never came back with one: a dropped
+          // connection, DNS, a timeout abort, a body that would not parse.
+          // Those are the most common failures on a live stream and every one
+          // of them is worth another go. A 4xx is our fault and never is.
+          const retryable =
+            e.permanent !== true && (e.status === undefined || e.status === 429 || e.status >= 500);
           if (!retryable) break;
         } finally {
           clearTimeout(timer);

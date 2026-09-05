@@ -180,3 +180,32 @@ Verification per turn: `pnpm test`, `pnpm typecheck:test`, `pnpm typecheck`,
   crash part way through can no longer leave a truncated file that costs
   everyone their viewer link on the next boot.
 - **Status**: PASSED
+
+---
+
+### Turn 7/100 - Translation pipeline (what happens when Gemini misbehaves)
+
+- **Tests Added**: `packages/relay/test/gemini.test.ts`, 12 tests driving the
+  real translator - its retry predicate, backoff, cache and response parsing.
+  What stands in is Google: a real HTTP server on localhost answering the shapes
+  the API answers when things go wrong. Covers 429, 500, 503 to exhaustion, a
+  400, a 200 carrying no candidates, a dropped connection, multi-part answers,
+  token accounting, cache hits, and callout normalisation.
+- **Issue/Gap Uncovered**: The retry predicate was
+  `status === 429 || (status !== undefined && status >= 500) || /abort/i.test(...)`.
+  A transport failure - a dropped connection, DNS, a body that will not parse -
+  arrives as `TypeError: fetch failed` with no status and no "abort" in the
+  text, so it fell through every branch and broke out of the loop on the first
+  try. That is the single most common transient failure on a live stream over a
+  home connection, and it was the one class getting no retry, while a 500 got
+  two. One blip, and that line is never translated for anyone.
+- **Enhancement Shipped**: The predicate now reads the other way round: anything
+  without a status is a request that never came back with one and is worth
+  another go, 429 and 5xx retry as before, and a 4xx breaks out because it is
+  our fault and asking again cannot fix it. A 200 with no candidates is tagged
+  permanent, since a safety block answers the same way however many times you
+  ask. Reverting the predicate turns exactly one test red - the dropped
+  connection - which is the shape a fix should have: it repairs the broken case
+  and leaves every correct one alone. Also adds `baseUrl` and `backoffMs` seams,
+  which is what makes any of this testable against a real server.
+- **Status**: PASSED
