@@ -12,9 +12,9 @@ import {
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
-import { ConfigStore, defaultDataDir, startControlServer } from "@callout-relay/companion";
+import { ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
-import { AppConfig, AudioDeviceInfo, ControlStatus, SessionState } from "@callout-relay/shared";
+import { AppConfig, AudioDeviceInfo, ControlStatus, ServerToViewer, SessionState, UsageInfo } from "@callout-relay/shared";
 
 // dev convenience: pick up DEEPGRAM_API_KEY / GEMINI_API_KEY from repo .env
 tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
@@ -27,6 +27,10 @@ let tray: Tray | null = null;
 let relay: RelayHandle | null = null;
 let controlBroadcast: ((status: ControlStatus) => void) | null = null;
 let quitting = false;
+let uplink: UplinkClient | null = null;
+let uplinkState: NonNullable<ControlStatus["relay"]["uplinkState"]> = "off";
+let usageCache: UsageInfo | undefined;
+let unsubscribeBroadcast: (() => void) | null = null;
 
 const configStore = new ConfigStore(defaultDataDir());
 
@@ -65,44 +69,47 @@ function httpOriginOfRelayUrl(relayUrl: string): string | null {
   return m ? `http://${m[1]}` : null;
 }
 
-function viewerUrl(): string | undefined {
+/** OBS / LAN viewer link — always the local embedded relay */
+function localViewerUrl(): string | undefined {
+  if (!relay) return undefined;
+  return relay.viewerUrl(relay.state.viewerToken, true);
+}
+
+/** internet viewer link — remote relay, if configured */
+function phoneUrl(): string | undefined {
   const cfg = config();
-  const token = relay ? relay.state.viewerToken : cfg.viewerToken;
-  if (!token) return undefined;
-  const base =
-    cfg.publicBaseUrl ||
-    (cfg.relayUrl ? httpOriginOfRelayUrl(cfg.relayUrl) : undefined) ||
-    (relay ? relay.origin : `http://127.0.0.1:${cfg.relayPort || 8787}`);
-  const suffix = cfg.obsOverlay ? "?obs=1" : "";
-  return `${base}/watch/${token}${suffix}`;
+  const token = cfg.viewerToken;
+  if (!cfg.relayUrl || !token) return undefined;
+  const base = cfg.publicBaseUrl || httpOriginOfRelayUrl(cfg.relayUrl);
+  if (!base) return undefined;
+  return `${base}/watch/${token}`;
+}
+
+/** the link shown front-and-center: internet link when configured, else local */
+function viewerUrl(): string | undefined {
+  return phoneUrl() || localViewerUrl();
 }
 
 function publisherWsUrl(): string | undefined {
-  const cfg = config();
-  if (cfg.relayUrl) {
-    if (!cfg.publisherToken) return undefined;
-    return `${cfg.relayUrl.replace(/^http/i, "ws")}/ws/publisher?token=${encodeURIComponent(cfg.publisherToken)}`;
-  }
+  // local-first: the publisher always streams to the embedded relay
   if (!relay) return undefined;
   return `ws://127.0.0.1:${relay.port}/ws/publisher?token=${encodeURIComponent(relay.state.publisherToken)}`;
 }
 
 async function startEmbeddedRelay(): Promise<void> {
   const cfg = config();
-  if (cfg.relayUrl) return; // remote mode
   if (relay) return;
   relay = await startRelay({
     port: cfg.relayPort,
     dataDir: defaultDataDir(),
     deepgramApiKey: cfg.deepgramApiKey,
     geminiApiKey: cfg.geminiApiKey,
-    publisherToken: cfg.publisherToken,
-    viewerToken: cfg.viewerToken,
     log,
   });
-  // persist tokens so "fixed" link mode survives restarts
-  configStore.update({ publisherToken: relay.state.publisherToken, viewerToken: relay.state.viewerToken });
-  log("info", `embedded relay up on :${relay.port}`);
+  log("info", `local relay up on :${relay.port}`);
+  startUplink();
+  bridgeBroadcasts();
+  void refreshUsage();
 }
 
 async function restartEmbeddedRelay(): Promise<void> {
@@ -113,26 +120,91 @@ async function restartEmbeddedRelay(): Promise<void> {
   await startEmbeddedRelay();
 }
 
-async function rotateLink(): Promise<string | undefined> {
+// ---------------------------------------------------------------------------
+// uplink: mirror local subtitles to the remote relay (phone viewers)
+// ---------------------------------------------------------------------------
+
+function startUplink(): void {
   const cfg = config();
-  let token: string | undefined;
-  if (relay) {
-    token = relay.rotateViewerToken();
-  } else if (cfg.relayUrl && cfg.publisherToken) {
+  stopUplink();
+  if (!cfg.relayUrl || !cfg.publisherToken || !relay) {
+    uplinkState = "off";
+    return;
+  }
+  const url = `${cfg.relayUrl}/ws/uplink?token=${encodeURIComponent(cfg.publisherToken)}`;
+  uplink = new UplinkClient(url, {
+    onState: (state, detail) => {
+      uplinkState = state === "idle" ? "off" : state;
+      log("info", `uplink: ${uplinkState}${detail ? ` — ${detail}` : ""}`);
+      broadcastStatus();
+    },
+  });
+  uplink.connect({
+    languages: cfg.languages,
+    translates: cfg.translationEnabled !== false,
+  });
+}
+
+function stopUplink(): void {
+  if (uplink) {
+    uplink.disconnect();
+    uplink = null;
+  }
+  uplinkState = "off";
+}
+
+function bridgeBroadcasts(): void {
+  if (unsubscribeBroadcast) unsubscribeBroadcast();
+  unsubscribeBroadcast = null;
+  if (!relay) return;
+  unsubscribeBroadcast = relay.onBroadcast((msg: ServerToViewer) => {
+    if (!uplink || !uplink.connected) return;
+    if (msg.type === "subtitle") {
+      uplink.sendSubtitle({
+        type: "subtitle",
+        id: msg.id,
+        source: msg.source,
+        target: msg.target,
+        final: msg.final,
+        latency: msg.latency,
+      });
+    } else if (msg.type === "status") {
+      uplink.sendStatus(msg.live, msg.message);
+    } else if (msg.type === "hello" && msg.live) {
+      uplink.sendHello({ languages: msg.languages, translates: msg.translates !== false });
+    }
+  });
+}
+
+async function refreshUsage(): Promise<void> {
+  if (!relay) return;
+  try {
+    usageCache = await relay.getUsage();
+    broadcastStatus();
+  } catch {
+    /* keep last */
+  }
+}
+
+async function rotateLink(): Promise<string | undefined> {
+  // rotate both the local (OBS/LAN) link and the remote (phone) link
+  if (relay) relay.rotateViewerToken();
+  const cfg = config();
+  if (cfg.relayUrl && cfg.publisherToken) {
     try {
-      const res = await fetch(`${cfg.relayUrl.replace(/^ws/i, "http")}/admin/rotate-viewer-token`, {
+      const res = await fetch(`${httpOriginOfRelayUrl(cfg.relayUrl)}/admin/rotate-viewer-token`, {
         method: "POST",
         headers: { Authorization: `Bearer ${cfg.publisherToken}` },
       });
-      if (res.ok) token = ((await res.json()) as { viewerToken: string }).viewerToken;
+      if (res.ok) {
+        const token = ((await res.json()) as { viewerToken: string }).viewerToken;
+        configStore.update({ viewerToken: token });
+      }
     } catch (err) {
       log("error", `remote rotate failed: ${String(err)}`);
     }
   }
-  if (token) {
-    configStore.update({ viewerToken: token });
-    broadcastStatus();
-  }
+  broadcastStatus();
   return viewerUrl();
 }
 
@@ -146,12 +218,16 @@ function currentStatus() {
       startedAt: sessionStartedAt,
     },
     relay: {
-      mode: cfg.relayUrl ? ("remote" as const) : ("embedded" as const),
-      url: cfg.relayUrl || `ws://127.0.0.1:${relay?.port || cfg.relayPort || 8787}`,
+      mode: "embedded" as const,
+      url: `ws://127.0.0.1:${relay?.port || cfg.relayPort || 8787}`,
       viewerUrl: viewerUrl(),
+      localViewerUrl: localViewerUrl(),
+      remoteViewerUrl: phoneUrl(),
+      uplinkState: uplinkState,
     },
     devices,
     config: cfg,
+    usage: usageCache,
   };
 }
 
@@ -179,8 +255,15 @@ async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   const cfg = configStore.update(patch);
   const relayChanged = RELAY_KEYS.some((k) => JSON.stringify(before[k]) !== JSON.stringify(cfg[k]));
   if (relayChanged) {
-    log("info", "relay-affecting config changed, restarting embedded relay");
+    log("info", "relay-affecting config changed, restarting local relay + uplink");
     await restartEmbeddedRelay();
+  } else {
+    // language/toggle changes flow into a live uplink immediately
+    uplink?.connected &&
+      uplink.sendHello({
+        languages: cfg.languages,
+        translates: cfg.translationEnabled !== false,
+      });
   }
   win?.webContents.send("config:changed", cfg);
   broadcastStatus();
@@ -201,8 +284,14 @@ function registerIpc(): void {
     const cfg = config();
     if (opts.rotate && cfg.linkMode === "unique") await rotateLink();
     const url = publisherWsUrl();
-    if (!url) throw new Error("relay not ready (check keys / relay settings)");
-    return { publisherUrl: url, viewerUrl: viewerUrl(), config: config() };
+    if (!url) throw new Error("local relay not ready");
+    return {
+      publisherUrl: url,
+      viewerUrl: viewerUrl(),
+      obsUrl: localViewerUrl(),
+      phoneUrl: phoneUrl(),
+      config: config(),
+    };
   });
 
   ipcMain.handle("open-external", (_e, url: string) => {
@@ -220,6 +309,7 @@ function registerIpc(): void {
     sessionStartedAt = update.state === "live" ? Date.now() : undefined;
     setPowerBlock(update.state === "live" || update.state === "starting");
     broadcastStatus();
+    void refreshUsage();
   });
 
   ipcMain.on("devices:update", (_e, list: AudioDeviceInfo[]) => {
@@ -376,6 +466,8 @@ if (!gotLock) {
     } catch (err) {
       log("error", `embedded relay failed: ${String(err)}`);
     }
+    // usage refresh loop (Deepgram balance cached inside the relay for 5 min)
+    setInterval(() => void refreshUsage(), 60000);
     await startControl();
     createTray();
     createWindow();
@@ -389,6 +481,7 @@ if (!gotLock) {
   app.on("before-quit", () => {
     quitting = true;
     setPowerBlock(false);
+    stopUplink();
     relay?.close().catch(() => {});
   });
 

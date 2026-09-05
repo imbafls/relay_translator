@@ -25,6 +25,10 @@ export interface Translator {
   translate(text: string): Promise<string>;
 }
 
+export interface GeminiUsageReporter {
+  onUse(use: { cached: boolean; tokensIn: number; tokensOut: number }): void;
+}
+
 export interface CreateTranslatorOpts {
   apiKey: string;
   model: string;
@@ -32,6 +36,8 @@ export interface CreateTranslatorOpts {
   target: LanguageCode;
   /** abort a single attempt after this long (ms) */
   timeoutMs?: number;
+  /** optional usage accounting (cache hits + tokens) */
+  stats?: GeminiUsageReporter;
 }
 
 function systemInstruction(source: LanguageCode, target: LanguageCode): string {
@@ -115,20 +121,28 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
       (err as Error & { status?: number }).status = res.status;
       throw err;
     }
-    const data: any = await res.json();
-    const parts = data?.candidates?.[0]?.content?.parts;
-    const out = Array.isArray(parts)
-      ? parts.map((p: any) => p?.text ?? "").join("").trim()
-      : "";
-    if (!out) throw new Error("gemini: empty response");
-    return out;
+        const data: any = await res.json();
+        const parts = data?.candidates?.[0]?.content?.parts;
+        const out = Array.isArray(parts)
+          ? parts.map((p: any) => p?.text ?? "").join("").trim()
+          : "";
+        if (!out) throw new Error("gemini: empty response");
+        opts.stats?.onUse({
+          cached: false,
+          tokensIn: Number(data?.usageMetadata?.promptTokenCount) || 0,
+          tokensOut: Number(data?.usageMetadata?.candidatesTokenCount) || 0,
+        });
+        return out;
   }
 
   return {
     async translate(text: string): Promise<string> {
       const key = `${source}>${target}:${cacheKey(text)}`;
       const hit = cache.get(key);
-      if (hit !== undefined) return hit;
+      if (hit !== undefined) {
+        opts.stats?.onUse({ cached: true, tokensIn: 0, tokensOut: 0 });
+        return hit;
+      }
 
       // retry with backoff on 429 (quota) / 5xx — short so latency stays low
       let lastErr: unknown;

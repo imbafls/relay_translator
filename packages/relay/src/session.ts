@@ -17,6 +17,20 @@ export interface SessionConfig {
   languages: Languages;
   /** false = skip Gemini, source-language subtitles only */
   translationEnabled: boolean;
+  /** false = strip latency badges from viewer broadcasts (publisher echo keeps them) */
+  latencyVisible: boolean;
+}
+
+export interface GeminiStats {
+  count: number;
+  cacheHits: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface SttStats {
+  /** seconds of audio streamed to STT */
+  seconds: number;
 }
 
 export interface SessionDeps {
@@ -34,6 +48,10 @@ export interface SessionDeps {
     target?: string;
     latency?: SubtitleLatency;
   }): void;
+  /** aggregate translation usage (process lifetime) */
+  geminiStats?: GeminiStats;
+  /** aggregate STT audio (process lifetime) */
+  sttStats?: SttStats;
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
 }
@@ -74,6 +92,19 @@ export class PublisherSession {
             model: this.cfg.translation || "gemini-3.1-flash-lite",
             source,
             target,
+            stats: this.deps.geminiStats
+              ? {
+                  onUse: (use) => {
+                    const s = this.deps.geminiStats!;
+                    if (use.cached) s.cacheHits += 1;
+                    else {
+                      s.count += 1;
+                      s.tokensIn += use.tokensIn;
+                      s.tokensOut += use.tokensOut;
+                    }
+                  },
+                }
+              : undefined,
           });
 
     const events = {
@@ -93,7 +124,8 @@ export class PublisherSession {
             ? Math.max(0, Math.round(finalAt - this.streamWallStart - meta.audioEndSec * 1000))
             : undefined;
         const latency: SubtitleLatency = sttMs !== undefined ? { stt: sttMs } : {};
-        this.deps.toViewers({ type: "subtitle", id, source: text, final: true, latency });
+        const viewerLatency = this.cfg.latencyVisible !== false ? latency : undefined;
+        this.deps.toViewers({ type: "subtitle", id, source: text, final: true, latency: viewerLatency });
         this.deps.toPublisher?.({ type: "subtitle", id, source: text, latency });
         if (!this.translator) return;
         this.inflight += 1;
@@ -104,7 +136,14 @@ export class PublisherSession {
               ...latency,
               translate: Math.round(Date.now() - finalAt),
             };
-            this.deps.toViewers({ type: "subtitle", id, source: text, target: targetText, final: true, latency: full });
+            this.deps.toViewers({
+              type: "subtitle",
+              id,
+              source: text,
+              target: targetText,
+              final: true,
+              latency: this.cfg.latencyVisible !== false ? full : undefined,
+            });
             this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText, latency: full });
           })
           .catch((err) => {
@@ -149,6 +188,7 @@ export class PublisherSession {
 
   audio(chunk: Buffer): void {
     if (this.streamWallStart === 0) this.streamWallStart = Date.now();
+    this.deps.sttStats && (this.deps.sttStats.seconds += chunk.length / (SAMPLE_RATE * 2));
     this.stt?.sendAudio(chunk);
   }
 

@@ -22,11 +22,13 @@ export class RelayPublisherClient {
     translation: string;
     languages: AppConfig["languages"];
     translationEnabled?: boolean;
+    latencyVisible?: boolean;
   } = {
     stt: "deepgram-nova-3",
     translation: "gemini-3.1-flash-lite",
     languages: { source: "en", target: "vi" },
     translationEnabled: true,
+    latencyVisible: true,
   };
 
   state: "idle" | "connecting" | "connected" | "disconnected" | "error" = "idle";
@@ -51,6 +53,7 @@ export class RelayPublisherClient {
     translation: string;
     languages: AppConfig["languages"];
     translationEnabled?: boolean;
+    latencyVisible?: boolean;
   }): void {
     this.stopped = false;
     this.hello = hello;
@@ -76,6 +79,7 @@ export class RelayPublisherClient {
         translation: this.hello.translation,
         languages: this.hello.languages,
         translationEnabled: this.hello.translationEnabled,
+        latencyVisible: this.hello.latencyVisible,
       });
     };
 

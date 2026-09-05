@@ -5,3 +5,4 @@ export { PCM_WORKLET_SOURCE } from "./capture/workletSource";
 export { startControlServer } from "./controlServer";
 export type { ControlHandle, ControlHandlers } from "./controlServer";
 export { ControlClient } from "./controlClient";
+export { UplinkClient } from "./uplinkClient";

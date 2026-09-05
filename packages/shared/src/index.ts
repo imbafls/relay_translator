@@ -20,6 +20,8 @@ export interface AppConfig {
   languages: Languages;
   /** false = relay skips Gemini, viewers get source-language only */
   translationEnabled: boolean;
+  /** false = strip latency badges from viewer subtitles (app log keeps them) */
+  showLatency: boolean;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
   /** viewer link gets ?obs=1 appended for OBS browser source */
@@ -46,6 +48,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   audioSource: "default-mic",
   languages: { source: "en", target: "vi" },
   translationEnabled: true,
+  showLatency: true,
   linkMode: "unique",
   obsOverlay: false,
   relayPort: 8787,
@@ -122,8 +125,24 @@ export type PublisherToServer =
       languages: Languages;
       /** false = relay skips Gemini (source-only subtitles) */
       translationEnabled?: boolean;
+      /** false = relay strips latency badges from viewer broadcasts */
+      latencyVisible?: boolean;
     }
   | { type: "ping" };
+
+// ---------------------------------------------------------------------------
+// Uplink protocol (app -> remote relay subtitle fan-out)
+// The uplink carries FINISHED subtitles: the remote relay does no STT/translation.
+// Auth: publisher token. Mirrors the viewer-facing messages.
+// ---------------------------------------------------------------------------
+
+export type UplinkToServer =
+  | { type: "hello"; languages: Languages; translates: boolean }
+  | { type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency }
+  | { type: "status"; live: boolean; message?: string }
+  | { type: "ping" };
+
+export type ServerToUplink = { type: "ready" } | { type: "error"; message: string } | { type: "pong" };
 
 // ---------------------------------------------------------------------------
 // Local control API (companion process <-> standalone UI <-> Stream Deck)
@@ -151,9 +170,35 @@ export interface ControlStatus {
     mode: "embedded" | "remote";
     url: string;
     viewerUrl?: string;
+    /** local OBS/LAN link (embedded relay) — present when the local relay runs */
+    localViewerUrl?: string;
+    /** internet link (remote relay uplink) — present when configured */
+    remoteViewerUrl?: string;
+    /** uplink connection state to the remote relay (phone viewers) */
+    uplinkState?: "off" | "connecting" | "connected" | "disconnected" | "error";
   };
   devices: AudioDeviceInfo[];
   config: AppConfig;
+  usage?: UsageInfo;
+}
+
+export interface UsageInfo {
+  deepgram: {
+    /** STT audio minutes processed by the local relay (this install) */
+    sttMinutes: number;
+    /** rough USD estimate at nova-3 PAYG (~$0.0043/min) */
+    estCostUsd: number;
+  };
+  gemini: {
+    /** translations issued since relay start */
+    count: number;
+    /** served from the local translation cache (0 API calls) */
+    cacheHits: number;
+    tokensIn: number;
+    tokensOut: number;
+    /** rough USD estimate from model pricing (0 on free tier) */
+    estCostUsd?: number;
+  };
 }
 
 export interface ControlEvent {

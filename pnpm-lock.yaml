@@ -76,6 +76,9 @@ importers:
       '@callout-relay/shared':
         specifier: workspace:*
         version: link:../shared
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

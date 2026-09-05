@@ -1,16 +1,23 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppConfig, AudioDeviceInfo, SessionState } from "@callout-relay/shared";
+import type { AppConfig, AudioDeviceInfo, ControlStatus, SessionState } from "@callout-relay/shared";
 
 export interface RendererBridge {
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
-  prepareSession(opts: { rotate: boolean }): Promise<{ publisherUrl: string; viewerUrl?: string; config: AppConfig }>;
+  prepareSession(opts: { rotate: boolean }): Promise<{
+    publisherUrl: string;
+    viewerUrl?: string;
+    obsUrl?: string;
+    phoneUrl?: string;
+    config: AppConfig;
+  }>;
   rotateLink(): Promise<string | undefined>;
   openExternal(url: string): Promise<void>;
   reportState(state: SessionState, error?: string): void;
   reportDevices(devices: AudioDeviceInfo[]): void;
   onCommand(cb: (cmd: "start" | "stop") => void): void;
   onConfigChanged(cb: (cfg: AppConfig) => void): void;
+  onStatus(cb: (status: ControlStatus) => void): void;
 }
 
 contextBridge.exposeInMainWorld("cr", {
@@ -26,4 +33,6 @@ contextBridge.exposeInMainWorld("cr", {
     ipcRenderer.on("session:command", (_e, cmd) => cb(cmd)),
   onConfigChanged: (cb: (cfg: AppConfig) => void) =>
     ipcRenderer.on("config:changed", (_e, cfg) => cb(cfg)),
+  onStatus: (cb: (status: ControlStatus) => void) =>
+    ipcRenderer.on("status:changed", (_e, status) => cb(status)),
 } satisfies RendererBridge);

@@ -1,10 +1,12 @@
 import { BrowserAudioCapture, RelayPublisherClient } from "@callout-relay/companion";
 import {
   AppConfig,
+  ControlStatus,
   LANGUAGES,
   SessionState,
   STT_MODELS,
   TRANSLATION_MODELS,
+  UsageInfo,
 } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
@@ -110,7 +112,8 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
         "Add your Deepgram and Gemini API keys first — open Settings (API keys & relay) below.",
       );
     }
-    inp("viewerUrl").value = prep.viewerUrl || "";
+    inp("viewerUrl").value = prep.phoneUrl || prep.viewerUrl || "";
+    inp("obsUrl").value = prep.obsUrl || "";
 
     relayClient = new RelayPublisherClient(prep.publisherUrl, {
       onState: (clientState, detail) => {
@@ -127,6 +130,8 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       stt: config.stt,
       translation: config.translation,
       languages: config.languages,
+      translationEnabled: config.translationEnabled !== false,
+      latencyVisible: config.showLatency !== false,
     });
 
     await capture.start(config.audioSource, (chunk) => relayClient?.sendAudio(chunk.buffer));
@@ -229,7 +234,7 @@ function syncControlsFromConfig(): void {
     ],
     config.linkMode,
   );
-  inp("obsOverlay").checked = !!config.obsOverlay;
+  inp("showLatency").checked = config.showLatency !== false;
   inp("translationEnabled").checked = config.translationEnabled !== false;
   inp("deepgramApiKey").value = config.deepgramApiKey || "";
   inp("geminiApiKey").value = config.geminiApiKey || "";
@@ -245,8 +250,8 @@ function configPatchFromControls(): Partial<AppConfig> {
     translation: selectEl("translation").value,
     languages: { source: selectEl("langSource").value, target: selectEl("langTarget").value },
     translationEnabled: inp("translationEnabled").checked,
+    showLatency: inp("showLatency").checked,
     linkMode: selectEl("linkMode").value as AppConfig["linkMode"],
-    obsOverlay: inp("obsOverlay").checked,
   };
 }
 
@@ -278,12 +283,69 @@ async function copyViewerLink(): Promise<void> {
   }
 }
 
+const TAB_KEY = "callout-viewer-tab";
+function setViewerTab(tab: "phone" | "obs"): void {
+  const phone = tab === "phone";
+  $("tabPhone").classList.toggle("active", phone);
+  $("tabObs").classList.toggle("active", !phone);
+  $("panelPhone").classList.toggle("hidden", !phone);
+  $("panelObs").classList.toggle("hidden", phone);
+  try {
+    localStorage.setItem(TAB_KEY, tab);
+  } catch {
+    /* noop */
+  }
+}
+
+function uplinkIndicator(state: ControlStatus["relay"]["uplinkState"]): void {
+  const s = state || "off";
+  const dot = $("uplinkDot");
+  const text = $("uplinkText");
+  dot.className = "dot " + (s === "connected" ? "on" : s === "error" ? "warn" : "off");
+  text.textContent =
+    s === "connected" ? "uplink: live on your relay" :
+    s === "connecting" ? "uplink: connecting…" :
+    s === "disconnected" ? "uplink: reconnecting…" :
+    s === "error" ? "uplink: error — check relay URL/tokens" :
+    "uplink: not configured (no remote relay)";
+}
+
+function renderUsage(u?: UsageInfo): void {
+  if (u?.deepgram) {
+    $("dgMinutes").textContent = u.deepgram.sttMinutes.toFixed(1);
+    $("dgCost").textContent = `$${u.deepgram.estCostUsd.toFixed(2)}`;
+  }
+  if (u?.gemini) {
+    $("trCount").textContent = String(u.gemini.count);
+    $("trCache").textContent = String(u.gemini.cacheHits);
+    const cost = u.gemini.estCostUsd ?? 0;
+    $("trCost").textContent = cost < 0.005 ? "$0.00" : `$${cost.toFixed(4)}`;
+  }
+}
+
 function bind(): void {
   $("startStop").onclick = () => {
     if (state.session === "live" || state.session === "starting") stopSession();
     else void startSession({ rotateLink: true });
   };
+  $("tabPhone").onclick = () => setViewerTab("phone");
+  $("tabObs").onclick = () => setViewerTab("obs");
   $("copyLink").onclick = () => void copyViewerLink();
+  $("copyObs").onclick = async () => {
+    const url = inp("obsUrl").value;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      log("OBS link copied", "ok");
+    } catch {
+      inp("obsUrl").select();
+      document.execCommand("copy");
+    }
+  };
+  $("openObs").onclick = () => {
+    const url = inp("obsUrl").value;
+    if (url) void cr.openExternal(url);
+  };
   $("openLink").onclick = () => {
     const url = inp("viewerUrl").value;
     if (url) void cr.openExternal(url);
@@ -298,7 +360,8 @@ function bind(): void {
   for (const id of ["stt", "translation", "langSource", "langTarget", "linkMode"] as const) {
     selectEl(id).onchange = () => void saveAndApply(configPatchFromControls(), { restart: true });
   }
-  inp("obsOverlay").onchange = () => void saveAndApply({ obsOverlay: inp("obsOverlay").checked });
+  inp("showLatency").onchange = () =>
+    void saveAndApply({ showLatency: inp("showLatency").checked }, { restart: true });
   inp("translationEnabled").onchange = () =>
     void saveAndApply({ translationEnabled: inp("translationEnabled").checked }, { restart: true });
 
@@ -328,12 +391,26 @@ function bind(): void {
     config = cfg;
     syncControlsFromConfig();
   });
+
+  cr.onStatus((status) => {
+    renderUsage(status.usage);
+    uplinkIndicator(status.relay.uplinkState);
+    if (status.relay.remoteViewerUrl) inp("viewerUrl").value = status.relay.remoteViewerUrl;
+    if (status.relay.localViewerUrl) inp("obsUrl").value = status.relay.localViewerUrl;
+  });
 }
 
 async function boot(): Promise<void> {
   config = await cr.getConfig();
   syncControlsFromConfig();
   bind();
+  let savedTab: string | null = null;
+  try {
+    savedTab = localStorage.getItem(TAB_KEY);
+  } catch {
+    /* noop */
+  }
+  setViewerTab(savedTab === "obs" ? "obs" : "phone");
   await refreshDevices();
   log("ready — pick an audio source and hit Start");
 }

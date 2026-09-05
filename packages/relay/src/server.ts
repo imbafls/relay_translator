@@ -8,9 +8,11 @@ import {
   PublisherToServer,
   ServerToPublisher,
   ServerToViewer,
+  UplinkToServer,
+  UsageInfo,
 } from "@callout-relay/shared";
 import { loadState, generateToken, RelayState, saveState } from "./config";
-import { PublisherSession, SessionConfig } from "./session";
+import { PublisherSession, SessionConfig, GeminiStats, SttStats } from "./session";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -79,6 +81,10 @@ export interface RelayHandle {
   origin: string;
   viewerUrl(viewerToken: string, obs?: boolean): string;
   rotateViewerToken(): string;
+  /** subscribe to everything fanned out to local viewers (for the uplink bridge) */
+  onBroadcast(cb: (msg: ServerToViewer) => void): () => void;
+  /** Deepgram balance + Gemini usage counters */
+  getUsage(): Promise<UsageInfo>;
   close(): Promise<void>;
 }
 
@@ -111,19 +117,33 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   });
   const mockStt = opts.mockStt ?? process.env.RELAY_MOCK_STT === "1";
   const mockGemini = opts.mockGemini ?? process.env.RELAY_MOCK_GEMINI === "1";
+  const geminiStats: GeminiStats = { count: 0, cacheHits: 0, tokensIn: 0, tokensOut: 0 };
+  const sttStats: SttStats = { seconds: 0 };
 
   let publisher: { ws: WebSocket; session: PublisherSession } | null = null;
+  /** remote app mirroring finished subtitles via /ws/uplink */
+  let uplink: WebSocket | null = null;
   /** single-connection-per-token: new viewer with the same token kicks the old */
   const viewers = new Map<string, WebSocket>();
   let currentLanguages = { ...DEFAULT_CONFIG.languages };
   let currentTranslates = DEFAULT_CONFIG.translationEnabled !== false;
+  const broadcastListeners = new Set<(msg: ServerToViewer) => void>();
 
   const toViewers = (msg: ServerToViewer): void => {
     const payload = JSON.stringify(msg);
+    for (const cb of broadcastListeners) {
+      try {
+        cb(msg);
+      } catch {
+        /* listener errors must not break fan-out */
+      }
+    }
     for (const ws of viewers.values()) {
       if (ws.readyState === WebSocket.OPEN) ws.send(payload);
     }
   };
+
+  const isLive = (): boolean => publisher !== null || uplink !== null;
 
   function buildSession(ws: WebSocket, cfg: SessionConfig): void {
     if (publisher) {
@@ -140,6 +160,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       geminiApiKey: opts.geminiApiKey,
       mockStt,
       mockGemini,
+      geminiStats,
+      sttStats,
       toViewers,
       toPublisher: (msg) => {
         try {
@@ -187,7 +209,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
 
     if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, live: publisher !== null, viewers: viewers.size }));
+      res.end(JSON.stringify({ ok: true, live: isLive(), viewers: viewers.size }));
       return;
     }
 
@@ -260,6 +282,16 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       return;
     }
 
+    if (url.pathname === "/ws/uplink") {
+      if (token !== state.publisherToken) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => onUplink(ws));
+      return;
+    }
+
     if (url.pathname === "/ws/viewer") {
       if (token !== state.viewerToken) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -290,6 +322,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       translation: DEFAULT_CONFIG.translation,
       languages: { ...currentLanguages },
       translationEnabled: DEFAULT_CONFIG.translationEnabled !== false,
+      latencyVisible: DEFAULT_CONFIG.showLatency !== false,
     });
 
     sendPublisher(ws, {
@@ -315,13 +348,14 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       if (msg.type === "hello") {
         log(
           "info",
-          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}`,
+          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}${msg.latencyVisible === false ? " (latency hidden)" : ""}`,
         );
         buildSession(ws, {
           stt: msg.stt,
           translation: msg.translation,
           languages: msg.languages,
           translationEnabled: msg.translationEnabled !== false,
+          latencyVisible: msg.latencyVisible !== false,
         });
         toViewers({
           type: "hello",
@@ -351,7 +385,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       JSON.stringify({
         type: "hello",
         languages: currentLanguages,
-        live: publisher !== null,
+        live: isLive(),
         translates: currentTranslates,
       } satisfies ServerToViewer),
     );
@@ -365,7 +399,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
             JSON.stringify({
               type: "hello",
               languages: currentLanguages,
-              live: publisher !== null,
+              live: isLive(),
               translates: currentTranslates,
             } satisfies ServerToViewer),
           );
@@ -380,6 +414,69 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     });
     ws.on("error", () => {
       if (viewers.get(token) === ws) viewers.delete(token);
+    });
+  }
+
+  function onUplink(ws: WebSocket): void {
+    // single uplink: a new one replaces the old
+    if (uplink) {
+      try {
+        uplink.close(4409, "replaced by new uplink");
+      } catch {
+        /* noop */
+      }
+    }
+    uplink = ws;
+    log("info", "uplink connected (remote subtitle mirror)");
+
+    ws.on("message", (data: RawData) => {
+      if (uplink !== ws) return;
+      let msg: UplinkToServer;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      if (msg.type === "ping") {
+        sendPublisher(ws, { type: "pong" });
+        return;
+      }
+      if (msg.type === "hello") {
+        currentLanguages = { ...msg.languages };
+        currentTranslates = msg.translates !== false;
+        toViewers({
+          type: "hello",
+          languages: currentLanguages,
+          live: true,
+          translates: currentTranslates,
+        });
+        return;
+      }
+      if (msg.type === "subtitle") {
+        toViewers({
+          type: "subtitle",
+          id: msg.id,
+          source: msg.source,
+          target: msg.target,
+          final: msg.final,
+          latency: msg.latency,
+        });
+        return;
+      }
+      if (msg.type === "status") {
+        toViewers({ type: "status", live: msg.live, message: msg.message });
+      }
+    });
+
+    ws.on("close", () => {
+      if (uplink === ws) {
+        log("info", "uplink disconnected");
+        uplink = null;
+        toViewers({ type: "status", live: false, message: "stream ended" });
+      }
+    });
+    ws.on("error", () => {
+      if (uplink === ws) uplink = null;
     });
   }
 
@@ -428,9 +525,40 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           return obs ? `${base}?obs=1` : base;
         },
         rotateViewerToken,
+        onBroadcast(cb: (msg: ServerToViewer) => void) {
+          broadcastListeners.add(cb);
+          return () => broadcastListeners.delete(cb);
+        },
+        async getUsage(): Promise<UsageInfo> {
+          return {
+            deepgram: {
+              sttMinutes: Math.round((sttStats.seconds / 60) * 10) / 10,
+              estCostUsd: Math.round((sttStats.seconds / 60) * 0.0043 * 100) / 100,
+            },
+            gemini: {
+              count: geminiStats.count,
+              cacheHits: geminiStats.cacheHits,
+              tokensIn: geminiStats.tokensIn,
+              tokensOut: geminiStats.tokensOut,
+              // flash-lite-tier pricing estimate: ~$0.10/1M in, ~$0.40/1M out
+              estCostUsd:
+                Math.round(
+                  ((geminiStats.tokensIn / 1e6) * 0.1 + (geminiStats.tokensOut / 1e6) * 0.4) * 1e4,
+                ) / 1e4,
+            },
+          };
+        },
         async close() {
           clearInterval(heartbeat);
           dropPublisher("relay shutting down");
+          if (uplink) {
+            try {
+              uplink.close(1001, "relay shutting down");
+            } catch {
+              /* noop */
+            }
+            uplink = null;
+          }
           for (const ws of viewers.values()) {
             try {
               ws.close(1001, "relay shutting down");
