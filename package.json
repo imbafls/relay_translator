@@ -1,6 +1,6 @@
 {
   "name": "callout-relay",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Real-time game comms relay: audio -> Deepgram STT -> Gemini translation -> phone/OBS subtitles",
   "engines": {
