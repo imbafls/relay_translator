@@ -53,11 +53,11 @@ console.log(`relay on ${base}`);
   health.ok ? ok("health endpoint") : fail("health endpoint", JSON.stringify(health));
   const page = await fetch(`${base}/watch/${viewerToken}`);
   const html = await page.text();
-  page.ok && html.includes("Callout Relay")
+  page.ok && html.includes('id="lines"')
     ? ok("viewer page served")
     : fail("viewer page served", `status ${page.status}`);
   const bad = await fetch(`${base}/watch/not-the-token`);
-  bad.status === 200 && (await bad.text()).includes("Callout Relay")
+  bad.status === 200 && (await bad.text()).includes('id="lines"')
     ? ok("viewer page serves any path (token enforced at WS)")
     : fail("viewer page serves any path (token enforced at WS)");
 }
@@ -160,6 +160,53 @@ let viewer2;
     ? ok("translation delivered (mock)")
     : fail("translation delivered (mock)", JSON.stringify(subs));
 
+  pub.close();
+}
+
+// 5b. two capture channels -> every line carries a speaker tag
+{
+  const pub = new WebSocket(`ws://127.0.0.1:${handle.port}/ws/publisher?token=${publisherToken}`);
+  await new Promise((res, rej) => {
+    pub.onopen = res;
+    pub.onerror = rej;
+  });
+  pub.send(
+    JSON.stringify({
+      type: "hello",
+      stt: "deepgram-nova-3",
+      translation: "gemini-2.5-flash",
+      languages: { source: "en", target: "vi" },
+      translationEnabled: false,
+      channels: 2,
+      channelLabels: ["YOU", "CHAT"],
+    }),
+  );
+  await expectMsg(pub, "ready");
+  const inbox = [];
+  const collector = (ev) => {
+    try {
+      inbox.push(JSON.parse(String(ev.data)));
+    } catch {
+      /* ignore */
+    }
+  };
+  viewer2.addEventListener("message", collector);
+  // stereo silence: 100 ms of interleaved s16le at 16 kHz = 6400 bytes
+  const silence = Buffer.alloc(6400, 0);
+  const stream = setInterval(() => pub.send(silence), 100);
+  await new Promise((r) => setTimeout(r, 5500));
+  clearInterval(stream);
+  viewer2.removeEventListener("message", collector);
+  const subs = inbox.filter((m) => m.type === "subtitle");
+  const speakers = new Set(subs.map((m) => m.speaker));
+  speakers.has("YOU") && speakers.has("CHAT")
+    ? ok("two channels: subtitles tagged YOU + CHAT")
+    : fail("two channels: subtitles tagged YOU + CHAT", JSON.stringify([...speakers]));
+  const partials = inbox.filter((m) => m.type === "partial");
+  const ids = subs.map((m) => m.id);
+  new Set(ids).size === ids.length && partials.every((p) => typeof p.channel === "number")
+    ? ok("two channels: unique ids, partials carry channel")
+    : fail("two channels: unique ids, partials carry channel");
   pub.close();
 }
 

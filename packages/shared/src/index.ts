@@ -19,6 +19,10 @@ export interface AppConfig {
   translation: string;
   /** "default-mic" | "system-loopback" | a deviceId from enumerateDevices() */
   audioSource: string;
+  /** optional second source captured alongside `audioSource` (e.g. system
+   *  loopback for voice chat while the mic is the first). Empty = off. Each
+   *  source is transcribed on its own channel and captions carry a speaker tag. */
+  audioSource2?: string;
   languages: Languages;
   /** false = relay skips Gemini, viewers get source-language only.
    *  Off by default: a fresh install captions the source language until you
@@ -36,6 +40,8 @@ export interface AppConfig {
   obsOverlay: boolean;
   /** where captions are shown: phone link (internet/LAN), OBS browser source, or both */
   output: OutputTarget;
+  /** first-run setup finished (it can be re-run any time from KEYS or the tray) */
+  setupDone: boolean;
 
   /** secrets (stored in local config file / env, never shipped) */
   deepgramApiKey?: string;
@@ -63,14 +69,133 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoUpdate: true,
   obsOverlay: false,
   output: "phone",
+  setupDone: false,
   relayPort: 8787,
 };
 
-export const STT_MODELS = [
-  { id: "deepgram-nova-3", label: "Deepgram Nova-3 - fastest, English-first" },
-  { id: "deepgram-nova-3-multi", label: "Deepgram Nova-3 Multi - en/es/fr/de/pt/it..." },
-  { id: "deepgram-nova-2", label: "Deepgram Nova-2 - wide language incl. vi" },
-] as const;
+/** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
+export function isLocalStt(id: string): boolean {
+  return id.startsWith("local-");
+}
+
+export interface SttModelFile {
+  name: string;
+  url: string;
+  /** bytes, for progress */
+  size: number;
+}
+
+export interface SttModelInfo {
+  id: string;
+  label: string;
+  provider: "deepgram" | "local";
+  /** local only: streaming = word-by-word partials, offline = VAD-segmented utterances */
+  kind?: "streaming" | "offline";
+  /** short human language coverage */
+  languages?: string;
+  /** local only: download size */
+  sizeMb?: number;
+  /** local only: files fetched into <dataDir>/models/<id>/ */
+  files?: SttModelFile[];
+  /** local only: sherpa-onnx model family */
+  engine?: "zipformer-online" | "nemo-transducer" | "sense-voice" | "whisper";
+}
+
+const HF = "https://huggingface.co";
+
+/**
+ * Local models come from the sherpa-onnx mirrors on Hugging Face, one plain
+ * file per entry, so the app can stream them with progress and never needs a
+ * tar.bz2 decoder. Sizes are the int8 exports.
+ */
+export const STT_MODELS: SttModelInfo[] = [
+  { id: "deepgram-nova-3", label: "Deepgram Nova-3 - fastest, English-first", provider: "deepgram", languages: "en (+multi)" },
+  { id: "deepgram-nova-3-multi", label: "Deepgram Nova-3 Multi - en/es/fr/de/pt/it...", provider: "deepgram", languages: "multilingual" },
+  { id: "deepgram-nova-2", label: "Deepgram Nova-2 - wide language incl. vi", provider: "deepgram", languages: "wide incl. vi" },
+  {
+    id: "local-zipformer-en-20m",
+    label: "Zipformer EN 20M - streaming, tiny, word-by-word",
+    provider: "local",
+    kind: "streaming",
+    engine: "zipformer-online",
+    languages: "en",
+    sizeMb: 44,
+    files: [
+      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/encoder-epoch-99-avg-1.int8.onnx`, size: 42845182 },
+      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/decoder-epoch-99-avg-1.int8.onnx`, size: 539499 },
+      { name: "joiner.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/joiner-epoch-99-avg-1.int8.onnx`, size: 259572 },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/tokens.txt`, size: 5048 },
+    ],
+  },
+  {
+    id: "local-parakeet-tdt-0.6b-v3",
+    label: "Parakeet TDT 0.6B v3 - best accuracy, en + 24 European",
+    provider: "local",
+    kind: "offline",
+    engine: "nemo-transducer",
+    languages: "en + 24 European",
+    sizeMb: 670,
+    files: [
+      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/encoder.int8.onnx`, size: 652184281 },
+      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/decoder.int8.onnx`, size: 11845275 },
+      { name: "joiner.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/joiner.int8.onnx`, size: 6355277 },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/tokens.txt`, size: 93939 },
+    ],
+  },
+  {
+    id: "local-sense-voice",
+    label: "SenseVoice Small - zh/en/ja/ko/yue",
+    provider: "local",
+    kind: "offline",
+    engine: "sense-voice",
+    languages: "zh en ja ko yue",
+    sizeMb: 240,
+    files: [
+      { name: "model.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx`, size: 239233841 },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt`, size: 315894 },
+    ],
+  },
+  {
+    id: "local-whisper-small",
+    label: "Whisper Small - ~100 languages incl. vi, slowest",
+    provider: "local",
+    kind: "offline",
+    engine: "whisper",
+    languages: "~100 incl. vi",
+    sizeMb: 375,
+    files: [
+      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-encoder.int8.onnx`, size: 112442483 },
+      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-decoder.int8.onnx`, size: 262226114 },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt`, size: 816730 },
+    ],
+  },
+];
+
+/** silero VAD - segments speech for every offline local model */
+export const LOCAL_VAD: SttModelInfo = {
+  id: "local-vad-silero",
+  label: "Silero VAD",
+  provider: "local",
+  kind: "offline",
+  sizeMb: 1,
+  files: [
+    { name: "silero_vad.onnx", url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx", size: 643854 },
+  ],
+};
+
+export function sttModel(id: string): SttModelInfo | undefined {
+  return STT_MODELS.find((m) => m.id === id);
+}
+
+/** download state of one local model (desktop app -> renderer / control API) */
+export interface LocalModelStatus {
+  id: string;
+  downloaded: boolean;
+  sizeMb: number;
+  /** 0-100 while a download runs */
+  progress?: number;
+  error?: string;
+}
 
 export const TRANSLATION_MODELS = [
   { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite - cheapest, big free quota" },
@@ -111,10 +236,18 @@ export interface SubtitleLatency {
   translate?: number;
 }
 
+/** which capture channel a line came from, when two sources are on */
+export interface SpeakerTag {
+  /** 0-based capture channel */
+  channel?: number;
+  /** short label shown before the line, e.g. "YOU" / "CHAT" */
+  speaker?: string;
+}
+
 export type ServerToViewer =
   | { type: "hello"; languages: Languages; live: boolean; translates: boolean; since?: number }
-  | { type: "partial"; id: number; source: string }
-  | { type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency }
+  | ({ type: "partial"; id: number; source: string } & SpeakerTag)
+  | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
   | { type: "status"; live: boolean; message?: string; since?: number }
   | { type: "kicked"; reason: string }
   | { type: "pong" };
@@ -124,12 +257,15 @@ export type ViewerToServer = { type: "ping" } | { type: "sync" };
 export type ServerToPublisher =
   | { type: "ready"; sampleRate: number }
   | { type: "status"; live: boolean; message?: string }
-  | { type: "partial"; id: number; source: string }
-  | { type: "subtitle"; id: number; source: string; target?: string; latency?: SubtitleLatency }
+  | ({ type: "partial"; id: number; source: string } & SpeakerTag)
+  | ({ type: "subtitle"; id: number; source: string; target?: string; latency?: SubtitleLatency } & SpeakerTag)
   | { type: "error"; message: string }
   | { type: "pong" };
 
-/** Binary frames = raw PCM s16le mono 16 kHz. Text frames = JSON control. */
+/**
+ * Binary frames = raw PCM s16le 16 kHz, mono, or interleaved stereo when the
+ * hello said `channels: 2`. Text frames = JSON control.
+ */
 export type PublisherToServer =
   | {
       type: "hello";
@@ -140,6 +276,10 @@ export type PublisherToServer =
       translationEnabled?: boolean;
       /** false = relay strips latency badges from viewer broadcasts */
       latencyVisible?: boolean;
+      /** 1 (default) or 2 interleaved capture channels, each transcribed separately */
+      channels?: 1 | 2;
+      /** speaker tag per channel, e.g. ["YOU", "CHAT"] */
+      channelLabels?: string[];
     }
   | { type: "ping" };
 
@@ -151,7 +291,7 @@ export type PublisherToServer =
 
 export type UplinkToServer =
   | { type: "hello"; languages: Languages; translates: boolean; since?: number }
-  | { type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency }
+  | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
   | { type: "status"; live: boolean; message?: string; since?: number }
   | { type: "ping" };
 
@@ -205,14 +345,20 @@ export interface ControlStatus {
   config: AppConfig;
   usage?: UsageInfo;
   update?: UpdateStatus;
+  /** download state of the local STT models (desktop app only) */
+  localModels?: LocalModelStatus[];
 }
 
 export interface UsageInfo {
   deepgram: {
-    /** STT audio minutes processed by the local relay (this install) */
+    /** STT audio minutes billed by Deepgram (each channel counts) */
     sttMinutes: number;
     /** rough USD estimate at nova-3 PAYG (~$0.0043/min) */
     estCostUsd: number;
+  };
+  /** minutes transcribed on this PC (free) */
+  local?: {
+    sttMinutes: number;
   };
   gemini: {
     /** translations issued since relay start */

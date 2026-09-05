@@ -1,10 +1,11 @@
-import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher } from "@callout-relay/shared";
+import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher, isLocalStt } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
   createDeepgramStream,
   createMockSttStream,
   SttStream,
 } from "./deepgram";
+import { createLocalSttStream, LocalSttOptions } from "./localStt";
 import {
   createGeminiTranslator,
   createMockTranslator,
@@ -19,6 +20,10 @@ export interface SessionConfig {
   translationEnabled: boolean;
   /** false = strip latency badges from viewer broadcasts (publisher echo keeps them) */
   latencyVisible: boolean;
+  /** 1 or 2 interleaved capture channels */
+  channels: number;
+  /** speaker tag per channel (only sent when channels > 1) */
+  channelLabels?: string[];
 }
 
 export interface GeminiStats {
@@ -29,8 +34,10 @@ export interface GeminiStats {
 }
 
 export interface SttStats {
-  /** seconds of audio streamed to STT */
+  /** seconds of audio billed by Deepgram (channels multiply) */
   seconds: number;
+  /** seconds of audio transcribed on this PC */
+  localSeconds: number;
 }
 
 export interface SessionDeps {
@@ -38,6 +45,8 @@ export interface SessionDeps {
   geminiApiKey?: string;
   mockStt?: boolean;
   mockGemini?: boolean;
+  /** where local models live + the worker script; absent = local STT unavailable */
+  localStt?: LocalSttOptions;
   /** fan-out to all viewers */
   toViewers(msg: ServerToViewer): void;
   /** echo subtitles to the publisher (in-app live log) */
@@ -51,26 +60,39 @@ export interface SessionDeps {
 }
 
 /**
- * One publisher session: PCM in -> Deepgram finals -> Gemini -> viewer broadcast.
+ * One publisher session: PCM in -> STT finals -> Gemini -> viewer broadcast.
  * Source text goes out immediately (final:true, no target) so viewers see it
- * within the Deepgram budget; the translation patches the same segment id.
+ * within the STT budget; the translation patches the same segment id.
+ *
+ * With two capture channels every channel has its own interim segment id so
+ * "YOU" and "CHAT" can talk over each other without clobbering one another.
  */
 export class PublisherSession {
   private segId = 0;
+  /** id reserved for the interim line of each channel */
+  private pendingId: (number | undefined)[] = [];
   private stt: SttStream | null = null;
   private translator: Translator | null = null;
   private inflight = 0;
   private geminiErrorLogged = false;
   private closing = false;
-  /** wall clock of the first audio byte (Deepgram word timings are relative to it) */
+  /** wall clock of the first audio byte (STT word timings are relative to it) */
   private streamWallStart = 0;
   /** whether Gemini runs for this session */
   translates = true;
+  readonly local: boolean;
 
   constructor(
     private readonly cfg: SessionConfig,
     private readonly deps: SessionDeps,
-  ) {}
+  ) {
+    this.local = isLocalStt(cfg.stt);
+  }
+
+  private tag(channel: number): { channel?: number; speaker?: string } {
+    if (this.cfg.channels <= 1) return {};
+    return { channel, speaker: this.cfg.channelLabels?.[channel] || `CH${channel + 1}` };
+  }
 
   start(): void {
     const { source, target } = this.cfg.languages;
@@ -103,25 +125,35 @@ export class PublisherSession {
 
     const events = {
       onOpen: () => {
-        this.deps.log("info", `stt open (${this.cfg.stt}, ${source})`);
+        this.deps.log(
+          "info",
+          `stt open (${this.cfg.stt}, ${source}${this.cfg.channels > 1 ? `, ${this.cfg.channels} channels` : ""})`,
+        );
         this.deps.toViewers({ type: "status", live: true });
         this.deps.setLive(true);
       },
-      onPartial: (text: string) => {
-        this.deps.toViewers({ type: "partial", id: this.segId + 1, source: text });
-        this.deps.toPublisher?.({ type: "partial", id: this.segId + 1, source: text });
+      onPartial: (text: string, channel: number) => {
+        if (this.closing) return;
+        if (this.pendingId[channel] === undefined) this.pendingId[channel] = ++this.segId;
+        const id = this.pendingId[channel]!;
+        const tag = this.tag(channel);
+        this.deps.toViewers({ type: "partial", id, source: text, ...tag });
+        this.deps.toPublisher?.({ type: "partial", id, source: text, ...tag });
       },
-      onFinal: (text: string, meta?: { audioEndSec?: number }) => {
-        const id = ++this.segId;
+      onFinal: (text: string, meta: { audioEndSec?: number; channel: number }) => {
+        const channel = meta.channel;
+        const id = this.pendingId[channel] ?? ++this.segId;
+        this.pendingId[channel] = undefined;
+        const tag = this.tag(channel);
         const finalAt = Date.now();
         const sttMs =
-          meta?.audioEndSec !== undefined && this.streamWallStart > 0
+          meta.audioEndSec !== undefined && this.streamWallStart > 0
             ? Math.max(0, Math.round(finalAt - this.streamWallStart - meta.audioEndSec * 1000))
             : undefined;
         const latency: SubtitleLatency = sttMs !== undefined ? { stt: sttMs } : {};
         const viewerLatency = this.cfg.latencyVisible !== false ? latency : undefined;
-        this.deps.toViewers({ type: "subtitle", id, source: text, final: true, latency: viewerLatency });
-        this.deps.toPublisher?.({ type: "subtitle", id, source: text, latency });
+        this.deps.toViewers({ type: "subtitle", id, source: text, final: true, latency: viewerLatency, ...tag });
+        this.deps.toPublisher?.({ type: "subtitle", id, source: text, latency, ...tag });
         if (!this.translator) return;
         this.inflight += 1;
         this.translator
@@ -138,8 +170,9 @@ export class PublisherSession {
               target: targetText,
               final: true,
               latency: this.cfg.latencyVisible !== false ? full : undefined,
+              ...tag,
             });
-            this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText, latency: full });
+            this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText, latency: full, ...tag });
           })
           .catch((err) => {
             if (!this.geminiErrorLogged) {
@@ -153,6 +186,7 @@ export class PublisherSession {
       },
       onError: (message: string) => {
         this.deps.log("error", `stt error: ${message}`);
+        this.publisherError?.(message);
       },
       onClose: () => {
         if (!this.closing) {
@@ -163,18 +197,38 @@ export class PublisherSession {
       },
     };
 
-    this.stt =
-      this.deps.mockStt || !this.deps.deepgramApiKey
-        ? createMockSttStream(events)
-        : createDeepgramStream(
-            {
-              apiKey: this.deps.deepgramApiKey,
-              model: this.cfg.stt || "deepgram-nova-3",
-              language: source,
-            },
-            events,
-          );
+    const channels = Math.max(1, Math.min(2, this.cfg.channels || 1));
+    if (this.deps.mockStt) {
+      this.stt = createMockSttStream(events, channels);
+    } else if (this.local) {
+      if (!this.deps.localStt) {
+        this.deps.log("error", "local STT requested but this relay has no local model support");
+        setImmediate(() => events.onClose());
+        this.stt = { sendAudio() {}, close() {} };
+      } else {
+        this.stt = createLocalSttStream(
+          this.deps.localStt,
+          { model: this.cfg.stt, language: source, channels },
+          events,
+        );
+      }
+    } else if (!this.deps.deepgramApiKey) {
+      this.stt = createMockSttStream(events, channels);
+    } else {
+      this.stt = createDeepgramStream(
+        {
+          apiKey: this.deps.deepgramApiKey,
+          model: this.cfg.stt || "deepgram-nova-3",
+          language: source,
+          channels,
+        },
+        events,
+      );
+    }
   }
+
+  /** optional hook so STT errors reach the app log, set by the server */
+  publisherError?: (message: string) => void;
 
   /** sample rate expected from the publisher */
   get sampleRate(): number {
@@ -183,7 +237,12 @@ export class PublisherSession {
 
   audio(chunk: Buffer): void {
     if (this.streamWallStart === 0) this.streamWallStart = Date.now();
-    this.deps.sttStats && (this.deps.sttStats.seconds += chunk.length / (SAMPLE_RATE * 2));
+    if (this.deps.sttStats) {
+      // bytes -> seconds of (mono-equivalent) audio; Deepgram bills every channel
+      const seconds = chunk.length / (SAMPLE_RATE * 2 * Math.max(1, this.cfg.channels));
+      if (this.local) this.deps.sttStats.localSeconds += seconds;
+      else this.deps.sttStats.seconds += seconds * Math.max(1, this.cfg.channels);
+    }
     this.stt?.sendAudio(chunk);
   }
 

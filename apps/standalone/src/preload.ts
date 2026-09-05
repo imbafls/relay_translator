@@ -4,6 +4,7 @@ import type {
   AudioDeviceInfo,
   ControlStatus,
   KeyValidation,
+  LocalModelStatus,
   SessionState,
   UpdateStatus,
 } from "@callout-relay/shared";
@@ -29,7 +30,13 @@ export interface RendererBridge {
   openExternal(url: string): Promise<void>;
   reportState(state: SessionState, error?: string): void;
   reportDevices(devices: AudioDeviceInfo[]): void;
-  onCommand(cb: (cmd: "start" | "stop") => void): void;
+  /** local STT models on disk + running downloads */
+  modelStatus(): Promise<LocalModelStatus[]>;
+  downloadModel(id: string): Promise<LocalModelStatus[]>;
+  cancelModel(id: string): Promise<LocalModelStatus[]>;
+  removeModel(id: string): Promise<LocalModelStatus[]>;
+  /** "setup" reopens onboarding (tray / keys view) */
+  onCommand(cb: (cmd: "start" | "stop" | "setup") => void): void;
   onConfigChanged(cb: (cfg: AppConfig) => void): void;
   onStatus(cb: (status: ControlStatus) => void): void;
 }
@@ -43,8 +50,12 @@ contextBridge.exposeInMainWorld("cr", {
   reportState: (state: SessionState, error?: string) =>
     ipcRenderer.send("session:update", { state, error }),
   reportDevices: (devices: AudioDeviceInfo[]) => ipcRenderer.send("devices:update", devices),
-  onCommand: (cb: (cmd: "start" | "stop") => void) =>
+  onCommand: (cb: (cmd: "start" | "stop" | "setup") => void) =>
     ipcRenderer.on("session:command", (_e, cmd) => cb(cmd)),
+  modelStatus: () => ipcRenderer.invoke("models:status"),
+  downloadModel: (id: string) => ipcRenderer.invoke("models:download", id),
+  cancelModel: (id: string) => ipcRenderer.invoke("models:cancel", id),
+  removeModel: (id: string) => ipcRenderer.invoke("models:remove", id),
   onConfigChanged: (cb: (cfg: AppConfig) => void) =>
     ipcRenderer.on("config:changed", (_e, cfg) => cb(cfg)),
   onStatus: (cb: (status: ControlStatus) => void) =>

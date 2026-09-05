@@ -25,6 +25,7 @@ import {
   UsageInfo,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
+import { ModelStore } from "./models";
 
 // dev convenience: pick up DEEPGRAM_API_KEY / GEMINI_API_KEY from repo .env
 tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
@@ -44,6 +45,8 @@ let unsubscribeBroadcast: (() => void) | null = null;
 let updater: Updater | null = null;
 
 const configStore = new ConfigStore(defaultDataDir());
+const modelsDir = path.join(defaultDataDir(), "models");
+const models = new ModelStore(modelsDir, () => broadcastStatus(), log);
 
 let sessionState: SessionState = "idle";
 let sessionError: string | undefined;
@@ -119,6 +122,8 @@ async function startEmbeddedRelay(): Promise<void> {
     dataDir: defaultDataDir(),
     deepgramApiKey: cfg.deepgramApiKey,
     geminiApiKey: cfg.geminiApiKey,
+    // the worker is bundled next to main.js (see build.mjs)
+    localStt: { modelsDir, workerPath: path.join(__dirname, "localSttWorker.js") },
     log,
     onViewers: () => broadcastStatus(),
   });
@@ -338,6 +343,7 @@ function currentStatus() {
     config: cfg,
     usage: usageCache,
     update: updater?.current,
+    localModels: models.status(),
   };
 }
 
@@ -435,6 +441,22 @@ function registerIpc(): void {
   ipcMain.handle("link:rotate", async () => {
     await rotateLink();
     return viewerUrl();
+  });
+
+  // local STT models: status is part of every status broadcast; downloads
+  // run in the background and report progress the same way
+  ipcMain.handle("models:status", () => models.status());
+  ipcMain.handle("models:download", (_e, id: string) => {
+    void models.download(String(id || ""));
+    return models.status();
+  });
+  ipcMain.handle("models:cancel", (_e, id: string) => {
+    models.cancel(String(id || ""));
+    return models.status();
+  });
+  ipcMain.handle("models:remove", (_e, id: string) => {
+    models.remove(String(id || ""));
+    return models.status();
   });
 
   ipcMain.on("session:update", (_e, update: { state: SessionState; error?: string }) => {
@@ -562,6 +584,13 @@ function buildTrayMenu(): Electron.Menu {
         },
       },
       { type: "separator" },
+      {
+        label: "Run setup again",
+        click: () => {
+          win?.show();
+          win?.webContents.send("session:command", "setup");
+        },
+      },
       {
         label: updateTrayLabel(),
         click: () => {

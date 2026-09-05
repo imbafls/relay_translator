@@ -11,6 +11,13 @@
     ["deepgram-nova-3-multi", "Nova-3 Multi"],
     ["deepgram-nova-2", "Nova-2"],
   ];
+  /** local models are listed only once the desktop app has them downloaded */
+  const LOCAL_MODELS = [
+    ["local-zipformer-en-20m", "Local Zipformer"],
+    ["local-parakeet-tdt-0.6b-v3", "Local Parakeet"],
+    ["local-sense-voice", "Local SenseVoice"],
+    ["local-whisper-small", "Local Whisper"],
+  ];
   const TRANSLATION_MODELS = [
     ["gemini-3.1-flash-lite", "Flash-Lite"],
     ["gemini-flash-latest", "Flash"],
@@ -72,7 +79,9 @@
     syncing = true;
     const devices = (currentStatus ? currentStatus.devices : []).map((d) => [d.id, shortDevice(d.label)]);
     fill($("audioSource"), devices.length ? devices : DEFAULT_DEVICES, cfg.audioSource);
-    fill($("stt"), STT_MODELS, cfg.stt);
+    const ready = new Set(((currentStatus && currentStatus.localModels) || []).filter((m) => m.downloaded).map((m) => m.id));
+    const sttList = STT_MODELS.concat(LOCAL_MODELS.filter(([id]) => ready.has(id) || id === cfg.stt));
+    fill($("stt"), sttList, cfg.stt);
     fill($("translation"), TRANSLATION_MODELS, cfg.translation);
     fill($("langSource"), LANGUAGES, cfg.languages.source);
     fill($("langTarget"), LANGUAGES, cfg.languages.target);

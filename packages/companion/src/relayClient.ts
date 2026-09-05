@@ -1,8 +1,11 @@
 import {
-  AppConfig,
   ServerToPublisher,
   PublisherToServer,
+  SpeakerTag,
 } from "@callout-relay/shared";
+
+/** the publisher "hello" (everything the relay needs to build a session) */
+export type PublisherHello = Omit<Extract<PublisherToServer, { type: "hello" }>, "type">;
 
 /**
  * Publisher-side relay client. Uses the native WebSocket global so it runs
@@ -17,13 +20,7 @@ export class RelayPublisherClient {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = true;
-  private hello: {
-    stt: string;
-    translation: string;
-    languages: AppConfig["languages"];
-    translationEnabled?: boolean;
-    latencyVisible?: boolean;
-  } = {
+  private hello: PublisherHello = {
     stt: "deepgram-nova-3",
     translation: "gemini-3.1-flash-lite",
     languages: { source: "en", target: "vi" },
@@ -39,10 +36,10 @@ export class RelayPublisherClient {
       onState?: (state: RelayPublisherClient["state"], detail?: string) => void;
       onReady?: () => void;
       onError?: (message: string) => void;
-      /** live subtitles echoed back by the relay (source + translation + latency) */
-      onSubtitle?: (seg: { id: number; source: string; target?: string; latency?: { stt?: number; translate?: number } }) => void;
+      /** live subtitles echoed back by the relay (source + translation + latency + speaker tag) */
+      onSubtitle?: (seg: { id: number; source: string; target?: string; latency?: { stt?: number; translate?: number } } & SpeakerTag) => void;
       /** interim (not yet final) transcript for the upcoming segment */
-      onPartial?: (seg: { id: number; source: string }) => void;
+      onPartial?: (seg: { id: number; source: string } & SpeakerTag) => void;
     } = {},
   ) {}
 
@@ -50,13 +47,7 @@ export class RelayPublisherClient {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
-  connect(hello: {
-    stt: string;
-    translation: string;
-    languages: AppConfig["languages"];
-    translationEnabled?: boolean;
-    latencyVisible?: boolean;
-  }): void {
+  connect(hello: PublisherHello): void {
     this.stopped = false;
     this.hello = hello;
     this.open();
@@ -82,6 +73,8 @@ export class RelayPublisherClient {
         languages: this.hello.languages,
         translationEnabled: this.hello.translationEnabled,
         latencyVisible: this.hello.latencyVisible,
+        channels: this.hello.channels,
+        channelLabels: this.hello.channelLabels,
       });
     };
 
@@ -98,13 +91,15 @@ export class RelayPublisherClient {
         this.hooks.onReady?.();
         this.startPing();
       } else if (msg.type === "partial") {
-        this.hooks.onPartial?.({ id: msg.id, source: msg.source });
+        this.hooks.onPartial?.({ id: msg.id, source: msg.source, channel: msg.channel, speaker: msg.speaker });
       } else if (msg.type === "subtitle") {
         this.hooks.onSubtitle?.({
           id: msg.id,
           source: msg.source,
           target: msg.target,
           latency: msg.latency,
+          channel: msg.channel,
+          speaker: msg.speaker,
         });
       } else if (msg.type === "error") {
         this.hooks.onError?.(msg.message);

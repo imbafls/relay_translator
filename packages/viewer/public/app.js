@@ -203,14 +203,15 @@
   // ---------------------------------------------------------------------------
 
   const rows = new Map();
-  let interim = null;
+  /** one open interim line per capture channel (two sources -> two) */
+  const interims = new Map();
 
   function stamp() {
     const d = new Date();
     return `${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
-  function makeRowEl(ts, src, tgt) {
+  function makeRowEl(ts, src, tgt, speaker) {
     const row = document.createElement("div");
     row.className = "row";
     const t = document.createElement("span");
@@ -219,7 +220,7 @@
     const body = document.createElement("div");
     const s = document.createElement("div");
     s.className = "src";
-    s.textContent = src;
+    setSrc(s, src, speaker);
     const g = document.createElement("div");
     g.className = "tgt" + (tgt ? "" : " pending");
     g.textContent = tgt || "…";
@@ -228,11 +229,27 @@
     return row;
   }
 
+  /** source line = optional speaker tag + text (kept as two spans so the cursor can follow) */
+  function setSrc(el, text, speaker) {
+    el.textContent = "";
+    if (speaker) {
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = speaker;
+      el.appendChild(who);
+    }
+    const t = document.createElement("span");
+    t.className = "txt";
+    t.textContent = text;
+    el.appendChild(t);
+  }
+
   function trimRows() {
     const finals = [...linesEl.querySelectorAll(".row:not(.interim)")];
     while (finals.length > style.lines) {
       const el = finals.shift();
       for (const [id, r] of rows) if (r === el) rows.delete(id);
+      for (const [ch, r] of interims) if (r === el) interims.delete(ch);
       el.remove();
     }
   }
@@ -245,15 +262,18 @@
 
   function showPartial(msg) {
     if (!msg.source || rows.has(msg.id)) return;
+    const ch = msg.channel || 0;
+    let interim = interims.get(ch);
     if (!interim) {
-      interim = makeRowEl(stamp(), "", "");
+      interim = makeRowEl(stamp(), "", "", msg.speaker);
       interim.classList.add("interim");
       interim.querySelector(".tgt").remove();
       linesEl.appendChild(interim);
+      interims.set(ch, interim);
     }
     interim.dataset.id = msg.id;
     const src = interim.querySelector(".src");
-    src.textContent = msg.source;
+    setSrc(src, msg.source, msg.speaker);
     const c = document.createElement("span");
     c.className = "cursor";
     src.appendChild(c);
@@ -262,15 +282,17 @@
   function showSubtitle(msg) {
     let el = rows.get(msg.id);
     if (!el) {
+      const ch = msg.channel || 0;
+      const interim = interims.get(ch);
       if (interim) {
         interim.remove();
-        interim = null;
+        interims.delete(ch);
       }
-      el = makeRowEl(stamp(), msg.source, msg.target);
+      el = makeRowEl(stamp(), msg.source, msg.target, msg.speaker);
       rows.set(msg.id, el);
       linesEl.appendChild(el);
     }
-    el.querySelector(".src").textContent = msg.source;
+    setSrc(el.querySelector(".src"), msg.source, msg.speaker);
     if (msg.target != null) {
       const g = el.querySelector(".tgt");
       g.textContent = msg.target;
@@ -333,9 +355,9 @@
           break;
         case "status":
           applyLive(msg.live, msg.since);
-          if (!msg.live && interim) {
-            interim.remove();
-            interim = null;
+          if (!msg.live) {
+            for (const r of interims.values()) r.remove();
+            interims.clear();
           }
           break;
         case "partial":

@@ -10,11 +10,15 @@ import {
   ControlStatus,
   KeyValidation,
   LANGUAGES,
+  LocalModelStatus,
   OutputTarget,
   SessionState,
   STT_MODELS,
+  SttModelInfo,
   TRANSLATION_MODELS,
   UpdateStatus,
+  isLocalStt,
+  sttModel,
 } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
@@ -45,6 +49,8 @@ let syncing = false;
 let linkChoice: "phone" | "obs" = "phone";
 const keyCheck: { deepgram?: KeyValidation | "checking"; gemini?: KeyValidation | "checking" } = {};
 let update: UpdateStatus | null = null;
+/** local STT models on disk / downloading (from the main process) */
+let localModels: LocalModelStatus[] = [];
 
 // ---------------------------------------------------------------------------
 // small helpers
@@ -54,11 +60,19 @@ const STT_SHORT: Record<string, string> = {
   "deepgram-nova-3": "Nova-3",
   "deepgram-nova-3-multi": "Nova-3 Multi",
   "deepgram-nova-2": "Nova-2",
+  "local-zipformer-en-20m": "Zipformer 20M",
+  "local-parakeet-tdt-0.6b-v3": "Parakeet 0.6B",
+  "local-sense-voice": "SenseVoice",
+  "local-whisper-small": "Whisper Small",
 };
 const STT_TAG: Record<string, string> = {
   "deepgram-nova-3": "FASTEST",
   "deepgram-nova-3-multi": "MULTILINGUAL",
   "deepgram-nova-2": "WIDE LANGUAGE",
+  "local-zipformer-en-20m": "STREAMING · EN",
+  "local-parakeet-tdt-0.6b-v3": "BEST · EN +24",
+  "local-sense-voice": "ZH EN JA KO",
+  "local-whisper-small": "100 LANGS",
 };
 const TR_SHORT: Record<string, string> = {
   "gemini-3.1-flash-lite": "Flash-Lite",
@@ -67,10 +81,20 @@ const TR_SHORT: Record<string, string> = {
 };
 
 function sttShort(id: string): string {
-  return STT_SHORT[id] || id.replace(/^deepgram-/, "");
+  return STT_SHORT[id] || id.replace(/^(deepgram|local)-/, "");
 }
 function sttFull(id: string): string {
-  return `Deepgram ${sttShort(id)}`;
+  return isLocalStt(id) ? `Local ${sttShort(id)}` : `Deepgram ${sttShort(id)}`;
+}
+function modelState(id: string): LocalModelStatus | undefined {
+  return localModels.find((m) => m.id === id);
+}
+function modelReady(id: string): boolean {
+  return !!modelState(id)?.downloaded;
+}
+/** speech provider the console is set to */
+function sttIsLocal(): boolean {
+  return isLocalStt(config.stt);
 }
 function trShort(id: string): string {
   return TR_SHORT[id] || id.replace(/^gemini-/, "");
@@ -112,6 +136,25 @@ function sourceLabel(id: string): string {
   const opt = sel("audioSource").querySelector<HTMLOptionElement>(`option[value="${CSS.escape(id)}"]`);
   return opt?.textContent || (id === "system-loopback" ? "System audio" : "Default microphone");
 }
+function sourceKind(id: string): "mic" | "system" {
+  return status?.devices.find((d) => d.id === id)?.kind || (id === "system-loopback" ? "system" : "mic");
+}
+/** the sources a session captures: primary + optional second (deduplicated) */
+function activeSources(): string[] {
+  const list = [config.audioSource, config.audioSource2 || ""].filter((x, i, a) => !!x && a.indexOf(x) === i);
+  return list.length ? list : ["default-mic"];
+}
+/** speaker tag per channel: mic = YOU, system audio = CHAT, two of a kind = A / B */
+function channelLabels(sources: string[]): string[] {
+  if (sources.length < 2) return [];
+  const kinds = sources.map(sourceKind);
+  if (kinds[0] !== kinds[1]) return kinds.map((k) => (k === "system" ? "CHAT" : "YOU"));
+  return ["A", "B"];
+}
+function sourcesSummary(): string {
+  const src = activeSources();
+  return src.map(sourceLabel).join(" + ");
+}
 function debounce<T extends (...a: never[]) => void>(fn: T, ms: number): T {
   let t: ReturnType<typeof setTimeout> | null = null;
   return ((...args: Parameters<T>) => {
@@ -131,11 +174,11 @@ function log(message: string, cls: "" | "err" | "ok" = ""): void {
   el.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
   appendLog(el);
 }
-function logSubtitle(seg: { source: string; target?: string; latency?: { stt?: number; translate?: number } }): void {
+function logSubtitle(seg: { source: string; target?: string; speaker?: string; latency?: { stt?: number; translate?: number } }): void {
   const t = new Date().toLocaleTimeString();
   const en = document.createElement("div");
   en.className = "sub-en";
-  en.textContent = `[${t}] ▸ ${seg.source}${seg.latency?.stt != null ? `  [stt ${seg.latency.stt}ms]` : ""}`;
+  en.textContent = `[${t}] ▸ ${seg.speaker ? `${seg.speaker}: ` : ""}${seg.source}${seg.latency?.stt != null ? `  [stt ${seg.latency.stt}ms]` : ""}`;
   appendLog(en);
   if (seg.target != null) {
     const vi = document.createElement("div");
@@ -213,12 +256,14 @@ interface Row {
   srcText: HTMLElement;
   tgtText: HTMLElement;
   ts: HTMLElement;
+  who: HTMLElement;
   latSrc: HTMLElement;
   latTgt: HTMLElement;
   final: boolean;
 }
 const rows = new Map<number, Row>();
-let interim: Row | null = null;
+/** one open interim line per capture channel */
+const interims = new Map<number, Row>();
 const MAX_ROWS = 12;
 const recentStt: number[] = [];
 const recentTr: number[] = [];
@@ -227,7 +272,7 @@ function makeRow(id: number, isInterim: boolean): Row {
   const el = document.createElement("div");
   el.className = "row" + (isInterim ? " interim" : "");
   el.innerHTML =
-    '<div class="src"><span class="ts"></span><span class="text"></span><span class="lat"></span></div>' +
+    '<div class="src"><span class="ts"></span><span class="body"><span class="who"></span><span class="text"></span></span><span class="lat"></span></div>' +
     '<div class="tgt"><span class="text pending">…</span><span class="lat"></span></div>';
   const row: Row = {
     id,
@@ -235,6 +280,7 @@ function makeRow(id: number, isInterim: boolean): Row {
     srcText: el.querySelector(".src .text") as HTMLElement,
     tgtText: el.querySelector(".tgt .text") as HTMLElement,
     ts: el.querySelector(".ts") as HTMLElement,
+    who: el.querySelector(".who") as HTMLElement,
     latSrc: el.querySelector(".src .lat") as HTMLElement,
     latTgt: el.querySelector(".tgt .lat") as HTMLElement,
     final: false,
@@ -250,7 +296,7 @@ function trimRows(): void {
     const first = lines.firstElementChild as HTMLElement;
     first.remove();
     for (const [id, r] of rows) if (r.el === first) rows.delete(id);
-    if (interim && interim.el === first) interim = null;
+    for (const [ch, r] of interims) if (r.el === first) interims.delete(ch);
   }
 }
 
@@ -263,17 +309,25 @@ function markLatest(): void {
 function clearStage(): void {
   $("lines").innerHTML = "";
   rows.clear();
-  interim = null;
+  interims.clear();
   recentStt.length = 0;
   recentTr.length = 0;
   renderAverages();
   renderIdle();
 }
 
-function onPartial(seg: { id: number; source: string }): void {
+type Seg = { id: number; source: string; target?: string; channel?: number; speaker?: string; latency?: { stt?: number; translate?: number } };
+
+function onPartial(seg: { id: number; source: string; channel?: number; speaker?: string }): void {
   if (!seg.source.trim() || rows.has(seg.id)) return;
-  if (!interim) interim = makeRow(seg.id, true);
+  const ch = seg.channel ?? 0;
+  let interim = interims.get(ch);
+  if (!interim) {
+    interim = makeRow(seg.id, true);
+    interims.set(ch, interim);
+  }
   interim.id = seg.id;
+  interim.who.textContent = seg.speaker || "";
   interim.srcText.textContent = seg.source;
   const cur = document.createElement("span");
   cur.className = "cursor";
@@ -283,13 +337,15 @@ function onPartial(seg: { id: number; source: string }): void {
   renderIdle();
 }
 
-function onSubtitle(seg: { id: number; source: string; target?: string; latency?: { stt?: number; translate?: number } }): void {
+function onSubtitle(seg: Seg): void {
   let row = rows.get(seg.id);
   if (!row) {
+    const ch = seg.channel ?? 0;
+    const interim = interims.get(ch);
     if (interim) {
       // the interim row becomes this final segment
       row = interim;
-      interim = null;
+      interims.delete(ch);
       row.el.classList.remove("interim");
       row.id = seg.id;
     } else {
@@ -298,6 +354,7 @@ function onSubtitle(seg: { id: number; source: string; target?: string; latency?
     rows.set(seg.id, row);
   }
   row.final = true;
+  row.who.textContent = seg.speaker || "";
   row.srcText.textContent = seg.source;
   if (seg.target != null) {
     row.tgtText.textContent = seg.target;
@@ -342,7 +399,7 @@ function renderIdle(): void {
   const empty = $("lines").children.length === 0;
   const idle = $("idle");
   idle.hidden = !empty && session !== "error";
-  const chain = `${sourceLabel(config.audioSource)} → ${sttShort(config.stt)} → ${
+  const chain = `${sourcesSummary()} → ${sttShort(config.stt)} → ${
     translationActive() ? `${trShort(config.translation)} → ` : ""
   }${outputLabel(config.output).toLowerCase()}${translationActive() ? "" : ` · ${langName(config.languages.source)} only`}`;
   $("idleChain").textContent = chain;
@@ -409,9 +466,23 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     }
     const prep = await cr.prepareSession({ rotate: opts.rotateLink });
     config = prep.config;
-    if (!config.deepgramApiKey) throw new Error("Add a Deepgram key first (KEYS).");
+    if (sttIsLocal()) {
+      if (!modelReady(config.stt)) throw new Error(`Download ${sttFull(config.stt)} first (02 TRANSCRIBE → DOWNLOAD).`);
+    } else if (!config.deepgramApiKey) {
+      throw new Error("Add a Deepgram key first (KEYS), or pick a local model under 02 TRANSCRIBE.");
+    }
     clearStage();
     renderStageHeads();
+
+    // capture first so the hello can say how many channels the audio has
+    const sources = activeSources();
+    level = 0;
+    await capture.start(sources, (chunk) => {
+      feedLevel(chunk);
+      relayClient?.sendAudio(chunk.buffer);
+    });
+    const channels = capture.channels === 2 ? 2 : 1;
+    log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? " (2 channels)" : ""}`, "ok");
 
     relayClient = new RelayPublisherClient(prep.publisherUrl, {
       onState: (clientState, detail) => {
@@ -431,14 +502,9 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       languages: config.languages,
       translationEnabled: translationActive(),
       latencyVisible: config.showLatency !== false,
+      channels,
+      channelLabels: channels > 1 ? channelLabels(sources) : undefined,
     });
-
-    level = 0;
-    await capture.start(config.audioSource, (chunk) => {
-      feedLevel(chunk);
-      relayClient?.sendAudio(chunk.buffer);
-    });
-    log(`capture started: ${sourceLabel(config.audioSource)}`, "ok");
     recomputeState();
   } catch (err) {
     const message = String((err as Error).message || err);
@@ -453,10 +519,8 @@ function stopSession(silent = false): void {
   capture.stop();
   relayClient?.disconnect();
   relayClient = null;
-  if (interim) {
-    interim.el.remove();
-    interim = null;
-  }
+  for (const r of interims.values()) r.el.remove();
+  interims.clear();
   setState("idle");
   if (!silent) log("session stopped");
 }
@@ -493,17 +557,43 @@ function fillSelect(box: HTMLSelectElement, entries: { value: string; label: str
 async function refreshDevices(): Promise<void> {
   const devices = await capture.listDevices();
   const entries = devices.map((d) => ({ value: d.id, label: d.label }));
+  const second = [{ value: "", label: "No second source" }, ...entries];
   fillSelect(sel("audioSource"), entries, config.audioSource);
   fillSelect(sel("obAudioSource"), entries, config.audioSource);
+  fillSelect(sel("audioSource2"), second, config.audioSource2 || "");
+  fillSelect(sel("obAudioSource2"), second, config.audioSource2 || "");
   cr.reportDevices(devices);
   renderChain();
   renderIdle();
 }
 
+/** 02 TRANSCRIBE: cloud and local models in two groups */
+function fillSttSelect(box: HTMLSelectElement, value: string): void {
+  box.innerHTML = "";
+  const groups: [string, SttModelInfo[]][] = [
+    ["CLOUD · DEEPGRAM", STT_MODELS.filter((m) => m.provider === "deepgram")],
+    ["LOCAL · THIS PC", STT_MODELS.filter((m) => m.provider === "local")],
+  ];
+  for (const [label, models] of groups) {
+    const g = document.createElement("optgroup");
+    g.label = label;
+    for (const m of models) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = sttFull(m.id);
+      if (m.id === value) opt.selected = true;
+      g.appendChild(opt);
+    }
+    box.appendChild(g);
+  }
+}
+
 function syncControlsFromConfig(): void {
   syncing = true;
   const langs = LANGUAGES.map((l) => ({ value: l.code, label: langName(l.code) }));
-  fillSelect(sel("stt"), STT_MODELS.map((m) => ({ value: m.id, label: sttFull(m.id) })), config.stt);
+  fillSttSelect(sel("stt"), config.stt);
+  sel("audioSource2").value = config.audioSource2 || "";
+  sel("audioSource2").classList.toggle("set", !!config.audioSource2);
   fillSelect(sel("translation"), TRANSLATION_MODELS.map((m) => ({ value: m.id, label: trFull(m.id).toUpperCase() })), config.translation);
   fillSelect(sel("langSource"), langs, config.languages.source);
   fillSelect(sel("langTarget"), langs, config.languages.target);
@@ -628,14 +718,30 @@ function renderChain(): void {
   for (const b of $("chain").querySelectorAll<HTMLElement>(".select-row, #outputSeg, #translateNeedsKey, #translatePair")) b.hidden = false;
 
   // 01 SOURCE
-  $("sourceKind").textContent = config.audioSource === "system-loopback" ? "SYSTEM" : "MIC";
+  const srcs = activeSources();
+  $("sourceKind").textContent = srcs.map((id) => (sourceKind(id) === "system" ? "SYSTEM" : "MIC")).join(" + ");
+  $("source2Row").hidden = live && !config.audioSource2;
+  sel("audioSource2").classList.toggle("set", !!config.audioSource2);
   $("meter").hidden = !live;
   $("metaSource").hidden = live;
   $("rescan").hidden = live;
 
   // 02 TRANSCRIBE
+  renderModelAction();
   if (live && usage) {
-    metaSpans($("metaStt"), [{ text: `${usage.deepgram.sttMinutes.toFixed(1)} MIN` }, { text: usd(usage.deepgram.estCostUsd) }]);
+    if (sttIsLocal()) {
+      metaSpans($("metaStt"), [{ text: `${(usage.local?.sttMinutes ?? 0).toFixed(1)} MIN` }, { text: "LOCAL · $0.000" }]);
+    } else {
+      metaSpans($("metaStt"), [{ text: `${usage.deepgram.sttMinutes.toFixed(1)} MIN` }, { text: usd(usage.deepgram.estCostUsd) }]);
+    }
+  } else if (sttIsLocal()) {
+    const m = modelState(config.stt);
+    const items: { text: string; cls?: string }[] = [{ text: STT_TAG[config.stt] || "" }, { text: "ON THIS PC" }];
+    if (m?.progress != null) items.push({ text: `DOWNLOADING ${m.progress}%` });
+    else if (m?.error) items.push({ text: "DOWNLOAD FAILED", cls: "warn" });
+    else if (m?.downloaded) items.push({ text: "READY" });
+    else items.push({ text: "NOT DOWNLOADED", cls: "warn" });
+    metaSpans($("metaStt"), items);
   } else {
     const k = keyStateLabel("deepgram");
     metaSpans($("metaStt"), [
@@ -738,7 +844,7 @@ function renderFooter(): void {
   $("copyLink").classList.toggle("primary", showLink);
 
   const u = status?.usage;
-  $("roStt").textContent = (u?.deepgram.sttMinutes ?? 0).toFixed(1);
+  $("roStt").textContent = (sttIsLocal() ? u?.local?.sttMinutes ?? 0 : u?.deepgram.sttMinutes ?? 0).toFixed(1);
   $("roTrn").textContent = String((u?.gemini.count ?? 0) + (u?.gemini.cacheHits ?? 0));
   $("roEst").textContent = usd((u?.deepgram.estCostUsd ?? 0) + (u?.gemini.estCostUsd ?? 0));
   $("roSttWrap").hidden = live;
@@ -769,6 +875,105 @@ function renderKeys(): void {
   inp("updateFeedUrl").value = config.updateFeedUrl || "";
   renderKeyStatuses();
   renderUpdate();
+  renderModelList($("keysModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
+}
+
+// ---------------------------------------------------------------------------
+// local models (keys view, onboarding, 02 TRANSCRIBE)
+// ---------------------------------------------------------------------------
+
+function fmtMb(mb: number): string {
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
+}
+
+/**
+ * One row per local model: pick (radio), download / cancel / remove, progress.
+ * Rendering is idempotent so status broadcasts can redraw it freely.
+ */
+function renderModelList(box: HTMLElement, opts: { picked: string; pick: (id: string) => void }): void {
+  box.innerHTML = "";
+  for (const m of STT_MODELS.filter((x) => x.provider === "local")) {
+    const st = modelState(m.id);
+    const row = document.createElement("div");
+    row.className = "model-row" + (opts.picked === m.id ? " picked" : "");
+    const radio = document.createElement("span");
+    radio.className = "radio";
+    const body = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = sttFull(m.id).replace(/^Local /, "");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${m.languages || ""} · ${fmtMb(m.sizeMb || 0)} · ${m.kind === "streaming" ? "streaming" : "utterances"}`;
+    body.append(name, meta);
+    const act = document.createElement("div");
+    act.className = "act";
+    const btn = (text: string, cls: string, onClick: () => void): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.textContent = text;
+      b.className = cls;
+      b.onclick = (e) => {
+        e.stopPropagation();
+        onClick();
+      };
+      return b;
+    };
+    if (st?.progress != null) {
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      const fill = document.createElement("i");
+      fill.style.width = `${st.progress}%`;
+      bar.appendChild(fill);
+      const pct = document.createElement("span");
+      pct.className = "state";
+      pct.textContent = `${st.progress}%`;
+      act.append(bar, pct, btn("CANCEL", "quiet", () => void cr.cancelModel(m.id).then(setLocalModels)));
+    } else if (st?.downloaded) {
+      const ready = document.createElement("span");
+      ready.className = "state ready";
+      ready.textContent = "READY";
+      act.append(ready, btn("REMOVE", "quiet", () => void cr.removeModel(m.id).then(setLocalModels)));
+    } else {
+      if (st?.error) {
+        const err = document.createElement("span");
+        err.className = "state warn";
+        err.textContent = st.error === "cancelled" ? "CANCELLED" : "FAILED";
+        err.title = st.error;
+        act.appendChild(err);
+      }
+      act.appendChild(btn(`DOWNLOAD ${fmtMb(m.sizeMb || 0)}`, "", () => void cr.downloadModel(m.id).then(setLocalModels)));
+    }
+    row.append(radio, body, act);
+    row.onclick = () => opts.pick(m.id);
+    box.appendChild(row);
+  }
+}
+
+/** DOWNLOAD / CANCEL link in the 02 TRANSCRIBE meta line */
+function renderModelAction(): void {
+  const b = $("modelAction") as HTMLButtonElement;
+  const live = session === "live" || session === "starting";
+  if (!sttIsLocal() || live) {
+    b.hidden = true;
+    return;
+  }
+  const m = modelState(config.stt);
+  b.hidden = false;
+  b.className = "ulink-mono";
+  if (m?.progress != null) b.textContent = "CANCEL";
+  else if (m?.downloaded) b.textContent = "MODELS";
+  else {
+    b.textContent = `DOWNLOAD ${fmtMb(m?.sizeMb || sttModel(config.stt)?.sizeMb || 0)}`;
+    b.classList.add("warn");
+  }
+}
+
+function setLocalModels(list: LocalModelStatus[] | undefined): void {
+  if (!list) return;
+  localModels = list;
+  renderChain();
+  if (view === "keys") renderModelList($("keysModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
+  if (view === "onboarding" && obStep === 1) renderObKeyStatus();
 }
 
 function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | undefined, required: boolean): void {
@@ -839,6 +1044,31 @@ async function saveKeys(): Promise<void> {
 let obStep: 1 | 2 | 3 = 1;
 let obDeepgram: KeyValidation | "checking" | undefined;
 let obGemini: KeyValidation | "checking" | undefined;
+/** step 1 choice: cloud (Deepgram key) or local (model on this PC) */
+let obMode: "cloud" | "local" = "cloud";
+/** local model picked in step 1 */
+let obModel = "local-parakeet-tdt-0.6b-v3";
+
+/** the model step 1 will save */
+function obSttChoice(): string {
+  if (obMode === "local") return obModel;
+  return isLocalStt(config.stt) ? "deepgram-nova-3" : config.stt;
+}
+
+/** (re)open setup at step 1 with the current values filled in */
+function openSetup(): void {
+  obStep = 1;
+  obMode = isLocalStt(config.stt) ? "local" : "cloud";
+  if (isLocalStt(config.stt)) obModel = config.stt;
+  inp("obDeepgramKey").value = config.deepgramApiKey || "";
+  inp("obGeminiKey").value = config.geminiApiKey || "";
+  obDeepgram = config.deepgramApiKey && keyCheck.deepgram !== "checking" ? keyCheck.deepgram : undefined;
+  obGemini = config.geminiApiKey && keyCheck.gemini !== "checking" ? keyCheck.gemini : undefined;
+  if (config.deepgramApiKey && !obDeepgram) obCheckDeepgram();
+  setSeg("obSttSeg", obMode);
+  setSeg("obOutputSeg", config.output || "phone");
+  setView("onboarding");
+}
 
 const SAMPLE_EN = ["Two pushing B main, one's low", "Rotate A, spike's down", "He's one shot, behind the box", "Reloading, cover me"];
 const SAMPLE_VI = ["Hai đứa đẩy B main, một đứa yếu máu", "Đảo sang A, spike đã đặt", "Nó còn một viên, sau cái hộp", "Đang nạp đạn, che tôi"];
@@ -939,24 +1169,33 @@ function renderOnboardingChain(): void {
   const hasGemini = !!config.geminiApiKey && config.translationEnabled !== false;
 
   // 01
+  $("source2Row").hidden = true;
   if (obStep === 3) {
     $("blkSource").classList.remove("placeholder");
     $("blkSource").classList.add("current");
-    obValue("blkSource", sourceLabel(sel("obAudioSource").value || config.audioSource));
-    $("sourceKind").textContent = sel("obAudioSource").value === "system-loopback" ? "SYSTEM" : "MIC";
+    const a = sel("obAudioSource").value || config.audioSource;
+    const b = sel("obAudioSource2").value;
+    obValue("blkSource", b && b !== a ? `${sourceLabel(a)} + ${sourceLabel(b)}` : sourceLabel(a));
+    $("sourceKind").textContent = [a, b && b !== a ? b : ""]
+      .filter(Boolean)
+      .map((id) => (sourceKind(id) === "system" ? "SYSTEM" : "MIC"))
+      .join(" + ");
   } else {
     obValue("blkSource", "—");
     $("sourceKind").textContent = "STEP 3";
   }
   // 02
-  obValue("blkStt", sttFull(config.stt));
-  if (obStep === 1) {
-    $("blkStt").classList.remove("placeholder");
-    $("blkStt").classList.add("current");
+  $("modelAction").hidden = true;
+  const choice = obStep === 1 ? obSttChoice() : config.stt;
+  obValue("blkStt", sttFull(choice));
+  $("blkStt").classList.remove("placeholder");
+  if (obStep === 1) $("blkStt").classList.add("current");
+  if (isLocalStt(choice)) {
+    metaSpans($("metaStt"), [{ text: "ON THIS PC" }, modelReady(choice) ? { text: "READY" } : { text: "NOT DOWNLOADED", cls: "warn" }]);
+  } else if (obStep === 1) {
     const v = obDeepgram && obDeepgram !== "checking" && obDeepgram.valid;
     metaSpans($("metaStt"), [v ? { text: "KEY OK" } : { text: "KEY NEEDED", cls: "warn" }]);
   } else {
-    $("blkStt").classList.remove("placeholder");
     metaSpans($("metaStt"), [{ text: "KEY OK" }]);
   }
   // 03
@@ -1018,11 +1257,28 @@ function renderOnboarding(): void {
   $("obStep1").hidden = obStep !== 1;
   $("obStep2").hidden = obStep !== 2;
   $("obStep3").hidden = obStep !== 3;
+  $("obClose").hidden = !config.setupDone;
   if (obStep === 1) {
     $("obStepLabel").textContent = "STEP 1 OF 3 · REQUIRED";
-    $("obTitle").textContent = "Relay needs a Deepgram key to hear you.";
-    $("obBody").textContent =
-      "Deepgram turns your mic or game audio into text. Your key is stored on this PC and never sent anywhere except Deepgram.";
+    $("obCloud").hidden = obMode !== "cloud";
+    $("obLocal").hidden = obMode !== "local";
+    setSeg("obSttSeg", obMode);
+    if (obMode === "local") {
+      $("obTitle").textContent = "Pick a model to run on this PC.";
+      $("obBody").textContent =
+        "Local speech-to-text is free and private - nothing leaves your machine. It costs CPU and a download; cloud Deepgram is a little faster.";
+      renderModelList($("obModels"), {
+        picked: obModel,
+        pick: (id) => {
+          obModel = id;
+          renderOnboarding();
+        },
+      });
+    } else {
+      $("obTitle").textContent = "Relay needs a Deepgram key to hear you.";
+      $("obBody").textContent =
+        "Deepgram turns your mic or game audio into text. Your key is stored on this PC and never sent anywhere except Deepgram. Or switch to Local and skip the key.";
+    }
   } else if (obStep === 2) {
     $("obStepLabel").textContent = "STEP 2 OF 3 · OPTIONAL";
     $("obTitle").textContent = "Want captions in another language?";
@@ -1031,7 +1287,7 @@ function renderOnboarding(): void {
   } else {
     $("obStepLabel").textContent = "STEP 3 OF 3";
     $("obTitle").textContent = "Pick what Relay listens to.";
-    $("obBody").textContent = "";
+    $("obBody").textContent = "Add a second source to caption the voice chat next to your own callouts - every line gets a YOU / CHAT tag.";
     const out = (($("obOutputSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as OutputTarget) || "phone";
     const meta = $("obOutputMeta");
     meta.className = "field-meta mono";
@@ -1064,9 +1320,26 @@ function renderObKeyStatus(): void {
   } else if (obDeepgram && obDeepgram.valid) {
     dg.textContent = obDeepgram.creditUsd != null ? `VALID · $${obDeepgram.creditUsd.toFixed(2)} CREDIT` : "VALID";
   }
-  const ok1 = !!(obDeepgram && obDeepgram !== "checking" && obDeepgram.valid);
+  const keyOk = !!(obDeepgram && obDeepgram !== "checking" && obDeepgram.valid);
+  const ms = $("obModelStatus");
+  ms.className = "field-status";
+  const st = modelState(obModel);
+  if (st?.progress != null) {
+    ms.textContent = `DOWNLOADING ${st.progress}%`;
+    ms.classList.add("dim");
+  } else if (st?.downloaded) {
+    ms.textContent = "READY";
+  } else {
+    ms.textContent = "NOT DOWNLOADED";
+    ms.classList.add("warn");
+  }
+  const ok1 = obMode === "local" ? modelReady(obModel) : keyOk;
   ($("obContinue1") as HTMLButtonElement).disabled = !ok1;
-  $("obHint1").textContent = ok1 ? "NEXT: TRANSLATION (OPTIONAL)" : "VALIDATES ON PASTE";
+  $("obHint1").textContent = ok1
+    ? "NEXT: TRANSLATION (OPTIONAL)"
+    : obMode === "local"
+      ? "DOWNLOAD THE MODEL TO CONTINUE"
+      : "VALIDATES ON PASTE";
   $("obHint1").className = ok1 ? "mono dim" : "mono mute";
 
   const gm = $("obGmStatus");
@@ -1243,6 +1516,11 @@ function bind(): void {
     renderFooter();
   });
   $("keysBtn").onclick = () => setView(view === "keys" ? "stage" : "keys");
+  $("keysSetup").onclick = () => {
+    if (session === "live" || session === "starting") stopSession();
+    openSetup();
+  };
+  $("obClose").onclick = () => setView("stage");
   $("logBtn").onclick = () => setView(view === "log" ? "stage" : "log");
   $("keysBack").onclick = () => setView("stage");
   $("logBack").onclick = () => setView("stage");
@@ -1250,6 +1528,13 @@ function bind(): void {
   // chain
   $("rescan").onclick = () => void refreshDevices();
   sel("audioSource").onchange = () => void saveAndApply({ audioSource: sel("audioSource").value }, { restart: true });
+  sel("audioSource2").onchange = () => void saveAndApply({ audioSource2: sel("audioSource2").value }, { restart: true });
+  $("modelAction").onclick = () => {
+    const m = modelState(config.stt);
+    if (m?.progress != null) void cr.cancelModel(config.stt).then(setLocalModels);
+    else if (m?.downloaded) setView("keys");
+    else void cr.downloadModel(config.stt).then(setLocalModels);
+  };
   sel("stt").onchange = () => void saveAndApply({ stt: sel("stt").value }, { restart: true });
   sel("translation").onchange = () => void saveAndApply({ translation: sel("translation").value }, { restart: true });
   sel("langSource").onchange = () =>
@@ -1338,8 +1623,14 @@ function bind(): void {
     renderObKeyStatus();
     obCheckGemini();
   };
+  bindSeg("obSttSeg", (v) => {
+    obMode = v === "local" ? "local" : "cloud";
+    renderOnboarding();
+  });
   $("obContinue1").onclick = async () => {
-    await saveAndApply({ deepgramApiKey: inp("obDeepgramKey").value.trim() });
+    const patch: Partial<AppConfig> = { stt: obSttChoice() };
+    if (obMode === "cloud") patch.deepgramApiKey = inp("obDeepgramKey").value.trim();
+    await saveAndApply(patch);
     await obGoto(2);
   };
   $("obContinue2").onclick = async () => {
@@ -1351,10 +1642,13 @@ function bind(): void {
     await obGoto(3);
   };
   sel("obAudioSource").onchange = () => renderOnboardingChain();
+  sel("obAudioSource2").onchange = () => renderOnboardingChain();
   bindSeg("obOutputSeg", () => renderOnboarding());
   $("obOpenConsole").onclick = async () => {
     const out = (($("obOutputSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as OutputTarget) || "phone";
-    await saveAndApply({ audioSource: sel("obAudioSource").value || config.audioSource, output: out });
+    const a = sel("obAudioSource").value || config.audioSource;
+    const b = sel("obAudioSource2").value;
+    await saveAndApply({ audioSource: a, audioSource2: b && b !== a ? b : "", output: out, setupDone: true });
     $("translateToggle").hidden = false;
     $("badgesToggle").hidden = false;
     setView("stage");
@@ -1364,7 +1658,10 @@ function bind(): void {
   // main-process events
   cr.onCommand((cmd) => {
     if (cmd === "start") void startSession({ rotateLink: true });
-    else stopSession();
+    else if (cmd === "setup") {
+      if (session === "live" || session === "starting") stopSession();
+      openSetup();
+    } else stopSession();
   });
   cr.onConfigChanged((cfg) => {
     if (syncing) return;
@@ -1373,6 +1670,7 @@ function bind(): void {
   });
   cr.onStatus((s) => {
     status = s;
+    if (s.localModels) setLocalModels(s.localModels);
     renderChain();
     renderFooter();
     if (s.update) setUpdate(s.update);
@@ -1383,6 +1681,7 @@ function bind(): void {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && (view === "keys" || view === "log")) setView("stage");
+    if (e.key === "Escape" && view === "onboarding" && config.setupDone) setView("stage");
   });
 }
 
@@ -1397,12 +1696,12 @@ async function boot(): Promise<void> {
   setInterval(tickClock, 1000);
   setInterval(renderMeter, 100);
   tickClock();
+  localModels = (await cr.modelStatus().catch(() => [])) || [];
   await refreshDevices();
 
-  if (!config.deepgramApiKey) {
-    obStep = 1;
-    setView("onboarding");
-    log("first run - add a Deepgram key to begin");
+  if (!config.setupDone) {
+    openSetup();
+    log("first run - pick cloud or local speech to begin");
   } else {
     setView("stage");
     log("ready - hit START SESSION");

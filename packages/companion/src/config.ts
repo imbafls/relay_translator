@@ -35,6 +35,11 @@ export class ConfigStore {
     if (stored.output === undefined && stored.obsOverlay === true) {
       this.cached.output = "obs";
     }
+    // migration: pre-0.4 configs had no setup flag; a saved Deepgram key means
+    // onboarding was completed once
+    if (stored.setupDone === undefined && (stored.deepgramApiKey || process.env.DEEPGRAM_API_KEY)) {
+      this.cached.setupDone = true;
+    }
     return this.cached;
   }
 

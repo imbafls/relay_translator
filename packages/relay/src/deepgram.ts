@@ -3,14 +3,16 @@ export const SAMPLE_RATE = 16000;
 
 export interface SttEvents {
   onOpen?: () => void;
-  onPartial?: (text: string) => void;
+  /** channel = capture channel (0 when mono) */
+  onPartial?: (text: string, channel: number) => void;
   /** audioEndSec = position of the final word in the audio stream (seconds) */
-  onFinal?: (text: string, meta?: { audioEndSec?: number }) => void;
+  onFinal?: (text: string, meta: { audioEndSec?: number; channel: number }) => void;
   onError?: (message: string) => void;
   onClose?: () => void;
 }
 
 export interface SttStream {
+  /** s16le 16 kHz, mono or interleaved stereo (see SttConfig.channels) */
   sendAudio(chunk: Buffer): void;
   close(): void;
 }
@@ -19,13 +21,17 @@ export interface SttConfig {
   apiKey?: string;
   model: string;
   language: string;
+  /** 1 (default) or 2 interleaved channels, each transcribed on its own */
+  channels?: number;
 }
 
 /**
  * Map config model id -> Deepgram request params.
  * "deepgram-nova-3" -> model=nova-3, "deepgram-nova-3-multi" -> language=multi, etc.
+ * Two channels turn on `multichannel`, which transcribes each channel
+ * independently (and bills each one) - the way voice chat and mic stay apart.
  */
-function dgParams(model: string, language: string): URLSearchParams {
+function dgParams(model: string, language: string, channels: number): URLSearchParams {
   const id = model.startsWith("deepgram-") ? model.slice("deepgram-".length) : model;
   const [name, variant] = id.split("-");
   const isMulti = variant === "multi";
@@ -38,14 +44,16 @@ function dgParams(model: string, language: string): URLSearchParams {
     utterance_end_ms: "1000",
     encoding: "linear16",
     sample_rate: String(SAMPLE_RATE),
-    channels: "1",
+    channels: String(channels),
   });
+  if (channels > 1) params.set("multichannel", "true");
   params.set("language", isMulti ? "multi" : language || "en");
   return params;
 }
 
 export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStream {
-  const params = dgParams(cfg.model, cfg.language);
+  const channels = cfg.channels && cfg.channels > 1 ? cfg.channels : 1;
+  const params = dgParams(cfg.model, cfg.language, channels);
   const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
   const ws = new WebSocket(url, {
     headers: { Authorization: `Token ${cfg.apiKey || ""}` },
@@ -61,15 +69,16 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
       const alt = msg.channel?.alternatives?.[0];
       const text: string = (alt?.transcript || "").trim();
       if (!text) return;
+      const channel = Array.isArray(msg.channel_index) ? Number(msg.channel_index[0]) || 0 : 0;
       if (msg.is_final) {
         const words = alt.words || [];
         const last = words[words.length - 1];
         const base = typeof msg.start === "number" ? msg.start : msg.channel?.start;
         const audioEndSec =
           typeof base === "number" && typeof last?.end === "number" ? base + last.end : undefined;
-        events.onFinal?.(text, { audioEndSec });
+        events.onFinal?.(text, { audioEndSec, channel });
       } else {
-        events.onPartial?.(text);
+        events.onPartial?.(text, channel);
       }
     } catch {
       // ignore malformed frames
@@ -108,11 +117,13 @@ const MOCK_LINES = [
 
 /**
  * Mock STT for dev/smoke tests: emits canned finals paced by audio volume
- * so the whole pipeline runs without a Deepgram key.
+ * so the whole pipeline runs without a Deepgram key. With two channels the
+ * lines alternate between them.
  */
-export function createMockSttStream(events: SttEvents): SttStream {
+export function createMockSttStream(events: SttEvents, channels = 1): SttStream {
   let bytesSeen = 0;
-  let nextAt = SAMPLE_RATE * 2; // 2s of audio before first line
+  const bytesPerLine = SAMPLE_RATE * 2 * channels * 2; // 2 s of audio
+  let nextAt = bytesPerLine;
   let line = 0;
   let opened = false;
 
@@ -127,10 +138,11 @@ export function createMockSttStream(events: SttEvents): SttStream {
       bytesSeen += chunk.length;
       if (bytesSeen >= nextAt) {
         const text = MOCK_LINES[line % MOCK_LINES.length];
+        const channel = channels > 1 ? line % channels : 0;
         line += 1;
-        events.onPartial?.(text);
-        events.onFinal?.(text);
-        nextAt = bytesSeen + SAMPLE_RATE * 2;
+        events.onPartial?.(text, channel);
+        events.onFinal?.(text, { channel });
+        nextAt = bytesSeen + bytesPerLine;
       }
     },
     close() {

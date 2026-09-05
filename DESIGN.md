@@ -69,3 +69,11 @@ Header `● ON AIR · KEY = STOP`; LINK row (mono, underline, `COPY NEW`); 2×2 
 - Mute (`#3a3834`) is for disabled/ghost only - never for text the user must read.
 - Interactive hit targets ≥ 44px on phone.
 - Copy figures (credit, prices, free-tier claims) in the mocks are placeholders - verify before shipping.
+
+## 0.4 additions - two sources, local speech, re-runnable setup
+- **01 SOURCE** gains a second row under the primary select: a dim `+` and a smaller select (`No second source` or a device). It reads ink once set. Meta becomes `MIC + SYSTEM`. The row hides while live if empty.
+- **Speaker tag**: when two sources are on, every caption row carries a condensed uppercase `.who` label (`YOU` / `CHAT`, or `A` / `B` for two of a kind) before the text: dim in history, amber on the latest row. Phone viewer and OBS overlay use the same tag; the overlay stacks it above the line at half size. Interim rows are per channel, so two cursors can blink at once.
+- **02 TRANSCRIBE** select has two optgroups, `CLOUD · DEEPGRAM` and `LOCAL · THIS PC`. Local meta: `STREAMING · EN · ON THIS PC · READY`, or `NOT DOWNLOADED` (amber) with an underlined `DOWNLOAD 670 MB` action; `DOWNLOADING 43%` / `CANCEL` while fetching. Live meta for local: `4.2 MIN · LOCAL · $0.000`.
+- **Model list** (`.model-list`, in the keys view under `LOCAL SPEECH MODELS` and in setup step 1): rows of square radio · name + mono meta (`EN · 44 MB · STREAMING`) · right-aligned mono actions (`DOWNLOAD 44 MB` underlined ink, `READY` + `REMOVE`, or an amber 80px progress bar + `43%` + `CANCEL`). Picking a row is the same as choosing it in 02.
+- **Setup step 1** starts with a large segmented `Cloud · Deepgram | Local · this PC`. Cloud is the key form as before; Local shows the model list and the CONTINUE block stays mute until the picked model is on disk (`DOWNLOAD THE MODEL TO CONTINUE`). Step 3 adds `SECOND SOURCE · OPTIONAL`. Setup is re-entered from `KEYS → RUN SETUP AGAIN` or the tray; when it was already completed the step label row gets a `✕ CLOSE SETUP` mono button and Esc returns to the stage.
+- Amber stays the only chromatic colour: download progress bars, `NOT DOWNLOADED`, and the latest row's speaker tag.

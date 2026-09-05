@@ -14,6 +14,7 @@ import {
 } from "@callout-relay/shared";
 import { loadState, generateToken, RelayState, saveState } from "./config";
 import { PublisherSession, SessionConfig, GeminiStats, SttStats } from "./session";
+import { LocalSttOptions } from "./localStt";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -77,6 +78,8 @@ export interface RelayOptions {
   viewerToken?: string;
   mockStt?: boolean;
   mockGemini?: boolean;
+  /** local (sherpa-onnx) STT: models dir + worker script. Absent = cloud only. */
+  localStt?: LocalSttOptions;
   log?: (level: "info" | "warn" | "error", message: string) => void;
   /** called whenever the number of attached viewers changes */
   onViewers?: (count: number) => void;
@@ -135,7 +138,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const mockStt = opts.mockStt ?? process.env.RELAY_MOCK_STT === "1";
   const mockGemini = opts.mockGemini ?? process.env.RELAY_MOCK_GEMINI === "1";
   const geminiStats: GeminiStats = { count: 0, cacheHits: 0, tokensIn: 0, tokensOut: 0 };
-  const sttStats: SttStats = { seconds: 0 };
+  const sttStats: SttStats = { seconds: 0, localSeconds: 0 };
 
   let publisher: { ws: WebSocket; session: PublisherSession } | null = null;
   /** remote app mirroring finished subtitles via /ws/uplink */
@@ -217,6 +220,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       geminiApiKey: opts.geminiApiKey,
       mockStt,
       mockGemini,
+      localStt: opts.localStt,
       geminiStats,
       sttStats,
       toViewers,
@@ -230,6 +234,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       setLive: () => {},
       log,
     });
+    session.publisherError = (message) => sendPublisher(ws, { type: "error", message });
     session.start();
     if (publisher && publisher.ws === ws) publisher.session = session;
   }
@@ -456,6 +461,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       languages: { ...currentLanguages },
       translationEnabled: DEFAULT_CONFIG.translationEnabled !== false,
       latencyVisible: DEFAULT_CONFIG.showLatency !== false,
+      channels: 1,
     });
 
     sendPublisher(ws, {
@@ -479,9 +485,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
       if (msg.type === "ping") sendPublisher(ws, { type: "pong" });
       if (msg.type === "hello") {
+        const channels = msg.channels === 2 ? 2 : 1;
         log(
           "info",
-          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}${msg.latencyVisible === false ? " (latency hidden)" : ""}`,
+          `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}${msg.latencyVisible === false ? " (latency hidden)" : ""}${channels > 1 ? ` (${channels} channels: ${(msg.channelLabels || []).join("/")})` : ""}`,
         );
         buildSession(ws, {
           stt: msg.stt,
@@ -489,6 +496,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           languages: msg.languages,
           translationEnabled: msg.translationEnabled !== false,
           latencyVisible: msg.latencyVisible !== false,
+          channels,
+          channelLabels: Array.isArray(msg.channelLabels) ? msg.channelLabels.map((l) => String(l).slice(0, 12)) : undefined,
         });
         toViewers({
           type: "hello",
@@ -605,6 +614,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           target: msg.target,
           final: msg.final,
           latency: msg.latency,
+          channel: msg.channel,
+          speaker: msg.speaker,
         });
         return;
       }
@@ -695,6 +706,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
             deepgram: {
               sttMinutes: Math.round((sttStats.seconds / 60) * 10) / 10,
               estCostUsd: Math.round((sttStats.seconds / 60) * 0.0043 * 100) / 100,
+            },
+            local: {
+              sttMinutes: Math.round((sttStats.localSeconds / 60) * 10) / 10,
             },
             gemini: {
               count: geminiStats.count,

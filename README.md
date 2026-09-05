@@ -1,18 +1,20 @@
 # Callout Relay
 
-Real-time translated comms for games. Capture your mic (or the game audio itself),
-transcribe it with Deepgram, translate it with Gemini, and your friend reads the
+Real-time translated comms for games. Capture your mic, the game audio, or both
+at once, transcribe it in the cloud (Deepgram) or on your own PC (local
+sherpa-onnx models), translate it with Gemini, and your friend reads the
 subtitles on their phone or as a transparent OBS overlay - while you never leave
 the game.
 
 ```
- mic / game audio (PCM 16 kHz)
+ mic + system audio (PCM 16 kHz, 1 or 2 channels)
         │  WebSocket (token-authed)
         ▼
 ┌───────────────────┐      ┌──────────────────────────────┐
 │  relay server     │      │  viewer page (phone / OBS)   │
-│  Deepgram nova-3  │─────▶│  dual subtitles:             │
-│  Gemini 2.5 Flash │  WS  │    EN callout (dim)          │
+│  Deepgram nova-3  │      │  dual subtitles:             │
+│   or local model  │─────▶│    YOU / CHAT tag            │
+│  Gemini Flash     │  WS  │    EN callout (dim)          │
 └───────────────────┘      │    VI translation (big)      │
         ▲                  └──────────────────────────────┘
         │
@@ -53,15 +55,16 @@ Prebuilt installers live in `release/`:
 
 | File | What it is |
 | --- | --- |
-| `CalloutRelay-Setup-0.3.0.exe` | Windows installer (desktop + Start Menu shortcuts, updates itself) |
-| `CalloutRelay-Portable-0.3.0.exe` | Portable single exe - run from anywhere, nothing installed |
+| `CalloutRelay-Setup-0.4.0.exe` | Windows installer (desktop + Start Menu shortcuts, updates itself) |
+| `CalloutRelay-Portable-0.4.0.exe` | Portable single exe - run from anywhere, nothing installed |
 | `callout-relay-server.exe` | Standalone relay server (for a VPS / second PC) |
 | `latest.yml` | Update feed the installed app reads - keep it next to the installer |
 | `SHA256SUMS.txt` | Checksums for the above |
 
-The desktop apps embed the relay, the viewer page, and the control API - there
-are no dev servers, no Node.js install, no terminal. Install (or run the
-portable exe), paste your API keys once in Settings, and you're done.
+The desktop apps embed the relay, the viewer page, the control API and the
+local speech engine - there are no dev servers, no Node.js install, no terminal.
+Install (or run the portable exe), pick cloud or local speech in the setup, and
+you're done. The relay server exe is cloud-only (no local models).
 
 ### Build the executables yourself
 
@@ -149,12 +152,23 @@ The window is a caption console: the live transcript is the whole stage, and
 every control sits in one signal-chain strip underneath it
 (`01 SOURCE -> 02 TRANSCRIBE -> 03 TRANSLATE -> 04 OUTPUT`).
 
-- **First run** walks you through three steps: a Deepgram key (required, checked
-  as you paste), a Gemini key (optional - skip it for English-only captions), and
-  your audio source plus where captions go.
+- **First run** walks you through three steps: how Relay hears you (**Cloud**
+  = a Deepgram key, checked as you paste; **Local** = pick a model and download
+  it), a Gemini key (optional - skip it for English-only captions), and your
+  audio source(s) plus where captions go. Run it again any time from
+  `KEYS → RUN SETUP AGAIN` or the tray menu.
 - **01 SOURCE** picks `Default microphone` or `System audio (game + comms)`
-  (system audio uses Windows loopback capture - no stereo mix fiddling). While
-  live it turns into an input level meter.
+  (system audio uses Windows loopback capture - no stereo mix fiddling). The
+  `+` row adds a **second source**: mic + system audio captions your own
+  callouts *and* the voice chat, and every line is tagged `YOU` / `CHAT` (two
+  mics: `A` / `B`). Each source is transcribed on its own channel - with
+  Deepgram that is `multichannel=true` and both channels are billed. While live
+  the block turns into an input level meter.
+- **02 TRANSCRIBE** lists the cloud models and the local ones. Local models run
+  on your CPU through sherpa-onnx, cost nothing, and never send audio anywhere;
+  pick one and hit `DOWNLOAD` in the meta line (or manage them under
+  `KEYS → LOCAL SPEECH MODELS`). Models live in
+  `%APPDATA%\callout-relay\models\<model-id>\`.
 - **03 TRANSLATE** holds the language pair and the on/off toggle. It starts
   **off** - a fresh install captions what it hears and nothing else. Add a Gemini
   key and switch it on to get a second column; with no key it greys out and the
@@ -247,11 +261,14 @@ the tray anyway).
 ```json
 {
   "stt": "deepgram-nova-3",
-  "translation": "gemini-2.5-flash",
+  "translation": "gemini-3.1-flash-lite",
   "audioSource": "default-mic",
+  "audioSource2": "system-loopback",
   "languages": { "source": "en", "target": "vi" },
+  "translationEnabled": false,
   "linkMode": "unique",
-  "obsOverlay": false
+  "output": "phone",
+  "setupDone": true
 }
 ```
 
@@ -259,13 +276,30 @@ Notes on models:
 - `deepgram-nova-3` - fastest, best for English comms.
 - `deepgram-nova-3-multi` - multilingual (en/es/fr/de/pt/it/...).
 - `deepgram-nova-2` - widest language support (incl. Vietnamese STT).
-- `gemini-2.5-flash-lite` if you want to shave ~200 ms off translation.
+- `gemini-3.1-flash-lite` - cheapest translation with a big free quota.
+
+Local models (`local-*`, sherpa-onnx int8 exports from the `csukuangfj/*`
+Hugging Face mirrors, downloaded file by file by the app):
+
+| id | what | size |
+| --- | --- | --- |
+| `local-zipformer-en-20m` | streaming English, word-by-word partials, lowest latency | 44 MB |
+| `local-parakeet-tdt-0.6b-v3` | NVIDIA Parakeet TDT 0.6B v3 - best accuracy, English + 24 European languages | 670 MB |
+| `local-sense-voice` | SenseVoice Small - zh / en / ja / ko / yue | 240 MB |
+| `local-whisper-small` | Whisper Small - ~100 languages incl. Vietnamese, slowest | 375 MB |
+
+Streaming models decode as you speak; the others segment speech with silero
+VAD (1 MB, fetched alongside) and decode each utterance, re-decoding the open
+one every ~1.2 s for a partial. Everything runs in a worker thread so the relay
+never stalls. Parakeet decodes a 6 s utterance in ~0.6 s on a desktop CPU.
 
 ## Testing
 
 ```powershell
-pnpm smoke      # full relay e2e without API keys (mock STT + mock Gemini)
+pnpm smoke      # full relay e2e without API keys (mock STT + mock Gemini, 1 and 2 channels)
 node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
+node packages/relay/scripts/local-stt-test.mjs local-parakeet-tdt-0.6b-v3 <16k-mono.wav> --stereo
+                # local model through the worker; --stereo fakes a second source
 ```
 
 ## Troubleshooting
@@ -274,7 +308,13 @@ node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
   Node/Electron inbound rule on port 8787. Different network → run the relay
   on a VPS or tunnel it.
 - **No system audio option works** - loopback capture needs the Electron app
-  running on Windows; it auto-approves the capture prompt.
+  running on Windows; it auto-approves the capture prompt. Loopback follows the
+  *default* output device, so route the voice chat there (or to the device you
+  also game on) if you want it captioned.
+- **Local model won't start** - `02 TRANSCRIBE` says `NOT DOWNLOADED` until
+  every file is on disk; a failed download shows `DOWNLOAD FAILED`, retry from
+  `KEYS → LOCAL SPEECH MODELS`. The standalone relay server exe has no local
+  engine - local models only work in the desktop app.
 - **`replaced by another session`** - a second publisher (e.g. a second app
   instance) took over; only one publisher connection is allowed.
 - **Kicked viewers** - someone opened the same link on another device, or the
@@ -282,5 +322,6 @@ node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
 
 ## Done when
 
-You and your friend run a real Valorant session, he reads Vietnamese on his
-phone, and you never touch audio settings mid-game.
+You and your friend run a real Valorant session, they read Vietnamese on their
+phone - your callouts tagged `YOU`, the voice chat tagged `CHAT` - and you never
+touch audio settings mid-game.

@@ -5,7 +5,9 @@
   "description": "WebSocket relay: audio in -> Deepgram STT -> Gemini translate -> viewer broadcast",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": { "callout-relay-server": "dist/cli.js" },
+  "bin": {
+    "callout-relay-server": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -20,5 +22,8 @@
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "typescript": "^5.6.3"
+  },
+  "optionalDependencies": {
+    "sherpa-onnx-node": "^1.13.7"
   }
 }

@@ -9,15 +9,19 @@ export const SOURCE_SYSTEM_LOOPBACK = "system-loopback";
  * Renderer-side audio capture: mic (getUserMedia) or system loopback
  * (getDisplayMedia - Electron main must install a display-media request
  * handler with audio: 'loopback' for the system option to work).
- * Emits s16le mono 16 kHz PCM chunks ready for the relay.
+ *
+ * One or two sources: each is downmixed to mono, merged into one graph so
+ * they share a clock, and the worklet emits s16le 16 kHz PCM - mono, or
+ * interleaved stereo when two sources are open (channel 0 = first source).
  */
 export class BrowserAudioCapture {
   private ctx: AudioContext | null = null;
-  private stream: MediaStream | null = null;
+  private streams: MediaStream[] = [];
   private node: AudioWorkletNode | null = null;
   private sink: GainNode | null = null;
   private workletUrl: string | null = null;
   private active = false;
+  private chans = 1;
 
   async listDevices(): Promise<AudioDeviceInfo[]> {
     let mics: AudioDeviceInfo[] = [];
@@ -44,13 +48,15 @@ export class BrowserAudioCapture {
     return this.active;
   }
 
-  async start(source: string, onPcm: (chunk: Int16Array) => void): Promise<void> {
-    if (this.active) this.stop();
+  /** channels in the PCM frames the current capture emits (1 or 2) */
+  get channels(): number {
+    return this.chans;
+  }
 
-    let stream: MediaStream;
+  private async openSource(source: string): Promise<MediaStream> {
     if (source === SOURCE_SYSTEM_LOOPBACK) {
       // Electron main auto-approves via setDisplayMediaRequestHandler (loopback audio)
-      stream = await navigator.mediaDevices.getDisplayMedia({
+      const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: {
           echoCancellation: false,
@@ -62,19 +68,38 @@ export class BrowserAudioCapture {
       if (stream.getAudioTracks().length === 0) {
         throw new Error("no system audio track - platform does not support loopback capture");
       }
-    } else if (source === SOURCE_DEFAULT_MIC) {
-      stream = await navigator.mediaDevices.getUserMedia({
+      return stream;
+    }
+    if (source === SOURCE_DEFAULT_MIC) {
+      return navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
-    } else {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: { exact: source },
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+    }
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: { exact: source },
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+  }
+
+  /**
+   * @param sources one or two source ids (see listDevices). The same id twice
+   *   is collapsed to one channel.
+   */
+  async start(sources: string | string[], onPcm: (chunk: Int16Array) => void): Promise<void> {
+    if (this.active) this.stop();
+    const list = (Array.isArray(sources) ? sources : [sources]).filter((s, i, a) => !!s && a.indexOf(s) === i).slice(0, 2);
+    if (list.length === 0) throw new Error("no audio source selected");
+
+    const streams: MediaStream[] = [];
+    try {
+      for (const src of list) streams.push(await this.openSource(src));
+    } catch (err) {
+      streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+      throw err;
     }
 
     const ctx = new AudioContext();
@@ -85,29 +110,48 @@ export class BrowserAudioCapture {
     }
     await ctx.audioWorklet.addModule(this.workletUrl);
 
+    const channels = streams.length;
     const node = new AudioWorkletNode(ctx, "pcm-downsampler", {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [1],
-      processorOptions: { targetRate: TARGET_SAMPLE_RATE },
+      channelCount: channels,
+      channelCountMode: "explicit",
+      channelInterpretation: "discrete",
+      processorOptions: { targetRate: TARGET_SAMPLE_RATE, channels },
     });
     node.port.onmessage = (ev: MessageEvent) => {
       const data = ev.data as { type: string; buffer?: ArrayBuffer };
       if (data?.type === "pcm" && data.buffer) onPcm(new Int16Array(data.buffer));
     };
 
-    const srcNode = ctx.createMediaStreamSource(stream);
+    if (channels === 1) {
+      ctx.createMediaStreamSource(streams[0]).connect(node);
+    } else {
+      // each source -> mono (explicit 1-channel gain downmixes) -> its own merger input
+      const merger = ctx.createChannelMerger(channels);
+      streams.forEach((stream, i) => {
+        const mono = ctx.createGain();
+        mono.channelCount = 1;
+        mono.channelCountMode = "explicit";
+        mono.channelInterpretation = "speakers";
+        ctx.createMediaStreamSource(stream).connect(mono);
+        mono.connect(merger, 0, i);
+      });
+      merger.connect(node);
+    }
+
     // keep the graph pulling (and processing while the window is hidden)
     const sink = ctx.createGain();
     sink.gain.value = 0;
-    srcNode.connect(node);
     node.connect(sink);
     sink.connect(ctx.destination);
 
     this.ctx = ctx;
-    this.stream = stream;
+    this.streams = streams;
     this.node = node;
     this.sink = sink;
+    this.chans = channels;
     this.active = true;
   }
 
@@ -123,11 +167,12 @@ export class BrowserAudioCapture {
     } catch {
       /* noop */
     }
-    this.stream?.getTracks().forEach((t) => t.stop());
+    this.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
     this.ctx?.close().catch(() => {});
     this.node = null;
     this.sink = null;
     this.ctx = null;
-    this.stream = null;
+    this.streams = [];
+    this.chans = 1;
   }
 }
