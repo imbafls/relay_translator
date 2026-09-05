@@ -75,7 +75,13 @@ export const DEFAULT_CONFIG: AppConfig = {
 
 /** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
 export function isLocalStt(id: string): boolean {
-  return id.startsWith("local-");
+  const info = sttModel(id);
+  return info ? info.provider === "local" : id.startsWith("local-");
+}
+
+/** capture channels are 1 or 2; anything else on the wire collapses to mono */
+export function clampChannels(n: unknown): 1 | 2 {
+  return n === 2 ? 2 : 1;
 }
 
 export interface SttModelFile {

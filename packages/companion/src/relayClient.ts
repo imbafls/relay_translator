@@ -159,7 +159,7 @@ export class RelayPublisherClient {
     if (this.connected) this.ws!.send(JSON.stringify(msg));
   }
 
-  /** chunk must be s16le mono 16 kHz */
+  /** chunk = s16le 16 kHz, mono or interleaved stereo (whatever the hello's `channels` said) */
   sendAudio(chunk: ArrayBufferLike): void {
     if (this.connected) this.ws!.send(chunk);
   }

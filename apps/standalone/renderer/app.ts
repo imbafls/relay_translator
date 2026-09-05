@@ -7,6 +7,7 @@
 import { BrowserAudioCapture, RelayPublisherClient } from "@callout-relay/companion";
 import {
   AppConfig,
+  AudioDeviceInfo,
   ControlStatus,
   KeyValidation,
   LANGUAGES,
@@ -136,8 +137,10 @@ function sourceLabel(id: string): string {
   const opt = sel("audioSource").querySelector<HTMLOptionElement>(`option[value="${CSS.escape(id)}"]`);
   return opt?.textContent || (id === "system-loopback" ? "System audio" : "Default microphone");
 }
+/** devices from the last scan (kept here so labels never wait on the status round-trip) */
+let deviceList: AudioDeviceInfo[] = [];
 function sourceKind(id: string): "mic" | "system" {
-  return status?.devices.find((d) => d.id === id)?.kind || (id === "system-loopback" ? "system" : "mic");
+  return deviceList.find((d) => d.id === id)?.kind || status?.devices.find((d) => d.id === id)?.kind || (id === "system-loopback" ? "system" : "mic");
 }
 /** the sources a session captures: primary + optional second (deduplicated) */
 function activeSources(): string[] {
@@ -292,11 +295,11 @@ function makeRow(id: number, isInterim: boolean): Row {
 
 function trimRows(): void {
   const lines = $("lines");
-  while (lines.children.length > MAX_ROWS) {
-    const first = lines.firstElementChild as HTMLElement;
+  // open interim rows (one per channel) never count against the history budget
+  while (lines.querySelectorAll(".row:not(.interim)").length > MAX_ROWS) {
+    const first = lines.querySelector(".row:not(.interim)") as HTMLElement;
     first.remove();
     for (const [id, r] of rows) if (r.el === first) rows.delete(id);
-    for (const [ch, r] of interims) if (r.el === first) interims.delete(ch);
   }
 }
 
@@ -422,7 +425,8 @@ let level = 0;
 function feedLevel(chunk: Int16Array): void {
   let sum = 0;
   let n = 0;
-  for (let i = 0; i < chunk.length; i += 4) {
+  // odd stride so interleaved stereo frames feed both channels into the meter
+  for (let i = 0; i < chunk.length; i += 3) {
     const v = chunk[i] / 32768;
     sum += v * v;
     n += 1;
@@ -478,15 +482,10 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     clearStage();
     renderStageHeads();
 
-    // capture first so the hello can say how many channels the audio has
+    // the channel count follows the (deduplicated) source list, so the relay
+    // can be told before capture opens and no early audio is dropped
     const sources = activeSources();
-    level = 0;
-    await capture.start(sources, (chunk) => {
-      feedLevel(chunk);
-      relayClient?.sendAudio(chunk.buffer);
-    });
-    const channels = capture.channels === 2 ? 2 : 1;
-    log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? " (2 channels)" : ""}`, "ok");
+    const channels = sources.length === 2 ? 2 : 1;
 
     relayClient = new RelayPublisherClient(prep.publisherUrl, {
       onState: (clientState, detail) => {
@@ -509,6 +508,14 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       channels,
       channelLabels: channels > 1 ? channelLabels(sources) : undefined,
     });
+
+    level = 0;
+    await capture.start(sources, (chunk) => {
+      feedLevel(chunk);
+      relayClient?.sendAudio(chunk.buffer);
+    });
+    if (capture.channels !== channels) throw new Error("capture channel count does not match the session");
+    log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? " (2 channels)" : ""}`, "ok");
     recomputeState();
   } catch (err) {
     const message = String((err as Error).message || err);
@@ -560,6 +567,7 @@ function fillSelect(box: HTMLSelectElement, entries: { value: string; label: str
 
 async function refreshDevices(): Promise<void> {
   const devices = await capture.listDevices();
+  deviceList = devices;
   const entries = devices.map((d) => ({ value: d.id, label: d.label }));
   const second = [{ value: "", label: "No second source" }, ...entries];
   fillSelect(sel("audioSource"), entries, config.audioSource);
@@ -1203,7 +1211,6 @@ function renderOnboardingChain(): void {
     metaSpans($("metaStt"), [{ text: "KEY OK" }]);
   }
   // 03
-  const trMeta = $("metaTranslate");
   $("gmKeyState").className = "";
   $("addKey").hidden = true;
   $("translateExtra").className = "";
@@ -1233,7 +1240,6 @@ function renderOnboardingChain(): void {
     $("addKey").textContent = "ADD GEMINI KEY";
     $("translateExtra").textContent = "";
   }
-  void trMeta;
   // 04
   if (obStep === 3) {
     $("blkOutput").classList.remove("placeholder");
@@ -1674,8 +1680,9 @@ function bind(): void {
   });
   cr.onStatus((s) => {
     status = s;
+    // setLocalModels re-renders the chain strip itself
     if (s.localModels) setLocalModels(s.localModels);
-    renderChain();
+    else renderChain();
     renderFooter();
     if (s.update) setUpdate(s.update);
     if (view === "keys") renderKeyStatuses();

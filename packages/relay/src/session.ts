@@ -1,4 +1,4 @@
-import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher, isLocalStt } from "@callout-relay/shared";
+import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher, clampChannels, isLocalStt } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
   createDeepgramStream,
@@ -55,6 +55,8 @@ export interface SessionDeps {
   geminiStats?: GeminiStats;
   /** aggregate STT audio (process lifetime) */
   sttStats?: SttStats;
+  /** STT engine errors, forwarded to the publisher's app log */
+  onSttError?(message: string): void;
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
 }
@@ -186,7 +188,7 @@ export class PublisherSession {
       },
       onError: (message: string) => {
         this.deps.log("error", `stt error: ${message}`);
-        this.publisherError?.(message);
+        this.deps.onSttError?.(message);
       },
       onClose: () => {
         if (!this.closing) {
@@ -197,7 +199,7 @@ export class PublisherSession {
       },
     };
 
-    const channels = Math.max(1, Math.min(2, this.cfg.channels || 1));
+    const channels = clampChannels(this.cfg.channels);
     if (this.deps.mockStt) {
       this.stt = createMockSttStream(events, channels);
     } else if (this.local) {
@@ -227,9 +229,6 @@ export class PublisherSession {
     }
   }
 
-  /** optional hook so STT errors reach the app log, set by the server */
-  publisherError?: (message: string) => void;
-
   /** sample rate expected from the publisher */
   get sampleRate(): number {
     return SAMPLE_RATE;
@@ -244,10 +243,6 @@ export class PublisherSession {
       else this.deps.sttStats.seconds += seconds * Math.max(1, this.cfg.channels);
     }
     this.stt?.sendAudio(chunk);
-  }
-
-  get busy(): boolean {
-    return this.stt !== null;
   }
 
   stop(): void {

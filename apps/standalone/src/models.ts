@@ -9,6 +9,7 @@ import * as path from "path";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import { LOCAL_VAD, LocalModelStatus, STT_MODELS, SttModelInfo } from "@callout-relay/shared";
+import { localModelReady } from "@callout-relay/relay";
 
 export class ModelStore {
   private active = new Map<string, { controller: AbortController; progress: number }>();
@@ -20,15 +21,9 @@ export class ModelStore {
     private readonly log: (level: "info" | "warn" | "error", message: string) => void,
   ) {}
 
-  private hasFiles(info: SttModelInfo): boolean {
-    return !!info.files && info.files.every((f) => fs.existsSync(path.join(this.dir, info.id, f.name)));
-  }
-
+  /** same rule the relay applies before it starts a local session */
   isReady(id: string): boolean {
-    const info = STT_MODELS.find((m) => m.id === id);
-    if (!info || info.provider !== "local") return false;
-    if (!this.hasFiles(info)) return false;
-    return info.kind !== "offline" || this.hasFiles(LOCAL_VAD);
+    return localModelReady(this.dir, id);
   }
 
   status(): LocalModelStatus[] {

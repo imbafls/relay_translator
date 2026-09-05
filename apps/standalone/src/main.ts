@@ -350,8 +350,9 @@ function currentStatus() {
 }
 
 function broadcastStatus(): void {
-  controlBroadcast?.(currentStatus());
-  win?.webContents.send("status:changed", currentStatus());
+  const status = currentStatus();
+  controlBroadcast?.(status);
+  win?.webContents.send("status:changed", status);
   refreshTray();
 }
 

@@ -5,6 +5,7 @@ import * as os from "os";
 import { WebSocketServer, WebSocket, RawData } from "ws";
 import {
   DEFAULT_CONFIG,
+  clampChannels,
   PublisherToServer,
   ServerToPublisher,
   ServerToUplink,
@@ -231,10 +232,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           /* noop */
         }
       },
+      onSttError: (message) => sendPublisher(ws, { type: "error", message }),
       setLive: () => {},
       log,
     });
-    session.publisherError = (message) => sendPublisher(ws, { type: "error", message });
     session.start();
     if (publisher && publisher.ws === ws) publisher.session = session;
   }
@@ -485,7 +486,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
       if (msg.type === "ping") sendPublisher(ws, { type: "pong" });
       if (msg.type === "hello") {
-        const channels = msg.channels === 2 ? 2 : 1;
+        const channels = clampChannels(msg.channels);
         log(
           "info",
           `publisher session: stt=${msg.stt} translation=${msg.translation} ${msg.languages.source}->${msg.languages.target}${msg.translationEnabled === false ? " (translation off)" : ""}${msg.latencyVisible === false ? " (latency hidden)" : ""}${channels > 1 ? ` (${channels} channels: ${(msg.channelLabels || []).join("/")})` : ""}`,

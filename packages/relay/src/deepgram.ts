@@ -33,8 +33,8 @@ export interface SttConfig {
  */
 function dgParams(model: string, language: string, channels: number): URLSearchParams {
   const id = model.startsWith("deepgram-") ? model.slice("deepgram-".length) : model;
-  const [name, variant] = id.split("-");
-  const isMulti = variant === "multi";
+  const isMulti = id.endsWith("-multi");
+  const name = isMulti ? id.slice(0, -"-multi".length) : id;
   const params = new URLSearchParams({
     model: name,
     punctuate: "true",

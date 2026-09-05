@@ -27,7 +27,10 @@ class PcmDownsampler extends AudioWorkletProcessor {
 
   flushIfFull() {
     if (this.outLen === this.out.length) {
-      this.port.postMessage({ type: 'pcm', buffer: this.out.slice().buffer });
+      // hand the buffer over instead of cloning it; allocate the next frame
+      const buffer = this.out.buffer;
+      this.port.postMessage({ type: 'pcm', buffer }, [buffer]);
+      this.out = new Int16Array(1600 * this.channels);
       this.outLen = 0;
     }
   }

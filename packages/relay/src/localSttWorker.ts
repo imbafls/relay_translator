@@ -14,6 +14,7 @@
  */
 import { parentPort } from "worker_threads";
 import * as path from "path";
+import { clampChannels } from "@callout-relay/shared";
 
 // sherpa-onnx-node has no type declarations; keep the surface we touch loose.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -107,7 +108,7 @@ function modelConfig(i: LocalSttInit): Record<string, unknown> {
 function setup(i: LocalSttInit): void {
   sherpa = loadSherpa();
   init = i;
-  const channels = Math.max(1, Math.min(2, i.channels || 1));
+  const channels = clampChannels(i.channels);
   if (i.engine === "zipformer-online") {
     onlineRec = new sherpa.OnlineRecognizer({
       featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
