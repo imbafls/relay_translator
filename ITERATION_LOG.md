@@ -633,3 +633,35 @@ the caveat stands: the CI job is how that gets answered.
   rather than assigned - all 8 tests failed on that before they failed on
   anything real.
 - **Status**: PASSED
+
+---
+
+### Turn 23/40 - Client UI (a DOM harness, and the viewer under it)
+
+The loop was capped at 40 this turn at the owner's request. This is the first of
+the two things worth the remaining budget: a real DOM harness, rather than more
+recommending of one.
+
+- **Tests Added**: `packages/viewer/test/viewer.test.ts`, 7 tests running the
+  shipped `index.html` in happy-dom with the shipped `app.js` evaluated inside
+  it, driven by messages pushed through the socket the relay would have opened.
+  Covers the token coming out of `/watch/<token>`, a final subtitle appearing,
+  the translation patching its own line rather than adding one, two speakers
+  staying separate with their tags, caption text not being rendered as markup,
+  the interim line clearing when the stream stops, and the ended message when
+  another device takes the link.
+- **Issue/Gap Uncovered**: Nothing in the page - it behaves correctly on every
+  path tested, and the markup case confirms by execution what turn 5 could only
+  read: a caption containing an `<img onerror=...>` lands as text, no element.
+  Two mistakes were mine and worth writing down. The viewer's row markup is
+  `.src > span.txt` with the translation directly in `.tgt`; I wrote selectors
+  for `.src .text`, which is the *desktop renderer's* structure, and four tests
+  failed on my own confusion between two different pages. And the socket's
+  `onopen` is scheduled, so it fired into a page the teardown had already
+  cleared and reported an error belonging to the teardown - handlers are
+  detached before the body goes now.
+- **Enhancement Shipped**: The harness itself. happy-dom is in place and the
+  pattern is established: load the real markup, evaluate the real script, stand
+  in only for the socket. The renderer's 1900-line setup state machine is the
+  obvious next tenant, and it no longer needs new infrastructure to reach.
+- **Status**: PASSED
