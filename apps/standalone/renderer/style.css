@@ -9,6 +9,10 @@
   --rule-2: rgba(239, 234, 224, 0.08);
   --rule-3: rgba(239, 234, 224, 0.3);
   --amber: #e0a43a;
+  /* the other speaker's tag - the one chromatic exception to amber-only,
+     kept to the tag so the caption text itself stays neutral (DESIGN.md) */
+  --chat: #7fb6d9;
+  --chat-2: #5f8ba6;
   --sans: Archivo, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "Martian Mono", ui-monospace, Consolas, "Cascadia Mono", monospace;
   --hatch: repeating-linear-gradient(135deg, transparent 0 6px, rgba(239, 234, 224, 0.025) 6px 7px);
@@ -539,6 +543,9 @@ select option { background: var(--bg); color: var(--ink); }
   white-space: nowrap;
 }
 .row.latest .who { color: var(--amber); }
+/* the second source reads at a glance, in history and on the latest row */
+.row .who.other { color: var(--chat-2); }
+.row.latest .who.other { color: var(--chat); }
 .row .who:empty { display: none; }
 .log .who { color: var(--dim); }
 

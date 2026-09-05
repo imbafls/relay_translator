@@ -57,6 +57,8 @@ let update: UpdateStatus | null = null;
 let localModels: LocalModelStatus[] = [];
 /** CPU / RAM of this PC, for the tier recommendation (from the main process) */
 let hardware: HardwareInfo | undefined;
+/** the cloud model to return to when local turns out too slow */
+let lastCloudStt = "deepgram-nova-3";
 
 // ---------------------------------------------------------------------------
 // small helpers
@@ -166,12 +168,29 @@ function activeSources(): string[] {
   const list = [config.audioSource, config.audioSource2 || ""].filter((x, i, a) => !!x && a.indexOf(x) === i);
   return list.length ? list : ["default-mic"];
 }
-/** speaker tag per channel: mic = YOU, system audio = CHAT, two of a kind = A / B */
+/**
+ * Speaker tag per channel. The role follows the slot, not the device kind: a
+ * chat mix off a virtual audio device (Elgato Wave Link, VoiceMeeter, VB-Cable)
+ * enumerates as a microphone exactly like a headset does, so the kind cannot
+ * tell "me" from "the others". System audio is the exception - it is always
+ * the other voices, whichever slot it sits in.
+ */
 function channelLabels(sources: string[]): string[] {
   if (sources.length < 2) return [];
   const kinds = sources.map(sourceKind);
   if (kinds[0] !== kinds[1]) return kinds.map((k) => (k === "system" ? "CHAT" : "YOU"));
-  return ["A", "B"];
+  return ["YOU", "CHAT"];
+}
+
+/** every channel except the first reads as "the others" and gets its own colour */
+function isOtherSpeaker(speaker?: string): boolean {
+  return !!speaker && speaker !== "YOU" && speaker !== "A" && speaker !== "CH1";
+}
+
+/** the 01 SOURCE meta: the roles once there are two, the device kind when there is one */
+function sourceKindLabel(sources: string[]): string {
+  if (sources.length > 1) return channelLabels(sources).join(" + ");
+  return sourceKind(sources[0] || "") === "system" ? "SYSTEM" : "MIC";
 }
 function sourcesSummary(): string {
   const src = activeSources();
@@ -354,6 +373,7 @@ function onPartial(seg: { id: number; source: string; channel?: number; speaker?
   }
   interim.id = seg.id;
   interim.who.textContent = seg.speaker || "";
+  interim.who.classList.toggle("other", isOtherSpeaker(seg.speaker));
   interim.srcText.textContent = seg.source;
   const cur = document.createElement("span");
   cur.className = "cursor";
@@ -381,6 +401,7 @@ function onSubtitle(seg: Seg): void {
   }
   row.final = true;
   row.who.textContent = seg.speaker || "";
+  row.who.classList.toggle("other", isOtherSpeaker(seg.speaker));
   row.srcText.textContent = seg.source;
   if (seg.target != null) {
     row.tgtText.textContent = seg.target;
@@ -750,7 +771,7 @@ function renderChain(): void {
 
   // 01 SOURCE
   const srcs = activeSources();
-  $("sourceKind").textContent = srcs.map((id) => (sourceKind(id) === "system" ? "SYSTEM" : "MIC")).join(" + ");
+  $("sourceKind").textContent = sourceKindLabel(srcs);
   $("source2Row").hidden = live && !config.audioSource2;
   sel("audioSource2").classList.toggle("set", !!config.audioSource2);
   $("meter").hidden = !live;
@@ -759,6 +780,7 @@ function renderChain(): void {
 
   // 02 TRANSCRIBE
   renderModelAction();
+  renderCloudAction();
   if (live && usage) {
     if (sttIsLocal()) {
       metaSpans($("metaStt"), [{ text: `${(usage.local?.sttMinutes ?? 0).toFixed(1)} MIN` }, { text: "LOCAL · $0.000" }]);
@@ -1030,6 +1052,25 @@ function renderModelList(
     row.onclick = () => opts.pick(m.id);
     box.appendChild(row);
   }
+}
+
+/**
+ * BACK TO CLOUD in the 02 TRANSCRIBE meta line. Local speech can be too slow
+ * to live with, and that is only discovered once a session is running - when
+ * the strip's selects are all disabled. So this one stays live, and switching
+ * restarts the session on Deepgram.
+ */
+function renderCloudAction(): void {
+  const b = $("cloudAction") as HTMLButtonElement;
+  if (!sttIsLocal()) {
+    b.hidden = true;
+    return;
+  }
+  b.hidden = false;
+  const hasKey = !!config.deepgramApiKey;
+  b.textContent = hasKey ? "BACK TO CLOUD" : "CLOUD NEEDS A KEY";
+  b.className = hasKey ? "ulink-mono" : "ulink-mono warn";
+  b.title = hasKey ? `Switch to ${sttFull(lastCloudStt)}` : "Add a Deepgram key to use the cloud";
 }
 
 /** DOWNLOAD / CANCEL link in the 02 TRANSCRIBE meta line */
@@ -1317,10 +1358,7 @@ function renderOnboardingChain(): void {
     const a = sel("obAudioSource").value || config.audioSource;
     const b = sel("obAudioSource2").value;
     obValue("blkSource", b && b !== a ? `${sourceLabel(a)} + ${sourceLabel(b)}` : sourceLabel(a));
-    $("sourceKind").textContent = [a, b && b !== a ? b : ""]
-      .filter(Boolean)
-      .map((id) => (sourceKind(id) === "system" ? "SYSTEM" : "MIC"))
-      .join(" + ");
+    $("sourceKind").textContent = sourceKindLabel([a, b && b !== a ? b : ""].filter(Boolean));
   } else {
     obValue("blkSource", "—");
     $("sourceKind").textContent = "STEP 3";
@@ -1683,13 +1721,25 @@ function bind(): void {
   $("rescan").onclick = () => void refreshDevices();
   sel("audioSource").onchange = () => void saveAndApply({ audioSource: sel("audioSource").value }, { restart: true });
   sel("audioSource2").onchange = () => void saveAndApply({ audioSource2: sel("audioSource2").value }, { restart: true });
+  $("cloudAction").onclick = () => {
+    if (!config.deepgramApiKey) {
+      setView("keys");
+      inp("deepgramApiKey").focus();
+      return;
+    }
+    void saveAndApply({ stt: lastCloudStt }, { restart: true });
+  };
   $("modelAction").onclick = () => {
     const m = modelState(config.stt);
     if (m?.progress != null) void cr.cancelModel(config.stt).then(setLocalModels);
     else if (m?.downloaded) setView("keys");
     else void cr.downloadModel(config.stt).then(setLocalModels);
   };
-  sel("stt").onchange = () => void saveAndApply({ stt: sel("stt").value }, { restart: true });
+  sel("stt").onchange = () => {
+    const next = sel("stt").value;
+    if (!isLocalStt(next)) lastCloudStt = next;
+    void saveAndApply({ stt: next }, { restart: true });
+  };
   sel("translation").onchange = () => void saveAndApply({ translation: sel("translation").value }, { restart: true });
   sel("langSource").onchange = () =>
     void saveAndApply({ languages: { source: sel("langSource").value, target: config.languages.target } }, { restart: true });
@@ -1854,6 +1904,7 @@ function bind(): void {
 
 async function boot(): Promise<void> {
   config = await cr.getConfig();
+  if (!isLocalStt(config.stt)) lastCloudStt = config.stt;
   bind();
   syncControlsFromConfig();
   setInterval(tickClock, 1000);
