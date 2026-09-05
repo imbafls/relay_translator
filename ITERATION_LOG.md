@@ -1132,3 +1132,51 @@ Audit finding 12.
   one's counter, so numbering continues. Contained to the relay - no protocol
   change and nothing for viewers to learn. Reverting turns two of the three red.
 - **Status**: PASSED
+
+---
+
+### Turn 40/40 - Leaving it findable
+
+The last iteration. The most useful thing left was not another fix but making
+sure the unfinished work survives the session that found it.
+
+- **Tests Added**: 2 more in `packages/shared/test/handoff.test.ts` - every
+  document the handoff points at must exist, and it must still point at both
+  the audit and this log.
+- **Issue/Gap Uncovered**: The audit existed only in a temp directory and as a
+  file sent to the owner. Twenty-eight of its findings are unaddressed, each
+  with a failure scenario and a suggested fix, and none of that was in the repo.
+  `HANDOFF.md` was nine turns and an entire audit out of date - it still
+  described ~280 tests and a fix list that predates everything from turn 31 on.
+- **Enhancement Shipped**: `docs/AUDIT-2026-09-05.md` carries the full ranked
+  report with a header saying which eight are fixed, which turn fixed each, and
+  the two pieces that need a person - code signing, and a credential for the
+  control API. `HANDOFF.md` names the branch, what is on it, the six findings
+  most worth knowing about, and why `v0.5.2` as tagged must not be pushed as-is.
+  The guard keeps both pointers honest.
+
+### Where this run ended up
+
+370 tests where there were none. 35 fixes across 40 turns, 8 of them from the
+audit. The verification gate - `pnpm test`, `pnpm typecheck:test`,
+`pnpm typecheck`, `pnpm build`, the renderer id check and `pnpm smoke` - passed
+at every one of the 40 commits, and now runs in CI and blocks a release.
+
+Four things a future run should take from this, all of them learned the hard
+way here:
+
+1. **A test that goes green first time, when you expected red, has probably not
+   run.** It happened four times: a debounce that outlasted the assertion, a
+   filesystem observable that could not see an open handle, a liveness check
+   that an uncaughtException handler had already made meaningless, and a regex
+   that matched the SDK's own doc comment. Each looked like a passing test of a
+   broken thing.
+2. **Fix the shape you can see and an adjacent one usually stays open.** Turn
+   4's payload validator ran after the dereference that killed the process.
+   Turn 9's redaction masked the token field and left it in the URL. Turn 10's
+   guard caught a null config and not a null field. The audit found all three.
+3. **Ask what a thing is checking, not whether it is correct.** A skip that
+   passed, a version nothing bumped, a menu offering a deleted model, a comment
+   claiming a check that was never written.
+4. **Liveness is the wrong observable for a crash** once anything catches
+   exceptions. Look for the throw.

@@ -46,6 +46,19 @@ describe("the handoff tells you to run things that exist", () => {
     expect(missing, `HANDOFF.md points at: ${missing.join(", ")}`).toEqual([]);
   });
 
+  it("points at documents that exist, not just code", () => {
+    // the audit and the iteration log are where the unfinished work lives, so
+    // a dangling pointer to either loses it
+    const docs = [...handoff.matchAll(/\b((?:docs\/)?[A-Z][\w-]*\.md)\b/g)].map((m) => m[1]);
+    const missing = [...new Set(docs)].filter((rel) => !fs.existsSync(path.join(root, rel)));
+    expect(missing, `HANDOFF.md points at: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("still points somewhere for the work that is not done", () => {
+    expect(handoff).toMatch(/AUDIT-\d{4}-\d{2}-\d{2}\.md/);
+    expect(handoff).toContain("ITERATION_LOG.md");
+  });
+
   it("does not still claim there is no test runner", () => {
     // the exact staleness that propagated into a whole run of work
     expect(handoff).not.toMatch(/no test runner/i);

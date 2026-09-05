@@ -16,14 +16,44 @@ PRs #2–#5 are merged; the repo merges by **rebase**, so history is linear —
 don't add merge commits.
 
 `ralph/pipeline-hardening` branches from the `v0.5.2` commit and holds a run of
-hardening work: the repo's first test runner and ~280 tests, plus fixes for a
-relay crash on a malformed hello, wrong bytes served for a suffix range request
-on the update feed, a `.env` parser that dropped a line on a stray CR, config
-and relay-state writes that lost data when interrupted, duplicate sockets left
-open by reconnects, the API keys leaking out of the local control API, and the
-Stream Deck manifest that had sat at `0.1.0` since the UI redesign. See
-`ITERATION_LOG.md` for what each turn found. **None of it is in `v0.5.2` as
-tagged** — decide whether to fold it in before pushing that tag.
+hardening work: the repo's first test runner and ~370 tests, and 35 fixes.
+`ITERATION_LOG.md` has one entry per turn - what was looked at, what it turned
+out to be, and how it was proved. `docs/AUDIT-2026-09-05.md` is a separate
+adversarial audit of the whole repo, 36 ranked findings, of which eight are
+fixed on this branch and the rest are not.
+
+The ones most worth knowing about, all found and fixed here:
+
+- `GET //%25` exited the relay process. No credentials, one line of curl,
+  repeatable. Reproduced against a real build before and after.
+- A four-byte WebSocket frame (`null`) did the same on two of the three roles.
+- Every abandoned installer download stranded a file descriptor: 25 aborts,
+  25 undestroyed streams.
+- A suffix range request (`bytes=-100`) served the *first* 101 bytes of the
+  installer, under a Content-Range header claiming otherwise.
+- The local control API handed out the API keys, and then the viewer link, to
+  any web page that asked.
+- The Stream Deck key had never done anything: the action was declared and
+  never registered.
+
+**None of it is in `v0.5.2` as tagged.** That tag sits on `master` at the commit
+this branch starts from, so pushing it as-is ships one crash fix and five known
+crashes. Fold the branch in and retag before pushing.
+
+### What still needs a person
+
+- **Code signing.** `win.publisherName` plus a certificate. Without it
+  electron-updater's signature check returns early, so an update is verified
+  only against a hash in the feed's own file.
+- **A credential for the control API.** `GET /link` gives the viewer link to
+  anything that asks, and the origin check admits `Origin: null`. Closing it
+  means the Stream Deck property inspector has to present a token, which needs
+  Stream Deck to test.
+- **The VPS `.env`.** Keys were rotated during this run;
+  `/opt/callout-relay/.env` still holds the old pair. The credentials file the
+  deploy script wants was not on the machine this ran on.
+- **28 more audit findings**, ranked, each with a failure scenario and a
+  suggested fix.
 
 ## First run on a new machine
 
