@@ -234,7 +234,8 @@
     el.textContent = "";
     if (speaker) {
       const who = document.createElement("span");
-      who.className = "who";
+      // every channel but the first is "the others" and gets its own colour
+      who.className = speaker !== "YOU" && speaker !== "A" && speaker !== "CH1" ? "who other" : "who";
       who.textContent = speaker;
       el.appendChild(who);
     }
