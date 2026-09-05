@@ -330,3 +330,34 @@ first-party runtime source.
   works. A user called Ömer is not an edge case. That path is now held down
   before it ships rather than after.
 - **Status**: PASSED
+
+---
+
+### Turn 12/100 - Message orchestration (the path to a phone)
+
+- **Tests Added**: `packages/relay/test/uplink.test.ts`, 7 tests running two real
+  relays in-process with a bridge between them: uplink auth against the viewer
+  token and no token, the greeting, a subtitle crossing from the local relay to
+  a viewer on the far one, the language pair propagating, the remote viewer
+  count reaching the uplink, and the not-live status when the uplink drops. The
+  bridge is a raw socket rather than the companion's `UplinkClient`, since that
+  lives in a package this one does not depend on - so what is covered is the
+  relay half.
+- **Issue/Gap Uncovered**: None in the code. A correction to my own turn 4 note
+  instead: I had flagged the unguarded `ws.send` in the viewer fan-out as a risk
+  that one viewer's failure would break the broadcast for the rest. It is not
+  reachable. `viewers` is keyed by token and `onViewer` kicks the previous holder
+  of that token, so there is at most one viewer per token and there are no
+  others to break it for. The gap that was real is that this whole path had no
+  automated cover at all: `scripts/uplink-e2e.mjs` needs a live VPS, a relay on
+  8787 and a real `%APPDATA%`, so nothing runs it, and `pnpm smoke` only ever
+  exercises one relay.
+- **Enhancement Shipped**: The product's headline feature - captions reaching a
+  friend's phone through the VPS - is now covered by `pnpm test` on any machine,
+  with no VPS and no keys. Two traps worth recording for whoever writes the next
+  one: both relays greet a socket the instant they accept it, so a listener
+  attached after `open` resolves has already missed "ready" and "hello"; and the
+  mock STT marks itself open on a `setImmediate`, so a single audio buffer sent
+  in the same tick as the hello is discarded. A publisher streams, and the test
+  has to as well.
+- **Status**: PASSED
