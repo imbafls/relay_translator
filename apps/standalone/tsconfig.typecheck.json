@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/main.ts", "src/preload.ts", "renderer/app.ts"]
+  "include": ["src/main.ts", "src/preload.ts", "renderer/app.ts", "src/unbzip2-stream.d.ts"]
 }

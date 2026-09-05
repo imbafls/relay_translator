@@ -8,6 +8,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
+import * as tar from "tar";
+import unbzip2 from "unbzip2-stream";
 import { LOCAL_VAD, LocalModelStatus, STT_MODELS, SttModelInfo } from "@callout-relay/shared";
 import { localModelReady } from "@callout-relay/relay";
 
@@ -50,11 +52,21 @@ export class ModelStore {
     this.onChange();
 
     const plan: { info: SttModelInfo; file: SttModelInfo["files"] extends (infer F)[] | undefined ? F : never }[] = [];
-    for (const f of info.files) plan.push({ info, file: f });
+    // archive models are one download; `files` only says what it unpacks to
+    if (!info.archive) for (const f of info.files) plan.push({ info, file: f });
     if (info.kind === "offline") for (const f of LOCAL_VAD.files!) plan.push({ info: LOCAL_VAD, file: f });
-    const total = plan.reduce((n, p) => n + p.file.size, 0);
+    const total = plan.reduce((n, p) => n + p.file.size, 0) + (info.archive?.size || 0);
     let doneBytes = 0;
     let lastTick = 0;
+    const tick = (chunk: Buffer): void => {
+      doneBytes += chunk.length;
+      const now = Date.now();
+      if (now - lastTick > 250) {
+        lastTick = now;
+        run.progress = Math.min(99, Math.floor((doneBytes / total) * 100));
+        this.onChange();
+      }
+    };
 
     try {
       for (const { info: target, file } of plan) {
@@ -71,27 +83,64 @@ export class ModelStore {
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${file.name}`);
         const out = fs.createWriteStream(part);
         const body = Readable.fromWeb(res.body as never);
-        body.on("data", (chunk: Buffer) => {
-          doneBytes += chunk.length;
-          const now = Date.now();
-          if (now - lastTick > 250) {
-            lastTick = now;
-            run.progress = Math.min(99, Math.floor((doneBytes / total) * 100));
-            this.onChange();
-          }
-        });
+        body.on("data", tick);
         await pipeline(body, out);
         fs.renameSync(part, dest);
       }
+      if (info.archive && !this.isReady(id)) await this.fetchArchive(info, controller.signal, tick);
       run.progress = 100;
       this.log("info", `model ready: ${id}`);
     } catch (err) {
       const message = controller.signal.aborted ? "cancelled" : String((err as Error).message || err);
       this.errors.set(id, message);
       this.log("error", `model download failed: ${id} - ${message}`);
+      // a half-unpacked archive must never look like a model on the next launch
+      if (info.archive) {
+        try {
+          fs.rmSync(path.join(this.dir, id), { recursive: true, force: true, maxRetries: 3 });
+        } catch (rmErr) {
+          this.log("warn", `could not clean up ${id}: ${String((rmErr as Error).message || rmErr)}`);
+        }
+      }
     } finally {
       this.active.delete(id);
       this.onChange();
+    }
+  }
+
+  /**
+   * Fetch a tar.bz2 model and unpack only the entries it declares, renaming
+   * each to the plain name the worker looks for. Nothing is written outside
+   * `<dir>/<id>/`, and the archive itself never touches disk.
+   */
+  private async fetchArchive(info: SttModelInfo, signal: AbortSignal, tick: (chunk: Buffer) => void): Promise<void> {
+    const archive = info.archive!;
+    const folder = path.join(this.dir, info.id);
+    fs.mkdirSync(folder, { recursive: true });
+    this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB)`);
+
+    const res = await fetch(archive.url, { signal, redirect: "follow" });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${info.id}`);
+    // entry name inside the archive -> the local name the worker wants
+    const wanted = new Map<string, string>();
+    for (const [local, entry] of Object.entries(archive.pick)) wanted.set(entry, local);
+
+    const body = Readable.fromWeb(res.body as never);
+    body.on("data", tick);
+    await pipeline(
+      body,
+      unbzip2(),
+      tar.x({
+        cwd: folder,
+        strip: 1,
+        filter: (p: string) => wanted.has(path.posix.basename(p)),
+      }),
+    );
+
+    for (const [entry, local] of wanted) {
+      const from = path.join(folder, entry);
+      if (!fs.existsSync(from)) throw new Error(`archive is missing ${entry}`);
+      if (entry !== local) fs.renameSync(from, path.join(folder, local));
     }
   }
 

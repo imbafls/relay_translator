@@ -91,6 +91,30 @@ export interface SttModelFile {
   size: number;
 }
 
+/**
+ * How much of the machine a local model wants. Setup recommends one from the
+ * CPU and RAM it finds, because a game is usually running on the same box.
+ */
+export type ModelTier = "light" | "medium" | "heavy";
+
+export const MODEL_TIERS: { id: ModelTier; label: string; blurb: string }[] = [
+  { id: "light", label: "LIGHT", blurb: "Runs on any PC, even next to a game. Fewer words land right." },
+  { id: "medium", label: "MEDIUM", blurb: "The sweet spot for a 6-core desktop. Better words, still quick." },
+  { id: "heavy", label: "HEAVY", blurb: "Near cloud accuracy. Wants a strong CPU that a game is not already using." },
+];
+
+/**
+ * A model shipped as one tar.bz2 on the sherpa-onnx releases page instead of
+ * loose files. `pick` maps the local file name the worker expects to the entry
+ * inside the archive.
+ */
+export interface SttModelArchive {
+  url: string;
+  /** compressed bytes, for progress */
+  size: number;
+  pick: Record<string, string>;
+}
+
 export interface SttModelInfo {
   id: string;
   label: string;
@@ -103,11 +127,21 @@ export interface SttModelInfo {
   sizeMb?: number;
   /** local only: files fetched into <dataDir>/models/<id>/ */
   files?: SttModelFile[];
+  /** local only: fetched as one archive; `files` then lists what it unpacks to */
+  archive?: SttModelArchive;
   /** local only: sherpa-onnx model family */
-  engine?: "zipformer-online" | "nemo-transducer" | "sense-voice" | "whisper";
+  engine?: "zipformer-online" | "nemotron-online" | "nemo-transducer" | "sense-voice" | "whisper" | "moonshine";
+  /** local only: how much machine it wants */
+  tier?: ModelTier;
+  /** local only: approximate 1-5 ratings, for the setup picker */
+  speed?: 1 | 2 | 3 | 4 | 5;
+  accuracy?: 1 | 2 | 3 | 4 | 5;
+  /** local only: one line on what the model is good and bad at */
+  note?: string;
 }
 
 const HF = "https://huggingface.co";
+const GH_MODELS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models";
 
 /**
  * Local models come from the sherpa-onnx mirrors on Hugging Face, one plain
@@ -126,6 +160,10 @@ export const STT_MODELS: SttModelInfo[] = [
     engine: "zipformer-online",
     languages: "en",
     sizeMb: 44,
+    tier: "light",
+    speed: 5,
+    accuracy: 2,
+    note: "Live word-by-word captions for almost no CPU. Misses names and slang.",
     files: [
       { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/encoder-epoch-99-avg-1.int8.onnx`, size: 42845182 },
       { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/decoder-epoch-99-avg-1.int8.onnx`, size: 539499 },
@@ -141,6 +179,10 @@ export const STT_MODELS: SttModelInfo[] = [
     engine: "nemo-transducer",
     languages: "en + 24 European",
     sizeMb: 670,
+    tier: "heavy",
+    speed: 3,
+    accuracy: 5,
+    note: "Top of the open leaderboards, and quick for its size. Auto-detects the language.",
     files: [
       { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/encoder.int8.onnx`, size: 652184281 },
       { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/decoder.int8.onnx`, size: 11845275 },
@@ -156,6 +198,10 @@ export const STT_MODELS: SttModelInfo[] = [
     engine: "sense-voice",
     languages: "zh en ja ko yue",
     sizeMb: 240,
+    tier: "medium",
+    speed: 4,
+    accuracy: 4,
+    note: "Fast across Chinese, Japanese, Korean, Cantonese and English.",
     files: [
       { name: "model.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx`, size: 239233841 },
       { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt`, size: 315894 },
@@ -169,13 +215,238 @@ export const STT_MODELS: SttModelInfo[] = [
     engine: "whisper",
     languages: "~100 incl. vi",
     sizeMb: 375,
+    tier: "heavy",
+    speed: 1,
+    accuracy: 4,
+    note: "The widest language list, including Vietnamese. Pads every phrase to 30 s, so it is slow.",
     files: [
       { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-encoder.int8.onnx`, size: 112442483 },
       { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-decoder.int8.onnx`, size: 262226114 },
       { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt`, size: 816730 },
     ],
   },
+
+  // --- archive models: one tar.bz2 from the sherpa-onnx releases page -------
+  {
+    id: "local-moonshine-tiny",
+    label: "Moonshine Tiny - fast English utterances",
+    provider: "local",
+    kind: "offline",
+    engine: "moonshine",
+    languages: "en",
+    sizeMb: 103,
+    tier: "light",
+    speed: 5,
+    accuracy: 3,
+    note: "Beats Whisper Tiny at the same size. Whole phrases land a beat after you stop talking.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2`,
+      size: 107600538,
+      pick: {
+        "preprocess.onnx": "preprocess.onnx",
+        "encode.int8.onnx": "encode.int8.onnx",
+        "uncached_decode.int8.onnx": "uncached_decode.int8.onnx",
+        "cached_decode.int8.onnx": "cached_decode.int8.onnx",
+        "tokens.txt": "tokens.txt",
+      },
+    },
+    files: [
+      { name: "preprocess.onnx", url: "", size: 6800738 },
+      { name: "encode.int8.onnx", url: "", size: 18249187 },
+      { name: "uncached_decode.int8.onnx", url: "", size: 53216096 },
+      { name: "cached_decode.int8.onnx", url: "", size: 45264830 },
+      { name: "tokens.txt", url: "", size: 436688 },
+    ],
+  },
+  {
+    id: "local-whisper-tiny-en",
+    label: "Whisper Tiny EN - the classic, smallest",
+    provider: "local",
+    kind: "offline",
+    engine: "whisper",
+    languages: "en",
+    sizeMb: 113,
+    tier: "light",
+    speed: 3,
+    accuracy: 2,
+    note: "Familiar Whisper output at the smallest size. Slower than its size suggests.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-whisper-tiny.en.tar.bz2`,
+      size: 118071777,
+      pick: {
+        "encoder.int8.onnx": "tiny.en-encoder.int8.onnx",
+        "decoder.int8.onnx": "tiny.en-decoder.int8.onnx",
+        "tokens.txt": "tiny.en-tokens.txt",
+      },
+    },
+    files: [
+      { name: "encoder.int8.onnx", url: "", size: 12937772 },
+      { name: "decoder.int8.onnx", url: "", size: 89853865 },
+      { name: "tokens.txt", url: "", size: 835554 },
+    ],
+  },
+  {
+    id: "local-zipformer-en",
+    label: "Zipformer EN - streaming, bigger vocabulary",
+    provider: "local",
+    kind: "streaming",
+    engine: "zipformer-online",
+    languages: "en",
+    sizeMb: 296,
+    tier: "medium",
+    speed: 4,
+    accuracy: 3,
+    note: "Live words with a wider vocabulary. The pick if you want captions while you speak.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2`,
+      size: 310414022,
+      pick: {
+        "encoder.int8.onnx": "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        "decoder.int8.onnx": "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        "joiner.int8.onnx": "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        "tokens.txt": "tokens.txt",
+      },
+    },
+    files: [
+      { name: "encoder.int8.onnx", url: "", size: 70108816 },
+      { name: "decoder.int8.onnx", url: "", size: 540688 },
+      { name: "joiner.int8.onnx", url: "", size: 259416 },
+      { name: "tokens.txt", url: "", size: 5048 },
+    ],
+  },
+  {
+    id: "local-moonshine-base",
+    label: "Moonshine Base - accurate English utterances",
+    provider: "local",
+    kind: "offline",
+    engine: "moonshine",
+    languages: "en",
+    sizeMb: 240,
+    tier: "medium",
+    speed: 4,
+    accuracy: 4,
+    note: "On par with much larger models for English, at a fraction of the CPU.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-moonshine-base-en-int8.tar.bz2`,
+      size: 250807309,
+      pick: {
+        "preprocess.onnx": "preprocess.onnx",
+        "encode.int8.onnx": "encode.int8.onnx",
+        "uncached_decode.int8.onnx": "uncached_decode.int8.onnx",
+        "cached_decode.int8.onnx": "cached_decode.int8.onnx",
+        "tokens.txt": "tokens.txt",
+      },
+    },
+    files: [
+      { name: "preprocess.onnx", url: "", size: 14077290 },
+      { name: "encode.int8.onnx", url: "", size: 50311494 },
+      { name: "uncached_decode.int8.onnx", url: "", size: 122120451 },
+      { name: "cached_decode.int8.onnx", url: "", size: 99983837 },
+      { name: "tokens.txt", url: "", size: 436688 },
+    ],
+  },
+  {
+    id: "local-parakeet-tdt-0.6b-v2",
+    label: "Parakeet TDT 0.6B v2 - best English accuracy",
+    provider: "local",
+    kind: "offline",
+    engine: "nemo-transducer",
+    languages: "en",
+    sizeMb: 460,
+    tier: "heavy",
+    speed: 3,
+    accuracy: 5,
+    note: "The English-only Parakeet. Same accuracy as v3 on English, smaller download.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2`,
+      size: 482468385,
+      pick: {
+        "encoder.int8.onnx": "encoder.int8.onnx",
+        "decoder.int8.onnx": "decoder.int8.onnx",
+        "joiner.int8.onnx": "joiner.int8.onnx",
+        "tokens.txt": "tokens.txt",
+      },
+    },
+    files: [
+      { name: "encoder.int8.onnx", url: "", size: 652184296 },
+      { name: "decoder.int8.onnx", url: "", size: 7257753 },
+      { name: "joiner.int8.onnx", url: "", size: 1739080 },
+      { name: "tokens.txt", url: "", size: 9384 },
+    ],
+  },
+  {
+    id: "local-nemotron-streaming",
+    label: "Nemotron 3.5 Streaming 0.6B - live words, heavy",
+    provider: "local",
+    kind: "streaming",
+    engine: "nemotron-online",
+    languages: "en + 24 European",
+    sizeMb: 453,
+    tier: "heavy",
+    speed: 2,
+    accuracy: 5,
+    note: "Word-by-word captions at heavy-tier accuracy. Wants eight fast cores to keep up.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2`,
+      size: 475271763,
+      pick: {
+        "encoder.int8.onnx": "encoder.int8.onnx",
+        "decoder.int8.onnx": "decoder.int8.onnx",
+        "joiner.int8.onnx": "joiner.int8.onnx",
+        "tokens.txt": "tokens.txt",
+      },
+    },
+    files: [
+      { name: "encoder.int8.onnx", url: "", size: 657601403 },
+      { name: "decoder.int8.onnx", url: "", size: 14978075 },
+      { name: "joiner.int8.onnx", url: "", size: 9504438 },
+      { name: "tokens.txt", url: "", size: 131440 },
+    ],
+  },
+  {
+    id: "local-whisper-turbo",
+    label: "Whisper Large v3 Turbo - every language, slowest",
+    provider: "local",
+    kind: "offline",
+    engine: "whisper",
+    languages: "~100 incl. vi",
+    sizeMb: 537,
+    tier: "heavy",
+    speed: 1,
+    accuracy: 5,
+    note: "Whisper's best. Every language, but each phrase takes seconds on a CPU.",
+    archive: {
+      url: `${GH_MODELS}/sherpa-onnx-whisper-turbo.tar.bz2`,
+      size: 563790207,
+      pick: {
+        "encoder.int8.onnx": "turbo-encoder.int8.onnx",
+        "decoder.int8.onnx": "turbo-decoder.int8.onnx",
+        "tokens.txt": "turbo-tokens.txt",
+      },
+    },
+    files: [
+      { name: "encoder.int8.onnx", url: "", size: 674716297 },
+      { name: "decoder.int8.onnx", url: "", size: 361080764 },
+      { name: "tokens.txt", url: "", size: 816730 },
+    ],
+  },
 ];
+
+/** what this PC can comfortably run - a game is usually on the same CPU */
+export interface HardwareInfo {
+  /** logical CPU threads */
+  threads: number;
+  cpu: string;
+  /** installed RAM, GB (rounded) */
+  ramGb: number;
+  recommended: ModelTier;
+}
+
+export function recommendTier(threads: number, ramGb: number): ModelTier {
+  if (threads >= 12 && ramGb >= 16) return "heavy";
+  if (threads >= 6 && ramGb >= 8) return "medium";
+  return "light";
+}
 
 /** silero VAD - segments speech for every offline local model */
 export const LOCAL_VAD: SttModelInfo = {
@@ -353,6 +624,8 @@ export interface ControlStatus {
   update?: UpdateStatus;
   /** download state of the local STT models (desktop app only) */
   localModels?: LocalModelStatus[];
+  /** CPU / RAM of the machine running the app, for the model recommendation */
+  hardware?: HardwareInfo;
 }
 
 export interface UsageInfo {

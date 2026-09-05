@@ -5,5 +5,5 @@
     "rootDir": "src",
     "types": ["node"]
   },
-  "include": ["src/main.ts", "src/preload.ts", "src/ipc.ts"]
+  "include": ["src/main.ts", "src/preload.ts", "src/ipc.ts", "src/unbzip2-stream.d.ts"]
 }
