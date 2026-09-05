@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/companion",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Shared capture + relay client + local control API",
   "main": "dist/index.js",
