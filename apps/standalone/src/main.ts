@@ -26,6 +26,7 @@ import {
   recommendTier,
   UpdateStatus,
   UsageInfo,
+  controlConfigPatch,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
 import { ModelStore } from "./models";
@@ -522,7 +523,14 @@ async function startControl(): Promise<void> {
       win?.webContents.send("session:command", "stop");
     },
     async patchConfig(patch) {
-      await applyConfig(patch);
+      // this arrives from the control API, which has no credential and admits
+      // Origin: null - so it is a web page until proven otherwise. IPC from our
+      // own renderer still goes through applyConfig unfiltered.
+      const { allowed, rejected } = controlConfigPatch(patch);
+      if (rejected.length) {
+        log("warn", `control API tried to set ${rejected.join(", ")} - refused`);
+      }
+      if (Object.keys(allowed).length) await applyConfig(allowed);
       return currentStatus();
     },
     async rotateLink() {

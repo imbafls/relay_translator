@@ -82,6 +82,68 @@ export const DEFAULT_CONFIG: AppConfig = {
  */
 export const FALLBACK_STT = "deepgram-nova-3";
 
+/**
+ * The settings a remote control may change.
+ *
+ * The control API on 47477 has no credential and its origin check admits
+ * `Origin: null`, so a web page can reach it. `configStore.update` merges
+ * whatever it is handed, which put the API keys, the relay endpoint, the
+ * publisher token and `updateFeedUrl` - the last of which decides which
+ * executable the app downloads and runs - inside reach of a POST from a
+ * sandboxed iframe.
+ *
+ * This is what a Stream Deck legitimately changes: what to transcribe, in which
+ * languages, from which device, and how it is shown. Nothing here can point the
+ * app at a different server or a different binary.
+ */
+export const CONTROL_PATCHABLE_KEYS = [
+  "stt",
+  "translation",
+  "audioSource",
+  "audioSource2",
+  "languages",
+  "translationEnabled",
+  "showLatency",
+  "output",
+  "linkMode",
+] as const;
+
+/** the part of an untrusted patch that a remote control is allowed to apply */
+export function controlConfigPatch(patch: Record<string, unknown> | null | undefined): {
+  allowed: Partial<AppConfig>;
+  rejected: string[];
+} {
+  const allowed: Record<string, unknown> = {};
+  const rejected: string[] = [];
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { allowed, rejected };
+  for (const [key, value] of Object.entries(patch)) {
+    if ((CONTROL_PATCHABLE_KEYS as readonly string[]).includes(key)) allowed[key] = value;
+    else rejected.push(key);
+  }
+  return { allowed: allowed as Partial<AppConfig>, rejected };
+}
+
+/**
+ * Whether an auto-update feed may be used.
+ *
+ * electron-updater downloads and runs what the feed names, and this build sets
+ * no `publisherName`, so its signature check returns early and the only
+ * integrity proof is a hash in the feed's own file. Plain http therefore hands
+ * a LAN attacker the installer; loopback is allowed because that is a developer
+ * serving their own build.
+ */
+export function isAllowedUpdateFeed(url: string | undefined | null): boolean {
+  if (!url) return true; // unset means the packaged GitHub feed
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === "https:") return true;
+  return parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname);
+}
+
 /** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
 export function isLocalStt(id: string): boolean {
   const info = sttModel(id);

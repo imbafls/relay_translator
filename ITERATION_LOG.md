@@ -963,3 +963,36 @@ Audit finding 3, which is a correction to my own turn 9 work.
   break the integration silently. Shipping half-wired auth would be worse than
   the honest partial fix, so the remaining hole is commented at the route.
 - **Status**: PASSED
+
+---
+
+### Turn 34/40 - Resilience & state (the field that chooses which binary runs)
+
+Audit finding 2, and the route it travels - finding 3's still-open `/config`.
+
+- **Tests Added**: `packages/shared/test/controlPolicy.test.ts`, 25 tests over
+  two new helpers: what a remote control may change, and which update feed may
+  be trusted.
+- **Issue/Gap Uncovered**: `updateFeedUrl` decides which executable the app
+  downloads and runs on quit, under `autoDownload` and `autoInstallOnAppQuit`,
+  and this build sets no `publisherName` - so electron-updater's signature check
+  returns early and the only integrity proof is a hash in the feed's own file.
+  Nothing validated the value. The route to it was worse: the control API's
+  `patchConfig` went straight into `configStore.update`, which merges any key at
+  all, so a single POST from a sandboxed iframe could set the update feed, the
+  relay endpoint, the publisher token or an API key. One field, set from a web
+  page, is code execution as the user.
+- **Enhancement Shipped**: `controlConfigPatch` filters an untrusted patch down
+  to what a Stream Deck legitimately changes - what to transcribe, in which
+  languages, from which device, how it is shown - and logs what it refused.
+  Nothing on that list can point the app at another server or another binary,
+  and it is exactly the five fields `pi.js` actually sends, verified in turn 26.
+  IPC from our own renderer still applies patches unfiltered.
+  `isAllowedUpdateFeed` requires https, allowing http only on loopback, which is
+  a developer serving their own build.
+- **What this does not do**: signing. The audit's other half is
+  `win.publisherName` plus a certificate, which is not something I can add here,
+  and until it exists the feed hash is self-certifying. https and the allowlist
+  narrow who can choose the feed; signing is what would make the download itself
+  trustworthy.
+- **Status**: PASSED

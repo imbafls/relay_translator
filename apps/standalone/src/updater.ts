@@ -13,6 +13,7 @@
 import { app } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+import { isAllowedUpdateFeed } from "@callout-relay/shared";
 import type { AppConfig, UpdateStatus } from "@callout-relay/shared";
 
 export const RELEASES_URL = "https://github.com/imbafls/relay_translator/releases/latest";
@@ -92,7 +93,12 @@ export class Updater {
 
     // no override = the packaged app-update.yml (GitHub releases)
     const feedUrl = this.deps.config().updateFeedUrl?.trim();
-    if (feedUrl) {
+    if (feedUrl && !isAllowedUpdateFeed(feedUrl)) {
+      // electron-updater downloads and runs what the feed names, and this build
+      // sets no publisherName, so its signature check returns early - the only
+      // integrity proof would be a hash in the attacker's own file
+      this.deps.log("error", `refusing update feed "${feedUrl}" - falling back to the release feed`);
+    } else if (feedUrl) {
       try {
         mod.setFeedURL({ provider: "generic", url: feedUrl });
         this.deps.log("info", `update feed: ${feedUrl}`);
