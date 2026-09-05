@@ -755,3 +755,30 @@ placeholder is safe - but I had reasoned that rather than shown it.
   and the guard fails if either side moves without the other. Running it against
   the old file reports both faults by name.
 - **Status**: PASSED
+
+---
+
+### Turn 27/40 - Resilience & state (the version nothing was bumping)
+
+Turn 26 found the property inspector keeping its own copy of the catalogue.
+This sweeps the same seam - data duplicated where it cannot be imported - and
+found the duplicate that had drifted furthest.
+
+- **Tests Added**: `packages/shared/test/versions.test.ts`, 6 tests: every
+  workspace `package.json` and every `.sdPlugin/manifest.json` must state the
+  same version as `apps/standalone`, that version must be one the tooling
+  accepts, and `version-bump.mjs` must actually reach all of them.
+- **Issue/Gap Uncovered**: The Stream Deck manifest said `0.1.0` while the rest
+  of the repo said `0.5.2`. It is not a `package.json`, `version-bump.mjs` only
+  globs those, and the release workflow only checks the tag against
+  `apps/standalone` - so nothing has moved it since the UI redesign, through
+  five releases. Elgato both displays that number and uses it to decide a plugin
+  is newer, so a stuck one reads as a plugin that has never been updated.
+  One hit checked and dismissed: `home.html` matched the search for hardcoded
+  language ids, but those are CSS classes on the sample captions, not a
+  duplicated list.
+- **Enhancement Shipped**: `version-bump.mjs` rewrites the manifest too, the
+  manifest is at `0.5.2`, and the guard covers both directions - the versions
+  must agree, and the script must still be able to reach every file that states
+  one. Reverting either half turns two tests red.
+- **Status**: PASSED

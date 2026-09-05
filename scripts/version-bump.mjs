@@ -32,6 +32,18 @@ for (const file of files) {
   changed += 1;
 }
 
-console.log(changed ? `\n${changed} package(s) set to ${version}` : `already at ${version}`);
+// The Stream Deck manifest carries its own version and is not a package.json,
+// so it sat at 0.1.0 through five releases: Elgato shows this number and uses
+// it to decide a plugin is newer, so a stuck one reads as "never updated".
+for (const file of globSync("apps/*/*.sdPlugin/manifest.json").filter((f) => !f.includes("node_modules"))) {
+  const raw = readFileSync(file, "utf8");
+  const current = JSON.parse(raw).Version;
+  if (current === version) continue;
+  writeFileSync(file, raw.replace(/("Version":\s*)"[^"]+"/, `$1"${version}"`));
+  console.log(`${file}: ${current} -> ${version}`);
+  changed += 1;
+}
+
+console.log(changed ? `\n${changed} file(s) set to ${version}` : `already at ${version}`);
 console.log(`next: git commit -am "Release v${version}" && git tag -a v${version} -m "v${version}"`);
 console.log(`      git push origin master v${version}   # the Release workflow builds and publishes`);
