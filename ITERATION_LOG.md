@@ -439,3 +439,29 @@ first-party runtime source.
   rewiring the app does whenever the relay is rebuilt. Each asserts an exact
   count, so a regression shows up as a number rather than a shrug.
 - **Status**: PASSED
+
+---
+
+### Turn 16/100 - Resilience & state (range requests on the update feed)
+
+- **Tests Added**: `packages/relay/test/updates.test.ts`, 12 tests against a real
+  relay serving a real 1000-byte installer whose bytes encode their own offset,
+  so a wrong slice is visible rather than merely the wrong length. Covers the
+  whole file, `latest.yml` caching, HEAD, an explicit span, an open-ended span, a
+  suffix range, an end past the file, a start past the file, a backwards range,
+  a zero-length suffix, and a Range header that cannot be parsed.
+- **Issue/Gap Uncovered**: Three, in the code that feeds electron-updater.
+  `bytes=-100` is the suffix form and means the last 100 bytes; the regex left
+  `start` empty so it was read as `0-100` and served the *first* 101 bytes,
+  under a `Content-Range` asserting that was the range requested. The client
+  gets the beginning of the installer where it expected the end, and nothing
+  anywhere reports an error - the worst shape a bug can take on a download that
+  is then executed. `bytes=0-999999` returned 416 rather than clamping, though
+  RFC 7233 says an end at or past the length means the rest of the file, which
+  is exactly what a resume asking for more than is left sends. And `bytes=-0`
+  returned a byte instead of the 416 an unsatisfiable range calls for.
+- **Enhancement Shipped**: The suffix form is computed from the end of the file,
+  an over-large end is clamped to the last byte, and a zero-length suffix is
+  refused. Nothing else moved: the explicit-span, open-ended, start-past-EOF and
+  backwards cases all passed before the change and still do.
+- **Status**: PASSED

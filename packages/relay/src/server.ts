@@ -366,9 +366,26 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       // installers are big: stream them, and let the updater resume partials
       const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
       if (range) {
-        const start = range[1] ? Number(range[1]) : 0;
-        const end = range[2] ? Number(range[2]) : stat.size - 1;
-        if (start >= stat.size || end >= stat.size || start > end) {
+        const [, rawStart, rawEnd] = range;
+        let start: number;
+        let end: number;
+        let satisfiable = true;
+        if (rawStart === "") {
+          // suffix form: "bytes=-500" is the LAST 500 bytes. Reading it as
+          // 0-500 hands back the start of the installer under a Content-Range
+          // saying it is the range that was asked for, so the file the updater
+          // assembles is wrong and nothing anywhere reports it.
+          const wanted = rawEnd === "" ? 0 : Number(rawEnd);
+          satisfiable = wanted > 0;
+          start = Math.max(0, stat.size - wanted);
+          end = stat.size - 1;
+        } else {
+          start = Number(rawStart);
+          // an end at or past the length means the rest of the file (RFC 7233),
+          // which is what a resume asking for more than is left is after
+          end = rawEnd === "" ? stat.size - 1 : Math.min(Number(rawEnd), stat.size - 1);
+        }
+        if (!satisfiable || start >= stat.size || start > end) {
           res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
           res.end();
           return;
