@@ -1202,6 +1202,10 @@ function openSetup(): void {
   obDeepgram = config.deepgramApiKey && keyCheck.deepgram !== "checking" ? keyCheck.deepgram : undefined;
   obGemini = config.geminiApiKey && keyCheck.gemini !== "checking" ? keyCheck.gemini : undefined;
   if (config.deepgramApiKey && !obDeepgram) obCheckDeepgram();
+  // the same repair for Gemini: without it a saved key that has never been
+  // checked this run leaves step 2 showing EMPTY with CONTINUE dead, and the
+  // only enabled way out is SKIP, which turns off the translation it was for
+  if (config.geminiApiKey && !obGemini) obCheckGemini();
   setSeg("obSttSeg", obMode);
   setSeg("obOutputSeg", config.output || "phone");
   setView("onboarding");
@@ -1462,6 +1466,10 @@ function renderObKeyStatus(): void {
     dg.classList.add("warn");
   } else if (obDeepgram && obDeepgram.valid) {
     dg.textContent = obDeepgram.creditUsd != null ? `VALID · $${obDeepgram.creditUsd.toFixed(2)} CREDIT` : "VALID";
+  } else {
+    // a key in the field with no result yet: never leave the previous text
+    dg.textContent = "CHECKING…";
+    dg.classList.add("dim");
   }
   const keyOk = !!(obDeepgram && obDeepgram !== "checking" && obDeepgram.valid);
   const ms = $("obModelStatus");
@@ -1499,6 +1507,9 @@ function renderObKeyStatus(): void {
     gm.classList.add("warn");
   } else if (obGemini && obGemini.valid) {
     gm.textContent = "VALID";
+  } else {
+    gm.textContent = "CHECKING…";
+    gm.classList.add("dim");
   }
   const ok2 = !!(obGemini && obGemini !== "checking" && obGemini.valid);
   const c2 = $("obContinue2") as HTMLButtonElement;
