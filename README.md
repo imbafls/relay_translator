@@ -92,18 +92,25 @@ the tray menu; clicking it restarts into the new version.
 The portable exe cannot replace itself, so it reports "portable build" and links
 to the releases page instead.
 
-Updates come from the relay box, not GitHub — the repo is private, so its
-release feed 404s for anyone without access. The relay serves whatever is in
-`<dataDir>/updates` at `/updates/`, and `/download` redirects to the installer
-named in `latest.yml`:
+By default the app reads the GitHub release for each tag. **That only works
+once the repo is public** — GitHub answers 404 on a private release feed, and
+the app reports "no release feed found" and offers the releases page instead.
 
-- **Download:** <http://187.124.87.202:8787/download>
-- **Feed:** `http://187.124.87.202:8787/updates/latest.yml`
+While it is private, or to host builds yourself, set `updateFeedUrl` in
+`KEYS → UPDATES` to any static directory serving `latest.yml` next to the
+installer. The relay can be that directory: it serves `<dataDir>/updates` at
+`/updates/`, and `/download` redirects to whatever `latest.yml` names, which
+gives you one stable link to hand out.
 
-Point `updateFeedUrl` in `KEYS → UPDATES` at any other static directory to use
-your own. To publish a build, copy the installer, its `.blockmap` and
-`latest.yml` from the GitHub release into `/opt/callout-relay/data/updates/` on
-the relay box; nothing needs restarting.
+```
+updateFeedUrl   http://<your-relay>:8787/updates
+download link   http://<your-relay>:8787/download
+```
+
+To publish a build there, copy the installer, its `.blockmap` and `latest.yml`
+from the GitHub release into `/opt/callout-relay/data/updates/` on the box.
+Upload `latest.yml` last — it is what tells installed apps a new version exists.
+Nothing needs restarting.
 
 ## Releasing
 
@@ -122,18 +129,15 @@ The workflow refuses to build when the tag and `apps/standalone/package.json`
 disagree, which is what `pnpm version-bump` keeps in step. `CI` runs a build, a
 typecheck and a renderer element-id check on every push and pull request.
 
-The release lands on GitHub; publishing it to users is one more step, because
-the update feed lives on the relay box:
+Once the repo is public that is the whole release. If you are mirroring builds
+to a relay box (see Updates), copy them across afterwards:
 
 ```powershell
-gh release download v0.3.1 -p "CalloutRelay-Setup-*.exe" -p "*.blockmap" -p latest.yml -D out
-node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.1.exe /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.1.exe
-node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.1.exe.blockmap /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.1.exe.blockmap
+gh release download v0.3.2 -p "CalloutRelay-Setup-*.exe" -p "*.blockmap" -p latest.yml -D out
+node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.2.exe /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.2.exe
+node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.2.exe.blockmap /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.2.exe.blockmap
 node scripts/vps.mjs put out\latest.yml /opt/callout-relay/data/updates/latest.yml
 ```
-
-Upload `latest.yml` last — it is what tells every installed app that a new
-version exists.
 
 ## Run
 

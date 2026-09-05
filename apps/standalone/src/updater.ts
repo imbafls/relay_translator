@@ -1,10 +1,11 @@
 /**
  * Auto-update for the desktop app.
  *
- * Feed: the relay's own `/updates/` directory (DEFAULT_UPDATE_FEED), which the
- * release workflow's artifacts get published to. The GitHub release feed is not
- * usable here because the repo is private. `updateFeedUrl` in config points the
- * app at any other static directory serving `latest.yml` + the installer.
+ * Feed: the GitHub release for each tag, from the `app-update.yml` that
+ * electron-builder writes into the package. Setting `updateFeedUrl` overrides
+ * that with any static directory serving `latest.yml` + the installer — a relay
+ * box, an R2 bucket — which is what you want while the repo is private, since
+ * GitHub answers 404 for a private release feed.
  *
  * Only the NSIS install can replace itself. The portable exe and unpackaged dev
  * runs report "unsupported" and link to the release page instead.
@@ -12,7 +13,6 @@
 import { app } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { DEFAULT_UPDATE_FEED } from "@callout-relay/shared";
 import type { AppConfig, UpdateStatus } from "@callout-relay/shared";
 
 export const RELEASES_URL = "https://github.com/imbafls/relay_translator/releases/latest";
@@ -90,12 +90,15 @@ export class Updater {
       debug: () => {},
     };
 
-    const feedUrl = this.deps.config().updateFeedUrl?.trim() || DEFAULT_UPDATE_FEED;
-    try {
-      mod.setFeedURL({ provider: "generic", url: feedUrl });
-      this.deps.log("info", `update feed: ${feedUrl}`);
-    } catch (err) {
-      this.deps.log("error", `bad update feed ${feedUrl}: ${String(err)}`);
+    // no override = the packaged app-update.yml (GitHub releases)
+    const feedUrl = this.deps.config().updateFeedUrl?.trim();
+    if (feedUrl) {
+      try {
+        mod.setFeedURL({ provider: "generic", url: feedUrl });
+        this.deps.log("info", `update feed: ${feedUrl}`);
+      } catch (err) {
+        this.deps.log("error", `bad updateFeedUrl, falling back to the release feed: ${String(err)}`);
+      }
     }
 
     mod.on("checking-for-update", () => this.set({ state: "checking" }));

@@ -230,13 +230,6 @@ export interface UsageInfo {
 // Auto-update (desktop app <-> renderer / control API)
 // ---------------------------------------------------------------------------
 
-/**
- * Where the desktop app looks for new builds when `updateFeedUrl` is unset.
- * The relay serves this directory at `/updates/` with a `/download` shortcut,
- * so releases stay reachable without the GitHub repo being public.
- */
-export const DEFAULT_UPDATE_FEED = "http://187.124.87.202:8787/updates";
-
 export type UpdateState =
   /** nothing checked yet this run */
   | "idle"
