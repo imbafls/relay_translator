@@ -9,8 +9,7 @@
   },
   "dependencies": {
     "@callout-relay/companion": "workspace:*",
-    "@callout-relay/shared": "workspace:*",
-    "naudiodon": "^2.3.6"
+    "@callout-relay/shared": "workspace:*"
   },
   "devDependencies": {
     "@elgato/streamdeck": "^0.2.0",
