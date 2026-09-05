@@ -1081,3 +1081,29 @@ Audit finding 13.
   way through - prevention was not enough on its own, because a file written
   before the guard still has to open. Reverting turns six of the seven red.
 - **Status**: PASSED
+
+---
+
+### Turn 38/40 - Resilience & state (an env key that copied itself into the file)
+
+Audit finding 14, and it bears directly on the key rotation done during this
+run.
+
+- **Tests Added**: 5 in `packages/companion/test/config.test.ts`: an env-only
+  key never written to the file, a key clearable from the app, the environment
+  still reaching the app that needs it, a rotated env value not being outranked
+  by a stale copy, and a key the user actually saved still winning.
+- **Issue/Gap Uncovered**: The env fallback lived inside `merge()`, which
+  `update()` runs before `persist()` - so it applied on the *write* path.
+  Clearing a key in KEYS sends `""` deliberately; the fallback saw a falsy value
+  and put the environment's key straight back, and `persist` wrote it to
+  `config.json`. The field refilled itself and there was no way to clear a key
+  from the app. Worse, any unrelated save - a `showLatency` toggle, a background
+  token sync - copied an env-only secret into the file, where it outlived the
+  environment and quietly won over a rotated one. Anyone who rotates their keys
+  and finds the old ones still in use is looking at this.
+- **Enhancement Shipped**: the fallback moved to `withEnv()`, a read-only view
+  applied on the way out. `merge()` and everything `persist()` writes now
+  contain only what was actually stored, and `update()` merges into that rather
+  than into the env-applied view. Three of the five tests go red on revert.
+- **Status**: PASSED

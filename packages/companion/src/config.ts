@@ -61,17 +61,43 @@ export class ConfigStore {
     if (stored.setupDone === undefined && (stored.deepgramApiKey || process.env.DEEPGRAM_API_KEY)) {
       this.cached.setupDone = true;
     }
-    return this.cached;
+    return this.withEnv(this.cached);
+  }
+
+  /**
+   * The config as callers should see it: what is stored, plus any secret the
+   * environment supplies for a field that has none.
+   *
+   * This is deliberately not what gets written. The fallback used to live in
+   * `merge()`, which `update()` runs before `persist()`, so it applied on the
+   * write path: clearing a key in KEYS sent `""`, the fallback saw a falsy
+   * value and put the environment's key back, and `persist` wrote it to
+   * config.json. The field refilled itself and there was no way to clear a key
+   * from the app - and any unrelated save copied an env-only secret into the
+   * file, where it outlived the environment and quietly won over a rotated one.
+   */
+  private withEnv(cfg: AppConfig): AppConfig {
+    const out = { ...cfg };
+    if (!out.deepgramApiKey && process.env.DEEPGRAM_API_KEY) {
+      out.deepgramApiKey = process.env.DEEPGRAM_API_KEY;
+    }
+    if (!out.geminiApiKey && process.env.GEMINI_API_KEY) {
+      out.geminiApiKey = process.env.GEMINI_API_KEY;
+    }
+    return out;
   }
 
   get(): AppConfig {
-    return this.cached || this.load();
+    return this.cached ? this.withEnv(this.cached) : this.load();
   }
 
   update(patch: Partial<AppConfig>): AppConfig {
-    this.cached = this.merge(this.get(), patch);
+    // merge into what is stored, never into the env-applied view, or the
+    // environment's value is what gets persisted
+    if (!this.cached) this.load();
+    this.cached = this.merge(this.cached as AppConfig, patch);
     this.persist();
-    return this.cached;
+    return this.withEnv(this.cached);
   }
 
   persist(): void {
@@ -115,13 +141,6 @@ export class ConfigStore {
       out.languages = { ...DEFAULT_CONFIG.languages };
     }
 
-    // env fallback for secrets
-    if (!out.deepgramApiKey && process.env.DEEPGRAM_API_KEY) {
-      out.deepgramApiKey = process.env.DEEPGRAM_API_KEY;
-    }
-    if (!out.geminiApiKey && process.env.GEMINI_API_KEY) {
-      out.geminiApiKey = process.env.GEMINI_API_KEY;
-    }
     return out;
   }
 }

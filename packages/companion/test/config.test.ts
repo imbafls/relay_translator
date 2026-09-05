@@ -202,3 +202,55 @@ describe("a null where a value was expected", () => {
     expect(after.stt).toBe("local-zipformer-en-20m");
   });
 });
+
+describe("a key that only exists in the environment", () => {
+  it("is never written into the config file", () => {
+    // any unrelated save used to copy it in, where it outlives the environment
+    process.env.DEEPGRAM_API_KEY = "dg-from-env";
+    const store = new ConfigStore(dir);
+    store.update({ showLatency: false });
+
+    const onDisk = JSON.parse(fs.readFileSync(file(), "utf8"));
+    expect(onDisk.deepgramApiKey).toBeFalsy();
+    expect(onDisk.showLatency).toBe(false);
+  });
+
+  it("can be cleared from the app", () => {
+    // the renderer sends "" on purpose to clear a secret; the fallback used to
+    // see a falsy value and put the env key straight back, then persist it
+    process.env.DEEPGRAM_API_KEY = "dg-from-env";
+    const store = new ConfigStore(dir);
+    store.update({ deepgramApiKey: "dg-typed-by-hand" });
+    expect(JSON.parse(fs.readFileSync(file(), "utf8")).deepgramApiKey).toBe("dg-typed-by-hand");
+
+    store.update({ deepgramApiKey: "" });
+    expect(JSON.parse(fs.readFileSync(file(), "utf8")).deepgramApiKey).toBe("");
+  });
+
+  it("still reaches the app that needs it", () => {
+    // clearing the stored one falls back to the environment, which is correct:
+    // the key really is set there
+    process.env.GEMINI_API_KEY = "gm-from-env";
+    const store = new ConfigStore(dir);
+    expect(store.get().geminiApiKey).toBe("gm-from-env");
+    store.update({ geminiApiKey: "" });
+    expect(store.get().geminiApiKey).toBe("gm-from-env");
+  });
+
+  it("does not outrank a rotated environment value", () => {
+    // the file used to hold a stale copy that quietly won
+    process.env.DEEPGRAM_API_KEY = "dg-old";
+    new ConfigStore(dir).update({ showLatency: true });
+
+    process.env.DEEPGRAM_API_KEY = "dg-rotated";
+    expect(new ConfigStore(dir).load().deepgramApiKey).toBe("dg-rotated");
+  });
+
+  it("still loses to a key the user actually saved", () => {
+    process.env.DEEPGRAM_API_KEY = "dg-from-env";
+    const store = new ConfigStore(dir);
+    store.update({ deepgramApiKey: "dg-saved" });
+    expect(store.get().deepgramApiKey).toBe("dg-saved");
+    expect(new ConfigStore(dir).load().deepgramApiKey).toBe("dg-saved");
+  });
+});
