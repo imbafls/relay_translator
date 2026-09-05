@@ -95,12 +95,21 @@ class TranslationCache {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** room for one spoken line; a long utterance in a dense target needs more */
+const MAX_OUTPUT_TOKENS = 120;
+
 export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
   const { apiKey, model, source, target, timeoutMs = 6000 } = opts;
   const url = `${opts.baseUrl || API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
   const cache = new TranslationCache();
 
-  async function attempt(text: string, signal: AbortSignal): Promise<string> {
+/** the answer, and whether Gemini stopped because it ran out of room */
+interface Attempt {
+  text: string;
+  truncated: boolean;
+}
+
+  async function attempt(text: string, signal: AbortSignal, maxOutputTokens: number): Promise<Attempt> {
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -113,7 +122,7 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
         contents: [{ role: "user", parts: [{ text }] }],
         generationConfig: {
           temperature: 0.15,
-          maxOutputTokens: 120,
+          maxOutputTokens,
           // latency: no thinking budget for flash models
           thinkingConfig: { thinkingBudget: 0 },
         },
@@ -142,7 +151,12 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
           tokensIn: Number(data?.usageMetadata?.promptTokenCount) || 0,
           tokensOut: Number(data?.usageMetadata?.candidatesTokenCount) || 0,
         });
-        return out;
+        // A 200 whose finishReason is MAX_TOKENS is a sentence cut off mid
+        // clause. Nothing read this, so the fragment went to viewers looking
+        // like a finished line - and into a 30-minute cache, so every repeat of
+        // that callout got the same fragment without another request.
+        const truncated = String(data?.candidates?.[0]?.finishReason || "") === "MAX_TOKENS";
+        return { text: out, truncated };
   }
 
   return {
@@ -162,9 +176,17 @@ export function createGeminiTranslator(opts: CreateTranslatorOpts): Translator {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          const out = await attempt(text, controller.signal);
-          cache.set(key, out);
-          return out;
+          let out = await attempt(text, controller.signal, MAX_OUTPUT_TOKENS);
+          if (out.truncated) {
+            // one more go with room to finish. A 15 s VAD segment is 40-50
+            // words, and a token-dense target - Thai, Japanese, Korean,
+            // Chinese - runs past the default cap on a single utterance.
+            out = await attempt(text, controller.signal, MAX_OUTPUT_TOKENS * 3);
+          }
+          // a fragment is still better than nothing on a live caption, but it
+          // must not be remembered: the cache would serve it for half an hour
+          if (!out.truncated) cache.set(key, out.text);
+          return out.text;
         } catch (err) {
           lastErr = err;
           const e = err as Error & { status?: number; permanent?: boolean };

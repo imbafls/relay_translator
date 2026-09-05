@@ -58,6 +58,12 @@ const said = (text: string) => ({
   usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4 },
 });
 
+/** a 200 that stopped because it ran out of room - a sentence cut mid-clause */
+const cutOff = (text: string) => ({
+  candidates: [{ content: { parts: [{ text }] }, finishReason: "MAX_TOKENS" }],
+  usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 120 },
+});
+
 let stub: Stub | null = null;
 afterEach(async () => {
   await stub?.close();
@@ -176,5 +182,46 @@ describe("when the API is having a bad day", () => {
     const t = translator(stub);
     await expect(t.translate("x")).rejects.toThrow();
     expect(await t.translate("x")).toBe("late");
+  });
+});
+
+describe("an answer that ran out of room", () => {
+  it("asks again with more room", async () => {
+    stub = await stubApi([{ status: 200, body: cutOff("rotate to A and then") }, { status: 200, body: said("rotate to A and then take mid") }]);
+    const out = await translator(stub).translate("long callout");
+    expect(out).toBe("rotate to A and then take mid");
+    expect(stub.hits).toHaveLength(2);
+
+    const second = stub.hits[1].body as { generationConfig: { maxOutputTokens: number } };
+    const first = stub.hits[0].body as { generationConfig: { maxOutputTokens: number } };
+    expect(second.generationConfig.maxOutputTokens).toBeGreaterThan(first.generationConfig.maxOutputTokens);
+  });
+
+  it("does not remember a fragment when the second try is cut off too", async () => {
+    // half a sentence is still better than nothing on a live caption, but the
+    // cache would serve it for the next thirty minutes
+    stub = await stubApi([{ status: 200, body: cutOff("rotate to A and") }]);
+    const t = translator(stub);
+    expect(await t.translate("long callout")).toBe("rotate to A and");
+    const afterFirst = stub.hits.length;
+
+    expect(await t.translate("long callout")).toBe("rotate to A and");
+    expect(stub.hits.length, "the fragment was served from cache").toBeGreaterThan(afterFirst);
+  });
+
+  it("still caches an answer that finished", async () => {
+    stub = await stubApi([{ status: 200, body: said("rush B") }]);
+    const t = translator(stub);
+    await t.translate("rush bee");
+    await t.translate("rush bee");
+    expect(stub.hits).toHaveLength(1);
+  });
+
+  it("treats a normal finish reason as complete", async () => {
+    stub = await stubApi([
+      { status: 200, body: { candidates: [{ content: { parts: [{ text: "done" }] }, finishReason: "STOP" }] } },
+    ]);
+    expect(await translator(stub).translate("x")).toBe("done");
+    expect(stub.hits).toHaveLength(1);
   });
 });

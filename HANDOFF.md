@@ -19,7 +19,7 @@ don't add merge commits.
 hardening work: the repo's first test runner and ~370 tests, and 35 fixes.
 `ITERATION_LOG.md` has one entry per turn - what was looked at, what it turned
 out to be, and how it was proved. `docs/AUDIT-2026-09-05.md` is a separate
-adversarial audit of the whole repo, 36 ranked findings, of which eight are
+adversarial audit of the whole repo, 36 ranked findings, of which nine are
 fixed on this branch and the rest are not.
 
 The ones most worth knowing about, all found and fixed here:
@@ -52,7 +52,7 @@ crashes. Fold the branch in and retag before pushing.
 - **The VPS `.env`.** Keys were rotated during this run;
   `/opt/callout-relay/.env` still holds the old pair. The credentials file the
   deploy script wants was not on the machine this ran on.
-- **28 more audit findings**, ranked, each with a failure scenario and a
+- **27 more audit findings**, ranked, each with a failure scenario and a
   suggested fix.
 
 ## First run on a new machine

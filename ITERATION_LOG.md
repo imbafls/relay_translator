@@ -1180,3 +1180,27 @@ way here:
    claiming a check that was never written.
 4. **Liveness is the wrong observable for a crash** once anything catches
    exceptions. Look for the throw.
+
+---
+
+### Turn 41 - Translation pipeline (half a sentence, remembered for half an hour)
+
+The loop's counter and my numbering had drifted by one, so there was another
+iteration. Audit finding 16.
+
+- **Tests Added**: 4 in `packages/relay/test/gemini.test.ts` - a cut-off answer
+  retried with more room, a fragment never cached when the retry is cut off too,
+  a complete answer still cached, and a normal finish reason treated as
+  complete.
+- **Issue/Gap Uncovered**: `attempt()` never read `finishReason`; the only
+  rejection test was `if (!out)`. A 15 s VAD segment is 40-50 words, and
+  translated into a token-dense target - Thai, Japanese, Korean, Chinese - it
+  runs past `maxOutputTokens: 120`. Gemini answers 200 with partial text and
+  `finishReason: MAX_TOKENS`, so the fragment went to viewers mid-clause with
+  normal latency and no marker, and into the 30-minute cache - where every
+  repeat of that callout got the same fragment without another request.
+- **Enhancement Shipped**: the cap is named, a truncated answer is retried once
+  with three times the room, and a fragment is returned but never cached. Half a
+  line still beats nothing on a live caption; remembering it for half an hour
+  does not. Reverting turns two of the four red.
+- **Status**: PASSED
