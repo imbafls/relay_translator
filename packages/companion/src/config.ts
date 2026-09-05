@@ -95,13 +95,26 @@ export class ConfigStore {
   private merge(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
     const out: AppConfig = { ...base };
     for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) continue;
+      // `null` is not "leave this alone". It used to pass here, fail the
+      // `value &&` test below, and fall through to the wholesale assignment -
+      // so a patch of `{languages: null}` overwrote the default and was
+      // persisted, and every later boot threw on `config.languages.source`
+      // before the app had drawn anything.
+      if (value === undefined || value === null) continue;
       if (key === "languages" && value && typeof value === "object") {
         out.languages = { ...base.languages, ...(value as Partial<AppConfig["languages"]>) };
       } else {
         (out as unknown as Record<string, unknown>)[key] = value;
       }
     }
+    // A file written before that guard existed, or edited by hand, can still
+    // hold a broken `languages` - and the renderer reads it before it draws,
+    // so it has to be repaired on the way in rather than merely prevented.
+    const langs = out.languages as AppConfig["languages"] | null | undefined;
+    if (!langs || typeof langs !== "object" || typeof langs.source !== "string" || typeof langs.target !== "string") {
+      out.languages = { ...DEFAULT_CONFIG.languages };
+    }
+
     // env fallback for secrets
     if (!out.deepgramApiKey && process.env.DEEPGRAM_API_KEY) {
       out.deepgramApiKey = process.env.DEEPGRAM_API_KEY;

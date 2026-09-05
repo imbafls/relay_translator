@@ -154,3 +154,51 @@ describe("migrations from older versions", () => {
     expect(new ConfigStore(dir).load().setupDone).toBe(false);
   });
 });
+
+describe("a null where a value was expected", () => {
+  it("does not let a null languages through a patch", () => {
+    // reachable from the control API, which allows `languages` as a legitimate
+    // field - so the allowlist added later does not cover this
+    const store = new ConfigStore(dir);
+    store.update({ languages: { source: "de", target: "ja" } });
+    const after = store.update({ languages: null } as never);
+    expect(after.languages).toEqual({ source: "de", target: "ja" });
+  });
+
+  it("does not persist one either", () => {
+    const store = new ConfigStore(dir);
+    store.update({ languages: null } as never);
+    const onDisk = JSON.parse(fs.readFileSync(file(), "utf8"));
+    expect(onDisk.languages).toBeTruthy();
+    expect(onDisk.languages.source).toBeTruthy();
+  });
+
+  it("repairs a config that already holds one", () => {
+    // a file written before the guard, or edited by hand: the renderer reads
+    // this before it draws anything, so preventing it is not enough
+    write(JSON.stringify({ languages: null, stt: "deepgram-nova-3" }));
+    const loaded = new ConfigStore(dir).load();
+    expect(loaded.languages.source).toBeTruthy();
+    expect(loaded.languages.target).toBeTruthy();
+    expect(loaded.stt).toBe("deepgram-nova-3");
+  });
+
+  it.each([
+    ["a string", '"en-vi"'],
+    ["a number", "7"],
+    ["an array", "[]"],
+    ["half a pair", '{"source":"en"}'],
+  ])("repairs languages stored as %s", (_name, raw) => {
+    write(`{"languages": ${raw}}`);
+    const loaded = new ConfigStore(dir).load();
+    expect(typeof loaded.languages.source).toBe("string");
+    expect(typeof loaded.languages.target).toBe("string");
+  });
+
+  it("leaves other fields alone when they are null", () => {
+    const store = new ConfigStore(dir);
+    store.update({ stt: "local-zipformer-en-20m" });
+    const after = store.update({ stt: null } as never);
+    expect(after.stt).toBe("local-zipformer-en-20m");
+  });
+});

@@ -1055,3 +1055,29 @@ Audit finding 18, and like turn 33 it is a correction to my own earlier work.
   object before reading anything off it. Reverting turns the probe red with the
   TypeError named.
 - **Status**: PASSED
+
+---
+
+### Turn 37/40 - Resilience & state (one null that ends the app for good)
+
+Audit finding 13.
+
+- **Tests Added**: 7 in `packages/companion/test/config.test.ts` - a null
+  `languages` refused in a patch and never persisted, a config that already
+  holds one repaired on load, the same for a string, a number, an array and
+  half a pair, and other fields left alone when they are null.
+- **Issue/Gap Uncovered**: `merge()` skipped only `undefined`. A `null` passed
+  that check, failed the `value &&` test on the languages branch, and fell
+  through to the wholesale assignment - so `{languages: null}` overwrote the
+  default and `persist()` wrote it. Turn 10 added a guard for a top-level `null`
+  config; a per-field null sailed past it. The consequence is not a bad session,
+  it is a dead app: every later launch runs `boot()` into
+  `config.languages.source`, throws before `setView`, `refreshDevices` or any
+  timer runs, and there is no `unhandledrejection` handler to notice. The only
+  way out is editing the file by hand. Reachable from the control API too, since
+  `languages` is a legitimate field and turn 34's allowlist rightly permits it.
+- **Enhancement Shipped**: `null` is skipped alongside `undefined`, and a
+  `languages` that is not a well-formed pair is rebuilt from the defaults on the
+  way through - prevention was not enough on its own, because a file written
+  before the guard still has to open. Reverting turns six of the seven red.
+- **Status**: PASSED
