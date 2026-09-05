@@ -36,7 +36,50 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
+      # the tests live outside every package's rootDir, so `pnpm -r typecheck`
+      # does not see them - they need their own pass or they rot untyped
+      - name: Typecheck tests
+        run: pnpm typecheck:test
+
+      - name: Test
+        run: pnpm test
+
       # catches a renderer that references an element id the markup no longer has
       - name: Check renderer element ids
         shell: bash
         run: node scripts/check-renderer-ids.mjs
+
+      # end-to-end over a real relay: token auth, the subtitle pipeline, two
+      # channels, the admin endpoints
+      - name: Smoke
+        run: pnpm smoke
+
+  # The relay runs on Linux in production and every check above runs on Windows,
+  # which is how a Windows-authored file that Linux reads differently gets to
+  # the VPS unnoticed. This covers the packages that actually ship there;
+  # apps/standalone is Windows-only and stays out.
+  linux-relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Test relay and shared
+        run: pnpm exec vitest run packages/relay packages/shared
+
+      - name: Smoke
+        run: pnpm smoke

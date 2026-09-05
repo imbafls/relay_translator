@@ -552,3 +552,30 @@ form that only informs.
   that would have worked. The probe is injectable, which is what makes the four
   cases testable without a full disk.
 - **Status**: PASSED
+
+---
+
+### Turn 20/100 - Making the previous nineteen turns enforceable
+
+- **Tests Added**: `packages/shared/test/workflows.test.ts`, 9 assertions that
+  the workflows still run what the repo can check. Deliberately crude greps -
+  they exist to notice a step being dropped, not to model GitHub Actions.
+- **Issue/Gap Uncovered**: CI ran build, typecheck and the renderer id check,
+  and nothing else. Not `pnpm test`, not `pnpm typecheck:test`, and - from
+  before any of this - not `pnpm smoke` either. So 220 tests and 14 pre-existing
+  smoke assertions ran only when someone remembered. Worse, the release workflow
+  went from typecheck straight to building the installer, so a tag could publish
+  with the whole suite red. Turn 4's crash shipped because something went out
+  unverified; nothing structural had changed to stop that happening again. And
+  `linux-relay` builds the binary that runs on the VPS with no typecheck and no
+  tests at all, which is exactly how a Windows-authored file that Linux reads
+  differently reaches production unnoticed - turn 17's dotenv bug in one line.
+- **Enhancement Shipped**: CI runs the tests' typecheck, the suite, the renderer
+  ids and smoke. The release workflow runs all four before it builds anything a
+  user installs. CI gains a Linux job covering the packages that actually ship
+  there, since every other check runs on Windows. The release pipeline's own
+  Linux job was left alone on purpose: I cannot run these tests on Linux from
+  here, and putting an unverified step in the path that publishes releases is
+  not a trade worth making - CI is where that belongs until it has gone green
+  once.
+- **Status**: PASSED

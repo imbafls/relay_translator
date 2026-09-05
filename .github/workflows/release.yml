@@ -61,6 +61,21 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
+      - name: Typecheck tests
+        run: pnpm typecheck:test
+
+      # a tag used to go straight from typecheck to publish, so a release could
+      # ship with the whole suite red. It cannot now.
+      - name: Test
+        run: pnpm test
+
+      - name: Check renderer element ids
+        shell: bash
+        run: node scripts/check-renderer-ids.mjs
+
+      - name: Smoke
+        run: pnpm smoke
+
       # installer + portable + latest.yml. --publish never: the publish job
       # below owns the release so both build jobs attach to the same one
       - name: Build desktop app
