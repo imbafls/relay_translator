@@ -112,7 +112,8 @@ jobs:
         run: |
           pnpm -r build
           node scripts/build-relay-bundle.mjs
-          node --experimental-sea-config packages/relay/sea/sea-config.json
+          # sea-config.json resolves main/output/assets relative to the cwd
+          (cd packages/relay/sea && node --experimental-sea-config sea-config.json)
           cp "$(command -v node)" callout-relay-server-linux
           npx --yes postject callout-relay-server-linux NODE_SEA_BLOB packages/relay/sea/sea-prep.blob \
             --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
