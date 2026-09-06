@@ -48,4 +48,15 @@ describe("a release cannot go out unverified", () => {
   it("still refuses a tag that disagrees with the app version", () => {
     expect(release).toContain("does not match apps/standalone version");
   });
+
+  it("tests the relay on Linux before it builds the binary the VPS runs", () => {
+    // `pnpm test` above runs on windows-latest and says nothing about the
+    // platform the relay is deployed to. CI covers Linux on every push to
+    // master, but a tag can be cut from any commit - including one CI never
+    // saw - so the release needs its own Linux gate.
+    const gate = "vitest run packages/relay packages/shared";
+    expect(release).toContain(gate);
+    // postject is what stamps the SEA blob into the binary that gets uploaded
+    expect(release.indexOf(gate)).toBeLessThan(release.indexOf("postject"));
+  });
 });
