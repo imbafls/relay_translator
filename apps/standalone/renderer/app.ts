@@ -42,7 +42,7 @@ const sel = (id: string): HTMLSelectElement => $(id);
 const cr = window.cr;
 const capture = new BrowserAudioCapture();
 
-type View = "stage" | "keys" | "log" | "onboarding";
+type View = "stage" | "settings" | "log" | "onboarding";
 
 let config: AppConfig;
 let status: ControlStatus | null = null;
@@ -266,15 +266,15 @@ function setView(next: View): void {
   view = next;
   $("app").dataset.view = next;
   $("stage").hidden = next !== "stage";
-  $("keys").hidden = next !== "keys";
+  $("settings").hidden = next !== "settings";
   $("logView").hidden = next !== "log";
   $("onboarding").hidden = next !== "onboarding";
   $("footer").hidden = next === "onboarding";
   $("clock").hidden = next === "onboarding";
   $("stepper").hidden = next !== "onboarding";
-  $("keysBtn").classList.toggle("active", next === "keys");
+  $("settingsBtn").classList.toggle("active", next === "settings");
   $("logBtn").classList.toggle("active", next === "log");
-  if (next === "keys") renderKeys();
+  if (next === "settings") renderSettings();
   if (next === "onboarding") renderOnboarding();
   else renderChain();
   renderTopbar();
@@ -518,6 +518,7 @@ function setState(next: SessionState, error?: string): void {
   renderChain();
   renderFooter();
   renderIdle();
+  renderCaptionSettings();
   tickClock();
 }
 
@@ -749,7 +750,7 @@ async function checkKey(provider: "deepgram" | "gemini", key: string): Promise<K
   if (keyCheck[provider]?.key !== key) return res;
   keyCheck[provider] = { key, result: res };
   renderChain();
-  if (view === "keys") renderKeyStatuses();
+  if (view === "settings") renderKeyStatuses();
   return res;
 }
 
@@ -786,9 +787,8 @@ function renderChain(): void {
   const live = session === "live" || session === "starting";
   const ta = translationActive();
   const usage = status?.usage;
-  // onboarding hides these; the console always owns them
+  // onboarding hides this; the console always owns it
   $("translateToggle").hidden = false;
-  $("badgesToggle").hidden = false;
   $("addKey").textContent = "ADD KEY";
   const rel = status?.relay;
   const blocks = ["blkSource", "blkStt", "blkTranslate", "blkOutput"];
@@ -937,6 +937,8 @@ function renderFooter(): void {
   $("roEst").textContent = usd((u?.deepgram.estCostUsd ?? 0) + (u?.gemini.estCostUsd ?? 0));
   $("roSttWrap").hidden = live;
   $("roTrnWrap").hidden = live || !translationActive();
+  // the caption-view button is only usable once there is a link to open
+  renderCaptionSettings();
 }
 
 async function copyText(text: string, what: string): Promise<void> {
@@ -957,7 +959,42 @@ async function copyText(text: string, what: string): Promise<void> {
 // keys & relay view
 // ---------------------------------------------------------------------------
 
-function renderKeys(): void {
+/**
+ * The two caption toggles, and the route to the display settings that live on
+ * the viewer rather than here.
+ *
+ * profanityFilter and showLatency travel in the publisher hello
+ * (packages/companion/src/relayClient.ts), so a running session cannot pick up
+ * a change to either - which is why both handlers return early while live.
+ * That was survivable while they were unlabelled chips wedged into the 04
+ * OUTPUT header and is not, now that they sit in a panel called SETTINGS: a
+ * streamer who wants the mask on mid-match clicks it, watches nothing move,
+ * and is told nothing. Disabled with the reason on screen is the honest state.
+ */
+function renderCaptionSettings(): void {
+  const live = session === "live" || session === "starting";
+  for (const id of ["filterToggle", "badgesToggle"]) {
+    ($(id) as HTMLButtonElement).disabled = live;
+  }
+  $("captionsLock").hidden = !live;
+
+  // ?settings=1 pins the viewer's HUD. In OBS that HUD is hover-only and a
+  // browser source never hovers, so without this the display settings are
+  // reachable only by hand-editing the URL - the param appears in no UI.
+  const url = currentLink();
+  ($("openCaptionView") as HTMLButtonElement).disabled = !url;
+  $("captionViewHint").textContent = url
+    ? `OPENS THE ${linkChoice === "obs" ? "OBS" : "PHONE"} VIEW`
+    : "APPEARS ONCE A SESSION IS RUNNING, OR STRAIGHT AWAY ON A FIXED LINK";
+}
+
+function captionSettingsUrl(): string | undefined {
+  const url = currentLink();
+  if (!url) return undefined;
+  return url + (url.includes("?") ? "&" : "?") + "settings=1";
+}
+
+function renderSettings(): void {
   inp("deepgramApiKey").value = config.deepgramApiKey || "";
   inp("geminiApiKey").value = config.geminiApiKey || "";
   inp("relayUrl").value = config.relayUrl || "";
@@ -968,7 +1005,8 @@ function renderKeys(): void {
   inp("updateFeedUrl").value = config.updateFeedUrl || "";
   renderKeyStatuses();
   renderUpdate();
-  renderModelList($("keysModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
+  renderCaptionSettings();
+  renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,7 +1174,7 @@ function setLocalModels(list: LocalModelStatus[] | undefined): void {
   if (!list) return;
   localModels = list;
   renderChain();
-  if (view === "keys") renderModelList($("keysModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
+  if (view === "settings") renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
   if (view === "onboarding" && obStep === 1) renderOnboarding();
 }
 
@@ -1181,7 +1219,7 @@ function renderKeyStatuses(): void {
   }
 }
 
-async function saveKeys(): Promise<void> {
+async function saveSettings(): Promise<void> {
   const patch: Partial<AppConfig> = {
     deepgramApiKey: inp("deepgramApiKey").value.trim() || undefined,
     geminiApiKey: inp("geminiApiKey").value.trim() || undefined,
@@ -1200,7 +1238,7 @@ async function saveKeys(): Promise<void> {
     (k) => (patch as Record<string, unknown>)[k] !== undefined && (patch as Record<string, unknown>)[k] !== (config as unknown as Record<string, unknown>)[k],
   );
   await saveAndApply(patch, { restart: relayChanged });
-  log("keys & relay saved", "ok");
+  log("settings saved", "ok");
   setView("stage");
 }
 
@@ -1390,7 +1428,6 @@ function renderOnboardingChain(): void {
   $("metaSource").hidden = false;
   $("rescan").hidden = true;
   $("translateToggle").hidden = true;
-  $("badgesToggle").hidden = true;
   const hasGemini = !!config.geminiApiKey && config.translationEnabled !== false;
 
   // 01
@@ -1822,17 +1859,17 @@ function bind(): void {
   });
   // an OBS-only user should still open on the OBS link; they can switch either way
   if (config?.output === "obs") linkChoice = "obs";
-  $("keysBtn").onclick = () => setView(view === "keys" ? "stage" : "keys");
+  $("settingsBtn").onclick = () => setView(view === "settings" ? "stage" : "settings");
   $("wnClose").onclick = () => {
     $("whatsnew").hidden = true;
   };
-  $("keysSetup").onclick = () => {
+  $("settingsSetup").onclick = () => {
     if (session === "live" || session === "starting") stopSession();
     openSetup();
   };
   $("obClose").onclick = () => setView("stage");
   $("logBtn").onclick = () => setView(view === "log" ? "stage" : "log");
-  $("keysBack").onclick = () => setView("stage");
+  $("settingsBack").onclick = () => setView("stage");
   $("logBack").onclick = () => setView("stage");
 
   // chain
@@ -1841,7 +1878,7 @@ function bind(): void {
   sel("audioSource2").onchange = () => void saveAndApply({ audioSource2: sel("audioSource2").value }, { restart: true });
   $("cloudAction").onclick = () => {
     if (!config.deepgramApiKey) {
-      setView("keys");
+      setView("settings");
       inp("deepgramApiKey").focus();
       return;
     }
@@ -1850,7 +1887,7 @@ function bind(): void {
   $("modelAction").onclick = () => {
     const m = modelState(config.stt);
     if (m?.progress != null) void cr.cancelModel(config.stt).then(setLocalModels);
-    else if (m?.downloaded) setView("keys");
+    else if (m?.downloaded) setView("settings");
     else void cr.downloadModel(config.stt).then(setLocalModels);
   };
   sel("stt").onchange = () => {
@@ -1866,7 +1903,7 @@ function bind(): void {
   $("translateToggle").onclick = () => {
     if (session === "live" || session === "starting") return;
     if (!config.geminiApiKey) {
-      setView("keys");
+      setView("settings");
       inp("geminiApiKey").focus();
       return;
     }
@@ -1875,9 +1912,13 @@ function bind(): void {
   $("addKey").onclick = () => {
     if (view === "onboarding") void obGoto(2);
     else {
-      setView("keys");
+      setView("settings");
       inp("geminiApiKey").focus();
     }
+  };
+  $("openCaptionView").onclick = () => {
+    const url = captionSettingsUrl();
+    if (url) void cr.openExternal(url);
   };
   $("badgesToggle").onclick = () => {
     if (session === "live" || session === "starting") return;
@@ -1926,7 +1967,7 @@ function bind(): void {
   // chose "fixed" so their OBS source would keep working silently got "unique",
   // and the next START rotated the token - putting THIS LINK HAS ENDED on air.
   bindSeg("linkModeSeg", (v) => void saveAndApply({ linkMode: v as AppConfig["linkMode"] }));
-  $("keysSave").onclick = () => void saveKeys();
+  $("settingsSave").onclick = () => void saveSettings();
   $("checkUpdate").onclick = async () => {
     log("checking for updates…");
     setUpdate(await cr.checkForUpdate());
@@ -1936,11 +1977,11 @@ function bind(): void {
   $("autoUpdate").onclick = () => void saveAndApply({ autoUpdate: config.autoUpdate === false });
   $("updateChip").onclick = () => {
     if (update?.state === "ready") void cr.installUpdate();
-    else setView("keys");
+    else setView("settings");
   };
-  for (const i of $("keys").querySelectorAll<HTMLInputElement>("input")) {
+  for (const i of $("settings").querySelectorAll<HTMLInputElement>("input")) {
     i.onkeydown = (e) => {
-      if (e.key === "Enter") void saveKeys();
+      if (e.key === "Enter") void saveSettings();
     };
   }
 
@@ -1988,7 +2029,6 @@ function bind(): void {
     const b = sel("obAudioSource2").value;
     await saveAndApply({ audioSource: a, audioSource2: b && b !== a ? b : "", output: out, setupDone: true });
     $("translateToggle").hidden = false;
-    $("badgesToggle").hidden = false;
     setView("stage");
     log("setup complete - hit START SESSION when ready", "ok");
   };
@@ -2015,13 +2055,19 @@ function bind(): void {
     else renderChain();
     renderFooter();
     if (s.update) setUpdate(s.update);
-    if (view === "keys") renderKeyStatuses();
+    if (view === "settings") renderKeyStatuses();
   });
 
   cr.onUpdate((u) => setUpdate(u));
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && (view === "keys" || view === "log")) setView("stage");
+    // the shortcut every desktop app has for this pane; the footer button is
+    // the discoverable door, this is the one muscle memory reaches for
+    if (e.key === "," && (e.ctrlKey || e.metaKey) && view !== "onboarding") {
+      e.preventDefault();
+      setView(view === "settings" ? "stage" : "settings");
+    }
+    if (e.key === "Escape" && (view === "settings" || view === "log")) setView("stage");
     if (e.key === "Escape" && view === "onboarding" && config.setupDone) setView("stage");
   });
 }

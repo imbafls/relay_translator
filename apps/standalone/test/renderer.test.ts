@@ -27,7 +27,12 @@ interface Calls {
   validated: { provider: string; key: string }[];
   /** text handed to the main process for the OS clipboard */
   clipboard: string[];
+  /** URLs the renderer asked the OS to open */
+  opened: string[];
 }
+
+/** the status callback boot() registers, so a test can push a live relay in */
+let pushStatus: ((s: unknown) => void) | undefined;
 
 let calls: Calls;
 /**
@@ -60,7 +65,9 @@ function bridge(config: AppConfig) {
     checkForUpdate: async () => undefined,
     installUpdate: async () => false,
     onUpdate: () => {},
-    openExternal: async () => {},
+    openExternal: async (url: string) => {
+      calls.opened.push(url);
+    },
     writeClipboard: async (text: string) => {
       calls.clipboard.push(text);
     },
@@ -73,7 +80,9 @@ function bridge(config: AppConfig) {
     removeModel: async () => [],
     onCommand: () => {},
     onConfigChanged: () => {},
-    onStatus: () => {},
+    onStatus: (cb: (s: unknown) => void) => {
+      pushStatus = cb;
+    },
   };
 }
 
@@ -93,7 +102,8 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 }
 
 async function bootWith(config: Partial<AppConfig>): Promise<void> {
-  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [] };
+  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [] };
+  pushStatus = undefined;
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
 
@@ -189,7 +199,7 @@ describe("setup reopening on keys that are already saved", () => {
    */
   it("re-checks the saved key rather than trusting a verdict for a different string", async () => {
     await bootWith({ setupDone: true, deepgramApiKey: "dg-saved-earlier" });
-    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle();
 
     // type a different key, and let it earn a verdict of its own
@@ -206,7 +216,7 @@ describe("setup reopening on keys that are already saved", () => {
     // boot may already have validated the saved key, so only entries recorded
     // AFTER this click count - otherwise the assertion is satisfied by history
     const before = calls.validated.length;
-    (document.getElementById("keysSetup") as HTMLButtonElement).click();
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
     // the saved key itself must be re-validated. Counting calls is not enough:
     // a second debounce of the typed key would satisfy a count and prove
     // nothing, which is how the first version of this test passed against the
@@ -374,7 +384,7 @@ describe("LINK MODE", () => {
 
   it("saves the pick immediately, like every other segmented control", async () => {
     await bootWith({ setupDone: true, linkMode: "unique" });
-    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle();
 
     pick("fixed");
@@ -385,7 +395,7 @@ describe("LINK MODE", () => {
 
   it("survives an unrelated save in the same pane", async () => {
     await bootWith({ setupDone: true, linkMode: "unique" });
-    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle();
 
     pick("fixed");
@@ -445,7 +455,7 @@ describe("the Deepgram key status", () => {
 
   it("does not flag a missing cloud key when speech runs locally", async () => {
     await bootWith({ setupDone: true, stt: "local-zipformer-en-20m", deepgramApiKey: "" });
-    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle(40);
 
     expect(dgStatus().classList.contains("warn"), "amber on a key that is not needed").toBe(false);
@@ -453,9 +463,103 @@ describe("the Deepgram key status", () => {
 
   it("still flags it when the cloud engine is the one selected", async () => {
     await bootWith({ setupDone: true, stt: "deepgram-nova-3", deepgramApiKey: "" });
-    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle(40);
 
     expect(dgStatus().classList.contains("warn"), "a genuinely missing key went unflagged").toBe(true);
+  });
+});
+
+describe("finding the settings", () => {
+  /**
+   * There was no "settings" anywhere in this app. The only way into
+   * configuration was an 11px dim button reading KEYS, sitting at the far
+   * right of the footer between the cost readouts and the window edge, and the
+   * panel behind it was headed KEYS & RELAY. Everything a normal person would
+   * call a setting was somewhere else: the profanity filter and the latency
+   * badges were unlabelled chips in the 04 OUTPUT block of the signal chain,
+   * and the relay plumbing nobody but a developer touches sat in the same
+   * column as the API keys. People had to be told where to go.
+   *
+   * These pin the four things a DOM test can hold: the name, the single way
+   * in, the gathering, and the disclosure. Whether the control actually reads
+   * as a control is a thing to look at rather than assert - that was checked
+   * in a browser against the shipped markup.
+   */
+  const settingsPanel = (): HTMLElement => document.getElementById("settings") as HTMLElement;
+  const open = async (): Promise<void> => {
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+  };
+
+  it("names the way in after the word people look for", async () => {
+    await bootWith({ setupDone: true });
+    const btn = document.getElementById("settingsBtn");
+    expect(btn, "no settings entry point exists").not.toBeNull();
+    expect(btn!.textContent?.toUpperCase()).toContain("SETTINGS");
+  });
+
+  it("opens the panel from the stage in one click", async () => {
+    await bootWith({ setupDone: true });
+    await open();
+    expect(visible("settings"), "the settings panel did not open").toBe(true);
+    expect((document.getElementById("app") as HTMLElement).dataset.view).toBe("settings");
+  });
+
+  it("gathers the caption toggles that were loose in the signal chain", async () => {
+    await bootWith({ setupDone: true, profanityFilter: true, showLatency: true });
+    await open();
+
+    const filter = document.getElementById("filterToggle");
+    const badges = document.getElementById("badgesToggle");
+    expect(filter, "no profanity control at all").not.toBeNull();
+    expect(badges, "no latency badge control at all").not.toBeNull();
+    expect(settingsPanel().contains(filter), "the profanity filter is still outside settings").toBe(true);
+    expect(settingsPanel().contains(badges), "the latency badges are still outside settings").toBe(true);
+
+    // and it still works from its new home
+    (filter as HTMLButtonElement).click();
+    await settle(40);
+    expect(calls.setConfig.some((p) => p.profanityFilter === false), "the toggle moved but stopped working").toBe(true);
+  });
+
+  it("keeps the relay plumbing behind a disclosure that starts shut", async () => {
+    await bootWith({ setupDone: true });
+    await open();
+
+    // the five fields a normal user has no business seeing on open
+    for (const id of ["relayUrl", "publisherToken", "publicBaseUrl", "relayPort", "updateFeedUrl"]) {
+      const field = document.getElementById(id);
+      expect(field, `#${id} is gone entirely`).not.toBeNull();
+      const disclosure = field!.closest("details");
+      expect(disclosure, `#${id} is not behind a disclosure`).not.toBeNull();
+      expect(disclosure!.hasAttribute("open"), `#${id} is behind a disclosure that ships open`).toBe(false);
+      expect(settingsPanel().contains(field), `#${id} left the settings panel`).toBe(true);
+    }
+  });
+
+  it("carries a route to the caption appearance settings, which live on the viewer", async () => {
+    await bootWith({ setupDone: true });
+    await open();
+
+    const btn = document.getElementById("openCaptionView") as HTMLButtonElement | null;
+    expect(btn, "settings says nothing about where caption appearance is set").not.toBeNull();
+    expect(settingsPanel().contains(btn), "the route is not in the settings panel").toBe(true);
+
+    // with a link in hand it opens the viewer with its settings pinned - in OBS
+    // the AA button only appears on hover, which is why ?settings=1 exists
+    expect(pushStatus, "boot() never registered for status").toBeTypeOf("function");
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: { localViewerUrl: "http://127.0.0.1:8787/watch/abc?obs=1", remoteViewerUrl: "", uplinkState: "off" },
+      usage: undefined,
+    });
+    await settle(40);
+
+    btn!.click();
+    await settle(40);
+    expect(calls.opened.length, "clicking it opened nothing").toBeGreaterThan(0);
+    expect(calls.opened[calls.opened.length - 1]).toContain("settings=1");
   });
 });

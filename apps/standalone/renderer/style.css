@@ -218,6 +218,48 @@ button:disabled { cursor: default; }
 .ulink-mono { font: 10.5px var(--mono); color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
 .ulink-mono:hover { color: var(--ink); }
 .keys-foot { margin-top: auto; padding: 14px 20px; display: flex; gap: 18px; flex-wrap: wrap; }
+.keys-foot-flow { margin-top: 0; padding-top: 0; }
+/* Explanations here were 10.5px uppercase monospace, the same treatment as a
+   status chip, run to four and five lines. That reads as a wall, not as help.
+   Sentence case, a real line height and a bounded measure instead. */
+.hint {
+  margin: 0;
+  font: 12px/1.65 var(--sans);
+  color: var(--dim);
+  max-width: 52ch;
+}
+.settings .field { padding: 22px 24px; gap: 14px; }
+.settings .field-label { margin-bottom: 2px; }
+.settings .col-title { padding: 18px 24px 4px; }
+.settings .keys-foot { padding: 4px 24px 18px; }
+.settings .keys-note { padding: 0 24px; margin: 20px 0 24px; }
+/* which half of the panel you are in, so it can be scanned rather than read */
+.col-title { padding: 14px 20px 0; color: var(--mute); }
+/* a settings toggle is a row of its own here, not a chip crammed into a header */
+.settings .toggle-wrap {
+  margin-left: 0;
+  align-self: flex-start;
+  font-family: var(--sans);
+  font-stretch: 75%;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  gap: 8px;
+}
+.settings .toggle-wrap:not(:disabled):hover { color: var(--ink); }
+.settings .toggle-wrap + .hint { margin: -4px 0 6px 30px; }
+.settings .toggle-wrap:disabled { color: var(--mute); }
+/* ADVANCED: shut on open, because nothing inside it is needed to run Relay */
+.advanced > summary { cursor: pointer; list-style: none; }
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::before { content: "+ "; color: var(--dim); }
+.advanced[open] > summary::before { content: "- "; }
+.advanced > summary:hover { color: var(--ink); }
+.advanced-body { display: flex; flex-direction: column; gap: 18px; padding-top: 16px; }
+/* the model list alone is taller than the pane, so SAVE cannot rely on
+   margin-top:auto to stay in sight - it scrolled away entirely */
+.settings .keys-actions { position: sticky; bottom: 0; background: var(--bg); }
 .keys-note { padding: 0 20px; margin: 16px 0 0; font-size: 13px; color: var(--dim); line-height: 1.5; max-width: 380px; }
 .keys-actions { margin-top: auto; display: flex; border-top: 1px solid var(--rule); }
 .keys-actions .mono-btn { padding: 16px 20px; }
@@ -489,9 +531,47 @@ select option { background: var(--bg); color: var(--ink); }
 .label-btn { letter-spacing: 0.1em; color: var(--dim); }
 .label-btn:hover, .label-btn.active { color: var(--ink); }
 
+/* The way into settings. It used to be a .label-btn: 10.5px, dim, wedged
+   between the cost readouts and the window edge, and reading KEYS. It was
+   indistinguishable from the figures beside it, so people had to be told it
+   was there. A border, the ink colour and a gear make it read as a control. */
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-stretch: 75%;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.settings-btn:hover, .settings-btn.active { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+.settings-btn .gear {
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  position: relative;
+  flex: none;
+}
+.settings-btn .gear::before,
+.settings-btn .gear::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+.settings-btn .gear::before { top: -3px; bottom: -3px; left: 50%; width: 1.5px; margin-left: -0.75px; }
+.settings-btn .gear::after { left: -3px; right: -3px; top: 50%; height: 1.5px; margin-top: -0.75px; }
+
 /* narrow window fallback (min 720) */
-@media (max-width: 900px) {
-  /* the same figures live in the chain strip; the link matters more here */
+@media (max-width: 1080px) {
+  /* the same figures live in the chain strip; the link matters more here.
+     Raised from 900: SETTINGS is a bordered chip where KEYS was four dim
+     letters, and the extra width pushed the link row into the figures. */
   #roSttWrap, #roTrnWrap { display: none; }
 }
 @media (max-width: 860px) {

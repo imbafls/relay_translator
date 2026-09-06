@@ -1204,3 +1204,73 @@ iteration. Audit finding 16.
   line still beats nothing on a live caption; remembering it for half an hour
   does not. Reverting turns two of the four red.
 - **Status**: PASSED
+
+### Turn 42 - Client UI (a settings pane nobody could find)
+
+**Found.** There was no "settings" anywhere in the product. The only door into
+configuration was a button reading **KEYS**: 10.5px, `--dim`, styled
+`.label-btn`, sitting at the far right of the footer between the cost readouts
+and the window edge. The pane behind it announced itself as **KEYS & RELAY**.
+Behind that credential-shaped word lived every non-credential preference the app
+has - LINK MODE, the update feed, auto-update, the local speech-model manager -
+while the profanity filter and the latency badges were unlabelled square chips
+crammed into the `04 OUTPUT` block header, explained only by `title=` tooltips.
+Caption appearance is not in the app at all: it lives on the viewer page behind
+an `AA` button which, in OBS, is `opacity: 0` until hover - and a browser source
+never hovers. `?settings=1` pins it, and that parameter appears in no UI, no
+tooltip and no copied link. Users had to be told where to go.
+
+There is no application menu either (`autoHideMenuBar`, no menu installed), so
+File → Preferences does not exist as a fallback.
+
+**Two sweeps, independently.** One walked `AppConfig` field by field asking
+where each is editable; one walked the markup control by control asking whether
+a streamer could find it. Between them, 34 discoverability gaps. Several are
+their own findings and are now in `docs/OPEN-WORK.md`; this turn took the door.
+
+**Changed.**
+
+- The footer control is `SETTINGS`, with a gear, a border and the ink colour -
+  a thing that reads as a control rather than as another readout. `Ctrl+,`
+  opens it too. Everything in the renderer is now named for what the user calls
+  it: `settingsBtn`, `#settings`, `renderSettings()`, `saveSettings()`.
+- The pane is two named halves. **WHAT VIEWERS SEE** carries captions, caption
+  appearance and the viewer link; **ACCOUNTS & ENGINE** carries the keys and the
+  models. LINK MODE was the fifth field of the right-hand column, under PUBLISH
+  TOKEN - it is the setting that decides whether an OBS browser source survives
+  a restart, and this repo already has a comment recording what a wrong value
+  there put on air.
+- Relay URL, publish token, public base URL, local port and update feed are
+  behind an `ADVANCED` disclosure that ships shut, with a line saying none of it
+  is needed to run Relay.
+- The two caption toggles moved into the pane with real labels and one line of
+  plain English each.
+- `OPEN CAPTION VIEW` opens the viewer's own display screen with `?settings=1`,
+  which is the only route to the OBS overlay's appearance settings that does not
+  involve editing a URL by hand.
+
+**A defect the move exposed.** Both toggles ship in the publisher `hello`, so a
+running session cannot pick either up - which is why both handlers `return`
+early while live. That was survivable as an unlabelled chip and is not in a pane
+called SETTINGS: click HIDE SWEARING mid-match and nothing moves, with no
+message. They are now disabled while live with the reason on screen.
+
+**Guards - all four watched fail first.** `apps/standalone/test/renderer.test.ts`,
+`finding the settings`. Reverting each fix on its own turns exactly its own
+guard red: the old `KEYS` label; the toggles back in the `04 OUTPUT` header; the
+disclosure shipped `open`; the caption-view route removed. A script drove each
+revert and asserted the run was red **and** that the filter actually matched a
+test, because a `-t` typo produces "no tests" and exits zero, which reads as a
+pass.
+
+**Verified in a browser**, not only in happy-dom: the shipped `dist/renderer`
+served with the preload bridge stubbed, driven against `scripts/mock-relay.mjs`
+with a synthetic `MediaStream` standing in for a microphone. A real session went
+ON AIR with captions flowing, and the live lock was observed in that state -
+both toggles disabled, the reason visible, the caption-view button live with a
+real link. The wider footer chip pushed the link row into the cost figures at
+1000px, so the breakpoint that hides those figures moved from 900 to 1080.
+
+**Not verified:** the Electron build itself. Everything here is renderer markup,
+CSS and DOM code exercised through the real `app.ts`, but the packaged app was
+not launched.

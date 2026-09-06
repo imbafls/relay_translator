@@ -44,15 +44,58 @@
     </div>
   </section>
 
-  <!-- ================= KEYS & RELAY ================= -->
-  <section id="keys" class="view keys" hidden>
+  <!-- ================= SETTINGS ================= -->
+  <!-- One way in, from the footer. The left column is what a streamer changes;
+       the right is accounts and machinery. Anything only a developer touches
+       (relay URL, publish token, public base URL, local port, update feed) is
+       behind ADVANCED, and ADVANCED ships shut. -->
+  <section id="settings" class="view settings" hidden>
     <div class="subbar">
-      <span class="ink">KEYS &amp; RELAY</span>
+      <span class="ink">SETTINGS</span>
       <span>STORED ON THIS PC</span>
-      <button id="keysBack" class="subbar-btn">✕ BACK TO STAGE</button>
+      <button id="settingsBack" class="subbar-btn">✕ BACK TO STAGE</button>
     </div>
     <div class="keys-grid">
       <div class="keys-col">
+        <div class="col-title label">WHAT VIEWERS SEE</div>
+        <div class="field">
+          <div class="field-label">CAPTIONS</div>
+          <button id="filterToggle" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>HIDE SWEARING</button>
+          <p class="hint">Masks profanity for viewers. Your own console keeps the words as heard.</p>
+          <button id="badgesToggle" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>SHOW LATENCY BADGES</button>
+          <p class="hint">A millisecond figure on each caption. Useful while tuning, noise on a broadcast.</p>
+          <p id="captionsLock" class="hint warn" hidden>Locked while live — viewers are told how to render captions when the session opens. Stop the session to change either.</p>
+        </div>
+        <div class="field">
+          <div class="field-label">CAPTION APPEARANCE<span class="field-status dim">SET ON EACH VIEWER</span></div>
+          <p class="hint">Size, font and colours belong to the device that is watching, so a phone and an OBS source can differ. In OBS the view&#39;s AA button only appears on hover — opening it from here pins it.</p>
+          <div class="field-row">
+            <button id="openCaptionView" class="mono-btn">OPEN CAPTION VIEW →</button>
+            <span id="captionViewHint" class="field-status dim"></span>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">VIEWER LINK</div>
+          <div class="seg" id="linkModeSeg">
+            <button data-value="unique">New each session</button>
+            <button data-value="fixed">Fixed</button>
+          </div>
+          <p class="hint">New each session kills the old link every time you start. Fixed keeps one link alive, which is what an OBS browser source needs.</p>
+        </div>
+        <div class="field">
+          <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
+          <div class="field-row update-row">
+            <span id="updateState" class="mono update-state">—</span>
+            <button id="checkUpdate" class="mono-btn">CHECK</button>
+            <button id="installUpdate" class="mono-btn ink" hidden>RESTART &amp; INSTALL</button>
+            <button id="openReleases" class="mono-btn" hidden>OPEN RELEASES</button>
+          </div>
+          <button id="autoUpdate" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>CHECK AUTOMATICALLY</button>
+        </div>
+        <p class="hint keys-note">Without a relay URL, phone links only reach devices on your own network. An OBS browser source never needs one.</p>
+      </div>
+      <div class="keys-col">
+        <div class="col-title label">ACCOUNTS &amp; ENGINE</div>
         <div class="field">
           <div class="field-label">DEEPGRAM API KEY<span id="dgStatus" class="field-status">NOT SET</span></div>
           <div class="field-row">
@@ -69,63 +112,54 @@
             <button class="mono-btn" data-clear="geminiApiKey">CLEAR</button>
           </div>
         </div>
-        <div class="field">
-          <div class="field-label">LOCAL SPEECH MODELS<span id="modelsDir" class="field-status dim">ON THIS PC · FREE</span></div>
-          <div id="keysModels" class="model-list"></div>
-          <div class="field-meta mono">PICK ONE UNDER 02 TRANSCRIBE. OFFLINE MODELS ALSO FETCH A 1 MB VOICE DETECTOR.</div>
-        </div>
-        <div class="field">
-          <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
-          <div class="field-row update-row">
-            <span id="updateState" class="mono update-state">—</span>
-            <button id="checkUpdate" class="mono-btn">CHECK</button>
-            <button id="installUpdate" class="mono-btn ink" hidden>RESTART &amp; INSTALL</button>
-            <button id="openReleases" class="mono-btn" hidden>OPEN RELEASES</button>
-          </div>
-          <button id="autoUpdate" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>CHECK AUTOMATICALLY</button>
-          <div class="field-row"><input id="updateFeedUrl" type="text" class="uinput mono" placeholder="update feed URL - blank = the project update server" autocomplete="off" spellcheck="false" /></div>
-        </div>
-        <div class="keys-foot">
+        <div class="keys-foot keys-foot-flow">
           <button class="mono-btn" data-open="https://console.deepgram.com">BALANCE → console.deepgram.com</button>
           <button class="mono-btn" data-open="https://aistudio.google.com/apikey">QUOTA → aistudio.google.com</button>
         </div>
-      </div>
-      <div class="keys-col">
         <div class="field">
-          <div class="field-label">RELAY URL<span id="relayStatus" class="field-status warn">NOT SET</span></div>
-          <div class="field-row">
-            <input id="relayUrl" type="text" class="uinput mono" placeholder="wss://relay.yourdomain.app" autocomplete="off" spellcheck="false" />
-          </div>
+          <div class="field-label">LOCAL SPEECH MODELS<span id="modelsDir" class="field-status dim">ON THIS PC · FREE</span></div>
+          <div id="settingsModels" class="model-list"></div>
+          <p class="hint">Picking one here switches the engine straight away. Offline models also fetch a 1 MB voice detector.</p>
         </div>
-        <div class="field">
-          <div class="field-label">PUBLISH TOKEN</div>
-          <div class="field-row">
-            <input id="publisherToken" type="password" class="uinput mono" placeholder="RELAY_PUBLISHER_TOKEN" autocomplete="off" spellcheck="false" />
-            <button class="mono-btn" data-show="publisherToken">SHOW</button>
+        <details id="advanced" class="field advanced">
+          <summary class="field-label">ADVANCED<span class="field-status dim">REMOTE RELAY · PORT · UPDATE FEED</span></summary>
+          <div class="advanced-body">
+            <p class="hint">None of this is needed to run Relay. The app carries its own relay; these point it at someone else&#39;s.</p>
+            <div class="field field-bare">
+              <div class="field-label">RELAY URL<span id="relayStatus" class="field-status warn">NOT SET</span></div>
+              <div class="field-row">
+                <input id="relayUrl" type="text" class="uinput mono" placeholder="wss://relay.yourdomain.app" autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+            <div class="field field-bare">
+              <div class="field-label">PUBLISH TOKEN</div>
+              <div class="field-row">
+                <input id="publisherToken" type="password" class="uinput mono" placeholder="RELAY_PUBLISHER_TOKEN" autocomplete="off" spellcheck="false" />
+                <button class="mono-btn" data-show="publisherToken">SHOW</button>
+              </div>
+            </div>
+            <div class="field field-bare field-2col">
+              <div>
+                <div class="field-label">PUBLIC BASE URL · OPTIONAL</div>
+                <div class="field-row"><input id="publicBaseUrl" type="text" class="uinput mono" placeholder="https://tunnel.example.com" autocomplete="off" spellcheck="false" /></div>
+              </div>
+              <div>
+                <div class="field-label">LOCAL PORT</div>
+                <div class="field-row"><input id="relayPort" type="number" class="uinput mono" min="1024" max="65535" /></div>
+              </div>
+            </div>
+            <div class="field field-bare">
+              <div class="field-label">UPDATE FEED</div>
+              <div class="field-row"><input id="updateFeedUrl" type="text" class="uinput mono" placeholder="blank = the project update server" autocomplete="off" spellcheck="false" /></div>
+            </div>
+            <div class="field-row">
+              <button class="mono-btn" data-open="https://github.com/imbafls/relay_translator#relay-standalone-vps--remote-friend">DEPLOY GUIDE →</button>
+            </div>
           </div>
-        </div>
-        <div class="field field-2col">
-          <div>
-            <div class="field-label">PUBLIC BASE URL · OPTIONAL</div>
-            <div class="field-row"><input id="publicBaseUrl" type="text" class="uinput mono" placeholder="https://tunnel.example.com" autocomplete="off" spellcheck="false" /></div>
-          </div>
-          <div>
-            <div class="field-label">LOCAL PORT</div>
-            <div class="field-row"><input id="relayPort" type="number" class="uinput mono" min="1024" max="65535" /></div>
-          </div>
-        </div>
-        <div class="field">
-          <div class="field-label">LINK MODE</div>
-          <div class="seg" id="linkModeSeg">
-            <button data-value="unique">New each session</button>
-            <button data-value="fixed">Fixed</button>
-          </div>
-        </div>
-        <p class="keys-note">Without a relay, phone links only work on your local network. OBS output never needs one.</p>
+        </details>
         <div class="keys-actions">
-          <button id="keysSave" class="ink-btn">SAVE</button>
-          <button id="keysSetup" class="mono-btn">RUN SETUP AGAIN</button>
-          <button class="mono-btn" data-open="https://github.com/imbafls/relay_translator#relay-standalone-vps--remote-friend">DEPLOY GUIDE →</button>
+          <button id="settingsSave" class="ink-btn">SAVE</button>
+          <button id="settingsSetup" class="mono-btn">RUN SETUP AGAIN</button>
         </div>
       </div>
     </div>
@@ -302,10 +336,7 @@
       </div>
     </div>
     <div class="block" id="blkOutput">
-      <div class="block-label"><span class="num">04</span>OUTPUT
-        <button id="badgesToggle" class="toggle-wrap" title="Latency badges on viewer captions"><span class="sq-toggle"><span></span></span>BADGES</button>
-        <button id="filterToggle" class="toggle-wrap" title="Mask profanity in captions sent to viewers (your own log keeps the words as heard)"><span class="sq-toggle"><span></span></span>FILTER</button>
-      </div>
+      <div class="block-label"><span class="num">04</span>OUTPUT</div>
       <div class="block-value">
         <div class="seg" id="outputSeg">
           <button data-value="phone">Phone</button>
@@ -338,7 +369,7 @@
       <span>EST <b id="roEst">$0.000</b></span>
       <span class="vrule"></span>
       <button id="logBtn" class="label-btn">LOG</button>
-      <button id="keysBtn" class="label-btn">KEYS</button>
+      <button id="settingsBtn" class="settings-btn" aria-label="Settings"><span class="gear" aria-hidden="true"></span>SETTINGS</button>
     </div>
   </footer>
 </div>
