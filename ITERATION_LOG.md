@@ -2078,3 +2078,45 @@ to the real ladder. The end of the ladder is twelve seconds away, and a
 twelve-second test in a fifteen-second suite is a test that gets deleted. The
 alternative was leaving the give-up path uncovered, which is the path that
 matters most.
+
+### Turn 59 - Stream & audio transport (audit finding 15: a stop that was ignored)
+
+`start()` awaits device acquisition and the worklet module load, then
+unconditionally installs its state and sets `active = true`. There was no
+generation counter and no cancellation check after any await, and `stop()` only
+cleared state `start()` had already written.
+
+Press START then STOP while a source is still opening - which the UI
+deliberately allows, the button reads STOP during "starting" - and `stop()`
+found `active === false`, released nothing, and set the UI to idle. `start()`
+then resumed and installed a live `AudioContext` holding the microphone.
+
+**Idle UI, no session, and the Windows microphone indicator lit** until the next
+START happened to reclaim it. On a machine where the app sits in the tray, that
+is a microphone held open with nothing on screen saying so.
+
+A generation token, taken at the top of `start()` and bumped by `stop()`,
+checked after every await - including *between* sources, because a two-source
+start holds the first device open for the whole time the second is being
+acquired. Anything opened is released on the way out. `stop()` bumps even when
+nothing is active, which is exactly the case this is about.
+
+**And the log stopped lying too.** The browser check showed the mic correctly
+released, then `capture started: Default microphone` two seconds *after*
+`session stopped` - because `start()` returned normally when abandoned and the
+renderer logged success. `start()` returns whether it actually ran now, and the
+renderer reports nothing when it did not.
+
+**Guards - three, two watched fail against their own reverts** (the generation
+check, and the bump in `stop()`). The third is the invariant that an
+uninterrupted start still works and still reports `true`.
+
+**Verified in a browser** with a `getUserMedia` that takes 1.5 s: START, STOP
+300 ms later, and the track ends up `readyState: "ended"` with the session idle
+and the log ending cleanly at `session stopped`. Before the second half of the
+fix, the same run ended with a phantom `capture started` after it.
+
+**Also written down, not fixed:** finding 8 (local STT backpressure) cannot be
+verified on this machine. Both archive models in the models directory are
+`.part` files - which is B6's symptom - so the local engine has never run here,
+and a fix to its pacing would be unverifiable beyond unit tests.

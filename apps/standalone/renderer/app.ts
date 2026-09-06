@@ -608,10 +608,15 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
 
     level = 0;
     lostSlots = new Set();
-    await capture.start(sources, (chunk) => {
+    const started = await capture.start(sources, (chunk) => {
       feedLevel(chunk);
       relayClient?.sendAudio(chunk.buffer);
     });
+    // a STOP that landed while the devices were still opening: capture released
+    // everything and is not running, so there is nothing to report and nothing
+    // to check. Saying "capture started" here is how an abandoned start used to
+    // look identical to a real one in the log.
+    if (!started) return;
     if (capture.channels !== channels) throw new Error("capture channel count does not match the session");
     log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? ` (${channels} channels)` : ""}`, "ok");
     recomputeState();

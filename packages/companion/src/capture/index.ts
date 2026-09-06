@@ -135,6 +135,14 @@ export class BrowserAudioCapture {
   private sink: GainNode | null = null;
   private workletUrl: string | null = null;
   private active = false;
+  /**
+   * Bumped by stop(). start() takes a copy at the top and checks it after every
+   * await, because a stop that lands mid-start used to be silently undone:
+   * stop() found `active === false`, released nothing and set the UI to idle,
+   * and start() then resumed and installed a live AudioContext holding the mic.
+   * Idle UI, no session, Windows microphone indicator lit.
+   */
+  private generation = 0;
   private chans = 1;
 
   async listDevices(): Promise<AudioDeviceInfo[]> {
@@ -219,14 +227,32 @@ export class BrowserAudioCapture {
    * @param sources up to MAX_CAPTURE_CHANNELS source ids (see listDevices),
    *   normalised by captureSources().
    */
-  async start(sources: string | string[], onPcm: (chunk: Int16Array) => void): Promise<void> {
+  /**
+   * @returns whether the capture is actually running. `false` means a stop
+   *   landed while it was still opening and everything opened was released -
+   *   the caller must not then report a capture that is not there.
+   */
+  async start(sources: string | string[], onPcm: (chunk: Int16Array) => void): Promise<boolean> {
     if (this.active) this.stop();
     const list = captureSources(sources);
     if (list.length === 0) throw new Error("no audio source selected");
 
+    const mine = ++this.generation;
+    /** everything opened so far, released together if this start is abandoned */
     const streams: MediaStream[] = [];
+    const abandon = (ctx?: AudioContext): boolean => {
+      if (this.generation === mine) return false;
+      streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+      ctx?.close().catch(() => {});
+      return true;
+    };
     try {
-      for (const src of list) streams.push(await this.openSource(src));
+      for (const src of list) {
+        streams.push(await this.openSource(src));
+        // check between sources too: a two-source start holds the first device
+        // open for the whole time the second is being acquired
+        if (abandon()) return false;
+      }
     } catch (err) {
       streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
       throw err;
@@ -248,6 +274,7 @@ export class BrowserAudioCapture {
       );
     }
     await ctx.audioWorklet.addModule(this.workletUrl);
+    if (abandon(ctx)) return false;
 
     const channels = streams.length;
     const node = new AudioWorkletNode(ctx, "pcm-downsampler", {
@@ -297,6 +324,7 @@ export class BrowserAudioCapture {
     this.sink = sink;
     this.chans = channels;
     this.active = true;
+    return true;
   }
 
   setMuted(muted: boolean): void {
@@ -304,6 +332,9 @@ export class BrowserAudioCapture {
   }
 
   stop(): void {
+    // bumped even when nothing is active: that is precisely the case where a
+    // start is still in flight and has not installed its state yet
+    this.generation += 1;
     this.active = false;
     try {
       this.node?.disconnect();

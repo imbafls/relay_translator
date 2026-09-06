@@ -480,3 +480,134 @@ describe("the sample rate the capture graph runs at", () => {
     cap.stop();
   });
 });
+
+describe("a stop that lands while the capture is still opening", () => {
+  /**
+   * Audit finding 15. `start()` awaits device acquisition and the worklet
+   * module load, then unconditionally installs its state and sets
+   * `active = true`. There is no generation counter and no cancellation check
+   * after any await, and `stop()` only clears state `start()` has already
+   * written.
+   *
+   * Press START then STOP while the loopback source is still opening - which
+   * the UI deliberately allows, the button reads STOP during "starting" -
+   * and `stop()` finds `active === false`, releases nothing, and sets the UI to
+   * idle. `start()` then resumes and installs a live AudioContext holding the
+   * mic. Idle UI, no session, and the Windows microphone indicator lit until
+   * the next START happens to reclaim it.
+   */
+  const saved: Record<string, unknown> = {};
+  let openedTracks: { stopped: boolean }[] = [];
+  let contexts: { closed: boolean }[] = [];
+  let releaseMedia: (() => void) | undefined;
+
+  const install = (): void => {
+    for (const k of ["AudioContext", "AudioWorkletNode", "navigator", "URL", "Blob"]) {
+      saved[k] = (globalThis as Record<string, unknown>)[k];
+    }
+    openedTracks = [];
+    contexts = [];
+    const node = () => ({
+      channelCount: 0,
+      channelCountMode: "",
+      channelInterpretation: "",
+      gain: { value: 1 },
+      connect: () => {},
+      disconnect: () => {},
+    });
+    class FakeAudioContext {
+      destination = node();
+      audioWorklet = { addModule: async () => {} };
+      state = { closed: false };
+      constructor() {
+        contexts.push(this.state);
+      }
+      createChannelMerger = () => node();
+      createGain = () => node();
+      createMediaStreamSource = () => node();
+      close = async (): Promise<void> => {
+        this.state.closed = true;
+      };
+    }
+    class FakeAudioWorkletNode {
+      port = { onmessage: null as unknown, postMessage: () => {} };
+      connect(): void {}
+      disconnect(): void {}
+    }
+    const g = globalThis as Record<string, unknown>;
+    g.AudioContext = FakeAudioContext;
+    g.AudioWorkletNode = FakeAudioWorkletNode;
+    g.Blob = class {};
+    g.URL = { createObjectURL: () => "blob:worklet" };
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      writable: true,
+      value: {
+        mediaDevices: {
+          // held open until the test releases it, which is the window the user
+          // presses STOP in
+          getUserMedia: () =>
+            new Promise((resolve) => {
+              releaseMedia = () => {
+                const track = { stopped: false, readyState: "live", addEventListener: () => {}, stop() { this.stopped = true; } };
+                openedTracks.push(track as unknown as { stopped: boolean });
+                resolve({ getAudioTracks: () => [track], getTracks: () => [track] });
+              };
+            }),
+        },
+      },
+    });
+  };
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: v });
+    }
+    releaseMedia = undefined;
+  });
+
+  it("releases the device instead of leaving the microphone lit", async () => {
+    install();
+    const cap = new BrowserAudioCapture();
+    const starting = cap.start("default-mic", () => {});
+    await new Promise((r) => setTimeout(r, 10));
+
+    cap.stop(); // the user pressed STOP while the device was still opening
+    releaseMedia?.(); // ...and only now does getUserMedia resolve
+    await starting.catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(openedTracks.length, "the device never opened, so this proves nothing").toBe(1);
+    expect(openedTracks[0].stopped, "the microphone was left open with the UI idle").toBe(true);
+    // and it must SAY it did not start, or the caller logs "capture started"
+    // for a capture that is not running - which is what the log showed
+    expect(await starting, "an abandoned start reported success").toBe(false);
+  });
+
+  it("does not leave an AudioContext running behind an idle UI", async () => {
+    install();
+    const cap = new BrowserAudioCapture();
+    const starting = cap.start("default-mic", () => {});
+    await new Promise((r) => setTimeout(r, 10));
+    cap.stop();
+    releaseMedia?.();
+    await starting.catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(cap.capturing, "the capture reported itself active after a stop").toBe(false);
+    for (const ctx of contexts) expect(ctx.closed, "an AudioContext was left open").toBe(true);
+  });
+
+  it("still starts normally when no stop interrupts it", async () => {
+    install();
+    const cap = new BrowserAudioCapture();
+    const starting = cap.start("default-mic", () => {});
+    await new Promise((r) => setTimeout(r, 10));
+    releaseMedia?.();
+
+    expect(await starting, "a normal start reported failure").toBe(true);
+    expect(cap.capturing).toBe(true);
+    expect(openedTracks[0].stopped).toBe(false);
+    cap.stop();
+  });
+});
