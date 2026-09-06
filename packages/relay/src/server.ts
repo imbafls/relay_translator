@@ -326,6 +326,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         }
       },
       onSttError: (message) => sendPublisher(ws, { type: "error", message }),
+      // same channel: a dead translator is as worth saying as a dead engine
+      onTranslateError: (message) => sendPublisher(ws, { type: "error", message }),
       setLive: (live) => {
         if (sttLive === live) return;
         sttLive = live;

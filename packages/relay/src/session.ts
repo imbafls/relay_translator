@@ -44,6 +44,14 @@ export interface SessionConfig {
  * Capture posts a frame every 100 ms while it is running, so five missed in a
  * row is a real stall rather than delivery jitter.
  */
+/**
+ * How often a translation failure is worth repeating. Long enough that a
+ * flapping translator does not fill the log, short enough that a wall the user
+ * hits mid-session is reported again rather than swallowed by a transient one
+ * from minute 1.
+ */
+const TRANSLATE_ERROR_EVERY_MS = 30_000;
+
 const GAP_MS = 500;
 
 export interface GeminiStats {
@@ -88,6 +96,13 @@ export interface SessionDeps {
   sttStats?: SttStats;
   /** STT engine errors, forwarded to the publisher's app log */
   onSttError?(message: string): void;
+  /**
+   * Translation errors, on the same channel. There was no hook at all: a
+   * translator that had stopped working was one line to a console nobody in a
+   * packaged build can see, while viewers watched the target half of every
+   * caption sit on its placeholder.
+   */
+  onTranslateError?(message: string): void;
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
 }
@@ -107,7 +122,17 @@ export class PublisherSession {
   private stt: SttStream | null = null;
   private translator: Translator | null = null;
   private inflight = 0;
-  private geminiErrorLogged = false;
+  /**
+   * When the last translation failure was reported, not WHETHER one has been.
+   *
+   * It was a boolean that latched for the life of the session and was never
+   * reset. One transient 503 in minute 1 burned it, and the Gemini quota wall in
+   * minute 40 was then completely silent - every translate() rejecting, every
+   * viewer's target half stuck on the placeholder, and nothing said anywhere.
+   * Reporting every failure would be its own noise, so it is rate-limited
+   * instead of latched.
+   */
+  private lastTranslateErrorAt = 0;
   private closing = false;
   /** wall clock of the first audio byte (STT word timings are relative to it) */
   private streamWallStart = 0;
@@ -269,10 +294,12 @@ export class PublisherSession {
             this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText, latency: full, ...tag });
           })
           .catch((err) => {
-            if (!this.geminiErrorLogged) {
-              this.geminiErrorLogged = true;
-              this.deps.log("error", `translation failed: ${err.message}`);
-            }
+            const now = Date.now();
+            if (now - this.lastTranslateErrorAt < TRANSLATE_ERROR_EVERY_MS) return;
+            this.lastTranslateErrorAt = now;
+            const message = `translation failed: ${err.message}`;
+            this.deps.log("error", message);
+            this.deps.onTranslateError?.(message);
           })
           .finally(() => {
             this.inflight -= 1;

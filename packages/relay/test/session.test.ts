@@ -364,3 +364,124 @@ describe("a speech pipeline that dies under a live session", () => {
     d.session.stop();
   });
 });
+
+describe("a translation that keeps failing", () => {
+  /**
+   * Audit finding 22. `geminiErrorLogged` latched for the life of the session
+   * and was never reset, and `SessionDeps` had no publisher-facing hook for
+   * translation errors at all - unlike `onSttError`.
+   *
+   * Minute 1: one transient 503 exhausts the retries and burns the latch. One
+   * line goes to the Electron main-process console, which in a packaged build
+   * goes nowhere. Minute 40: the Gemini quota is hit and every translate()
+   * rejects - and the latch suppresses all of it. Viewers keep getting
+   * source-only subtitles whose target half sits on the "..." placeholder
+   * forever, and neither the app log nor the viewer ever says why. A revoked
+   * key and a safety-blocked response are equally silent.
+   */
+  function failing(reason: string) {
+    const viewers: ServerToViewer[] = [];
+    const errors: string[] = [];
+    const logs: string[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        mockStt: true,
+        translator: { translate: async () => Promise.reject(new Error(reason)) },
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        onTranslateError: (message: string) => errors.push(message),
+        log: (_level: string, message: string) => logs.push(message),
+      },
+    );
+    return { session, viewers, errors, logs };
+  }
+
+  it("tells the app the first time, instead of only the console", async () => {
+    const f = failing("429 quota exceeded");
+    f.session.start();
+    await tick();
+    f.session.audio(oneUtterance());
+    await tick(60);
+    f.session.stop();
+
+    expect(f.errors.length, "the app was never told translation had stopped working").toBeGreaterThan(0);
+    expect(f.errors[0]).toContain("429");
+  });
+
+  it("tells it again later, rather than latching for the life of the session", async () => {
+    // The latch is the defect: one transient failure in minute 1 silenced the
+    // quota wall in minute 40. Reporting is rate-limited by wall clock, so the
+    // clock is what has to move - a test that only takes 200 ms would see one
+    // report either way and prove nothing about the latch.
+    const real = Date.now;
+    let now = real();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const f = failing("429 quota exceeded");
+      f.session.start();
+      await tick();
+      for (let i = 0; i < 4; i++) {
+        f.session.audio(oneUtterance());
+        await tick(30);
+        now += 40_000; // well past the reporting interval
+      }
+      f.session.stop();
+      expect(f.errors.length, "a permanent failure was reported once and then never again").toBeGreaterThan(1);
+    } finally {
+      vi.mocked(Date.now).mockRestore();
+    }
+  });
+
+  it("does not report every single failure, which would be its own noise", async () => {
+    const f = failing("429 quota exceeded");
+    f.session.start();
+    await tick();
+    let utterances = 0;
+    for (let i = 0; i < 8; i++) {
+      f.session.audio(oneUtterance());
+      utterances += 1;
+      await tick(20);
+    }
+    f.session.stop();
+    expect(f.errors.length).toBeLessThan(utterances);
+  });
+
+  it("says nothing when translation is working", async () => {
+    const viewers: ServerToViewer[] = [];
+    const errors: string[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        mockStt: true,
+        translator: slowTranslator(0),
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        onTranslateError: (message: string) => errors.push(message),
+        log: () => {},
+      },
+    );
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    await tick(60);
+    session.stop();
+    expect(errors).toEqual([]);
+  });
+});

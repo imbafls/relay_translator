@@ -1966,3 +1966,35 @@ Deck property inspector, neither of which the renderer harness can reach - the
 Stream Deck also needs hardware, which is why audit finding 3 is blocked. What
 was checked in a browser earlier this session is the other half: the plain
 `/watch/<token>` does render the phone page, and `?obs=1` the overlay.
+
+### Turn 56 - Translation pipeline (audit finding 22: a translator that quietly stops)
+
+`geminiErrorLogged` was a boolean that latched for the life of the session and
+was never reset, and `SessionDeps` had no publisher-facing hook for translation
+errors at all - unlike `onSttError`, which has had one all along.
+
+Minute 1: one transient 503 exhausts the retries and burns the latch. One line
+goes to the Electron main-process console, which in a packaged build goes
+nowhere - `log()` is `console.log`/`console.error` and is never forwarded to the
+renderer's LOG pane. Minute 40: the Gemini quota is hit, every `translate()`
+rejects, and the latch swallows all of it. Viewers keep getting source-only
+subtitles whose target half sits on the "…" placeholder forever. A revoked key
+and a safety-blocked response are equally silent.
+
+The latch became a **timestamp**: `lastTranslateErrorAt`, reported at most once
+every 30 s. Long enough that a flapping translator does not fill the log, short
+enough that a wall hit mid-session is reported rather than swallowed by a
+transient failure from minute 1. `onTranslateError` goes to the same
+`sendPublisher({type:"error"})` channel as `onSttError`, so it lands in the log
+pane the user can actually open.
+
+**Guards - four, two watched fail against their own reverts** (the hook removed;
+the timestamp back to a latch). The other two are the invariants: not every
+failure is reported, and a working translator says nothing.
+
+**A test that would have proved nothing.** The first version of the latch guard
+ran four utterances over about 200 ms of real time - well inside the 30 s
+reporting interval, so it saw exactly one report whether the latch was there or
+not. Reporting is rate-limited by wall clock, so the clock is what has to move:
+`Date.now` is stubbed and advanced 40 s between utterances. Without that the
+test passes against the unfixed code, which is the fifth time this session.
