@@ -904,7 +904,12 @@ function renderChain(): void {
 function currentLink(): string | undefined {
   const r = status?.relay;
   if (!r) return undefined;
-  const which = config.output === "obs" ? "obs" : config.output === "both" ? linkChoice : "phone";
+  // linkChoice is authoritative. It used to be consulted only when output was
+  // "both", so on the default output ("phone") there was no way to reach the
+  // OBS overlay URL at all - the switcher below was hidden too. A user put the
+  // phone link into a browser source and got an opaque page instead of a
+  // transparent overlay, which is audit finding 20 seen from the other end.
+  const which = linkChoice;
   if (which === "obs") return r.localViewerUrl;
   return r.remoteViewerUrl || r.localViewerUrl?.replace(/\?obs=1$/, "");
 }
@@ -918,7 +923,9 @@ function renderFooter(): void {
   linkEl.textContent = showLink ? stripUrl(url!) : "— appears on start";
   linkEl.classList.toggle("live", showLink);
   linkEl.title = showLink ? url! : "";
-  $("linkSeg").hidden = config.output !== "both";
+  // always reachable: both destinations exist whatever `output` says, and
+  // hiding one is what sent a user to OBS with the wrong URL
+  $("linkSeg").hidden = false;
   setSeg("linkSeg", linkChoice);
   for (const id of ["copyLink", "openLink"]) ($(id) as HTMLButtonElement).disabled = !showLink;
   ($("rotateLink") as HTMLButtonElement).disabled = !status;
@@ -1810,6 +1817,8 @@ function bind(): void {
     linkChoice = v as "phone" | "obs";
     renderFooter();
   });
+  // an OBS-only user should still open on the OBS link; they can switch either way
+  if (config?.output === "obs") linkChoice = "obs";
   $("keysBtn").onclick = () => setView(view === "keys" ? "stage" : "keys");
   $("wnClose").onclick = () => {
     $("whatsnew").hidden = true;

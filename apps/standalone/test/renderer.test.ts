@@ -404,3 +404,33 @@ describe("LINK MODE", () => {
     expect(last.linkMode === undefined || last.linkMode === "fixed").toBe(true);
   });
 });
+
+describe("reaching the OBS overlay link", () => {
+  /**
+   * A user put the phone link into an OBS browser source and got an opaque
+   * page with an amber bar instead of a transparent overlay, then asked how to
+   * get rid of the bar. He was not picking the wrong link: on the DEFAULT
+   * output ("phone") the PHONE/OBS switcher was hidden and currentLink()
+   * ignored the choice, so the overlay URL had no path in the UI at all.
+   */
+  it("offers both destinations on the default output", async () => {
+    await bootWith({ setupDone: true, output: "phone" });
+    await settle();
+
+    const seg = document.getElementById("linkSeg") as HTMLElement;
+    expect(seg.hidden, "the OBS link is unreachable when this is hidden").toBe(false);
+    expect(seg.querySelector('button[data-value="obs"]')).not.toBeNull();
+    expect(seg.querySelector('button[data-value="phone"]')).not.toBeNull();
+  });
+
+  it("still offers them when output is obs-only", async () => {
+    await bootWith({ setupDone: true, output: "obs" });
+    await settle();
+    expect((document.getElementById("linkSeg") as HTMLElement).hidden).toBe(false);
+  });
+
+  it("markup does not ship the switcher hidden", () => {
+    const src = fs.readFileSync(path.join(rendererDir, "index.html"), "utf8");
+    expect(src).toMatch(/id="linkSeg"(?![^>]*hidden)/);
+  });
+});
