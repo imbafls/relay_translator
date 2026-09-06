@@ -1,4 +1,12 @@
-import { Languages, ServerToViewer, SubtitleLatency, ServerToPublisher, clampChannels, isLocalStt } from "@callout-relay/shared";
+import {
+  Languages,
+  ServerToViewer,
+  SubtitleLatency,
+  ServerToPublisher,
+  clampChannels,
+  isLocalStt,
+  maskProfanity,
+} from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
   createDeepgramStream,
@@ -20,6 +28,9 @@ export interface SessionConfig {
   translationEnabled: boolean;
   /** false = strip latency badges from viewer broadcasts (publisher echo keeps them) */
   latencyVisible: boolean;
+  /** true = mask profanity in source captions sent to viewers (publisher echo
+   *  keeps the words as heard, same split as `latencyVisible`) */
+  profanityFilter: boolean;
   /** 1 or 2 interleaved capture channels */
   channels: number;
   /** speaker tag per channel (only sent when channels > 1) */
@@ -49,7 +60,8 @@ export interface SttStats {
 export interface SessionDeps {
   deepgramApiKey?: string;
   geminiApiKey?: string;
-  mockStt?: boolean;
+  /** true = canned gameplay callouts; an array = say exactly these, in order */
+  mockStt?: boolean | string[];
   mockGemini?: boolean;
   /** stand in for Gemini (tests, and any embedder that brings its own engine) */
   translator?: Translator;
@@ -130,6 +142,19 @@ export class PublisherSession {
     return { channel, speaker: this.cfg.channelLabels?.[channel] || `CH${channel + 1}` };
   }
 
+  /**
+   * Source text as an audience should see it. Everything fanned out to viewers
+   * goes through here - the phone link, the OBS overlay, and the uplink, which
+   * bridges the same viewer broadcast up to the remote relay.
+   *
+   * The publisher echo deliberately does not: the streamer's own console shows
+   * what the STT actually heard, which is the only place a mishearing can be
+   * spotted. Same split as `latencyVisible`.
+   */
+  private forViewers(text: string): string {
+    return this.cfg.profanityFilter === false ? text : maskProfanity(text);
+  }
+
   start(): void {
     const { source, target } = this.cfg.languages;
     const translates = this.cfg.translationEnabled !== false;
@@ -175,7 +200,10 @@ export class PublisherSession {
         if (this.pendingId[channel] === undefined) this.pendingId[channel] = ++this.segId;
         const id = this.pendingId[channel]!;
         const tag = this.tag(channel);
-        this.deps.toViewers({ type: "partial", id, source: text, ...tag });
+        // partials flash on the broadcast as they stream, so they have to be
+        // masked too - filtering only the finals shows the word and then tidies
+        // it up a moment later, which reads as deliberate
+        this.deps.toViewers({ type: "partial", id, source: this.forViewers(text), ...tag });
         this.deps.toPublisher?.({ type: "partial", id, source: text, ...tag });
       },
       onFinal: (text: string, meta: { audioEndSec?: number; channel: number }) => {
@@ -190,7 +218,14 @@ export class PublisherSession {
             : undefined;
         const latency: SubtitleLatency = sttMs !== undefined ? { stt: sttMs } : {};
         const viewerLatency = this.cfg.latencyVisible !== false ? latency : undefined;
-        this.deps.toViewers({ type: "subtitle", id, source: text, final: true, latency: viewerLatency, ...tag });
+        this.deps.toViewers({
+          type: "subtitle",
+          id,
+          source: this.forViewers(text),
+          final: true,
+          latency: viewerLatency,
+          ...tag,
+        });
         this.deps.toPublisher?.({ type: "subtitle", id, source: text, latency, ...tag });
         if (!this.translator) return;
         this.inflight += 1;
@@ -204,7 +239,10 @@ export class PublisherSession {
             this.deps.toViewers({
               type: "subtitle",
               id,
-              source: text,
+              // Gemini is given the unmasked line above, so the translation is
+              // of what was actually said. Only the source shown to viewers is
+              // masked; the target is not filtered.
+              source: this.forViewers(text),
               target: targetText,
               final: true,
               latency: this.cfg.latencyVisible !== false ? full : undefined,
@@ -237,7 +275,11 @@ export class PublisherSession {
 
     const channels = clampChannels(this.cfg.channels);
     if (this.deps.mockStt) {
-      this.stt = createMockSttStream(events, channels);
+      this.stt = createMockSttStream(
+        events,
+        channels,
+        Array.isArray(this.deps.mockStt) ? this.deps.mockStt : undefined,
+      );
     } else if (this.local) {
       if (!this.deps.localStt) {
         this.deps.log("error", "local STT requested but this relay has no local model support");

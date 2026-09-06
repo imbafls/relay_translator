@@ -39,6 +39,8 @@ function makeSession(translator: Translator) {
       languages: { source: "en", target: "vi" },
       translationEnabled: true,
       latencyVisible: true,
+      // off here so these assertions read against the exact mock lines
+      profanityFilter: false,
       channels: 1,
     },
     {

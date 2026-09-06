@@ -544,6 +544,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       languages: config.languages,
       translationEnabled: translationActive(),
       latencyVisible: config.showLatency !== false,
+      profanityFilter: config.profanityFilter !== false,
       channels,
       channelLabels: channels > 1 ? channelLabels(sources) : undefined,
     });
@@ -653,6 +654,7 @@ function syncControlsFromConfig(): void {
   setSeg("obOutputSeg", config.output || "phone");
   setSeg("linkModeSeg", config.linkMode);
   $("badgesToggle").classList.toggle("on", config.showLatency !== false);
+  $("filterToggle").classList.toggle("on", config.profanityFilter !== false);
   syncing = false;
   renderStageHeads();
   renderChain();
@@ -1763,6 +1765,10 @@ function bind(): void {
   $("badgesToggle").onclick = () => {
     if (session === "live" || session === "starting") return;
     void saveAndApply({ showLatency: config.showLatency === false }, { restart: true });
+  };
+  $("filterToggle").onclick = () => {
+    if (session === "live" || session === "starting") return;
+    void saveAndApply({ profanityFilter: config.profanityFilter === false }, { restart: true });
   };
   bindSeg("outputSeg", (v) => void saveAndApply({ output: v as OutputTarget }));
 

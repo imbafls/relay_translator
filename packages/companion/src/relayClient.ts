@@ -26,6 +26,7 @@ export class RelayPublisherClient {
     languages: { source: "en", target: "vi" },
     translationEnabled: true,
     latencyVisible: true,
+    profanityFilter: true,
   };
 
   state: "idle" | "connecting" | "connected" | "disconnected" | "error" = "idle";
@@ -89,6 +90,7 @@ export class RelayPublisherClient {
         languages: this.hello.languages,
         translationEnabled: this.hello.translationEnabled,
         latencyVisible: this.hello.latencyVisible,
+        profanityFilter: this.hello.profanityFilter,
         channels: this.hello.channels,
         channelLabels: this.hello.channelLabels,
       });

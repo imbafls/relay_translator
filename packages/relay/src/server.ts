@@ -146,6 +146,9 @@ function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConf
     languages: { source: langs.source, target: langs.target },
     translationEnabled: raw.translationEnabled !== false,
     latencyVisible: raw.latencyVisible !== false,
+    // absent means on: a publisher that has never heard of the filter still
+    // gets masked captions rather than silently broadcasting unfiltered
+    profanityFilter: raw.profanityFilter !== false,
     channels: clampChannels(raw.channels),
     channelLabels: Array.isArray(raw.channelLabels)
       ? raw.channelLabels.map((l) => String(l).slice(0, 12))
@@ -560,6 +563,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       languages: { ...currentLanguages },
       translationEnabled: DEFAULT_CONFIG.translationEnabled !== false,
       latencyVisible: DEFAULT_CONFIG.showLatency !== false,
+      profanityFilter: DEFAULT_CONFIG.profanityFilter !== false,
       channels: 1,
     });
 

@@ -119,8 +119,17 @@ const MOCK_LINES = [
  * Mock STT for dev/smoke tests: emits canned finals paced by audio volume
  * so the whole pipeline runs without a Deepgram key. With two channels the
  * lines alternate between them.
+ *
+ * `lines` overrides what it says. The default set is clean gameplay callouts,
+ * which is right for the smoke run but means a test cannot exercise anything
+ * that depends on WHAT was said - the caption filter could be unwired entirely
+ * and a fixed-line mock would never notice.
  */
-export function createMockSttStream(events: SttEvents, channels = 1): SttStream {
+export function createMockSttStream(
+  events: SttEvents,
+  channels = 1,
+  lines: readonly string[] = MOCK_LINES,
+): SttStream {
   let bytesSeen = 0;
   const bytesPerLine = SAMPLE_RATE * 2 * channels * 2; // 2 s of audio
   let nextAt = bytesPerLine;
@@ -137,7 +146,7 @@ export function createMockSttStream(events: SttEvents, channels = 1): SttStream 
       if (!opened) return;
       bytesSeen += chunk.length;
       if (bytesSeen >= nextAt) {
-        const text = MOCK_LINES[line % MOCK_LINES.length];
+        const text = lines[line % lines.length];
         const channel = channels > 1 ? line % channels : 0;
         line += 1;
         events.onPartial?.(text, channel);

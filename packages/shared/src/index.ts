@@ -30,6 +30,10 @@ export interface AppConfig {
   translationEnabled: boolean;
   /** false = strip latency badges from viewer subtitles (app log keeps them) */
   showLatency: boolean;
+  /** true = mask profanity in the source captions sent to viewers (the app's own
+   *  console keeps the words as heard, so you can see what the STT actually got).
+   *  Source language only - the translated line is not filtered. */
+  profanityFilter: boolean;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
   /** false = never check for updates in the background (manual CHECK still works) */
@@ -65,6 +69,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   languages: { source: "en", target: "vi" },
   translationEnabled: false,
   showLatency: true,
+  profanityFilter: true,
   linkMode: "unique",
   autoUpdate: true,
   obsOverlay: false,
@@ -104,6 +109,7 @@ export const CONTROL_PATCHABLE_KEYS = [
   "languages",
   "translationEnabled",
   "showLatency",
+  "profanityFilter",
   "output",
   "linkMode",
 ] as const;
@@ -584,6 +590,74 @@ export interface SubtitleSegment {
   ts: number;
 }
 
+/**
+ * Stems the caption filter masks. Each also matches the ordinary inflections
+ * (-s, -es, -ed, -ing, -er, -ers, -y), so one entry covers "fuck", "fucks",
+ * "fucked", "fucking", "fucker".
+ *
+ * Whole words only. A filter that eats "class", "pass", "assume" or
+ * "Scunthorpe" is worse than no filter at all, because the streamer stops
+ * trusting it and turns it off - so this errs toward letting a word through
+ * rather than mangling ordinary speech. Mild words (damn, hell, crap) are
+ * deliberately absent: they are not what a broadcast filter is for.
+ */
+const PROFANITY_STEMS = [
+  "fuck",
+  "motherfuck",
+  "shit",
+  "bullshit",
+  "bitch",
+  "cunt",
+  "cock",
+  "dick",
+  "pussy",
+  "bastard",
+  "asshole",
+  "arsehole",
+  "ass",
+  "arse",
+  "whore",
+  "slut",
+  "twat",
+  "wank",
+  "prick",
+  "piss",
+  "tit",
+  "nigger",
+  "nigga",
+  "faggot",
+  "fag",
+  "retard",
+  "spastic",
+];
+
+/**
+ * Built once. `\b` on both ends is what keeps "ass" out of "class" and "bass",
+ * and the optional suffix group is inside the boundary so "assassin" cannot
+ * match either.
+ */
+const PROFANITY_RE = new RegExp(
+  `\\b(?:${PROFANITY_STEMS.join("|")})(?:s|es|ed|ing|er|ers|y|ies)?\\b`,
+  "gi",
+);
+
+/**
+ * Mask profanity for display, keeping the first letter: "fuck" -> "f***".
+ *
+ * Length is preserved so the line does not reflow, and the first letter is kept
+ * so a reader can tell a mask from a redaction - an all-asterisk blob reads as
+ * "something was removed here", which draws more attention than it deflects.
+ *
+ * This is a courtesy filter, not an adversarial one. It does not chase
+ * character substitution ("f*ck", "sh1t") or spaced-out spelling: the STT emits
+ * ordinary words, and a filter that guesses at obfuscation starts eating real
+ * speech.
+ */
+export function maskProfanity(text: string): string {
+  if (!text) return text;
+  return text.replace(PROFANITY_RE, (word) => word[0] + "*".repeat(word.length - 1));
+}
+
 export interface SubtitleLatency {
   /** speech ended -> text finalized (ms) */
   stt?: number;
@@ -631,6 +705,8 @@ export type PublisherToServer =
       translationEnabled?: boolean;
       /** false = relay strips latency badges from viewer broadcasts */
       latencyVisible?: boolean;
+      /** false = relay sends source captions to viewers unmasked (default is masked) */
+      profanityFilter?: boolean;
       /** 1 (default) or 2 interleaved capture channels, each transcribed separately */
       channels?: 1 | 2;
       /** speaker tag per channel, e.g. ["YOU", "CHAT"] */
