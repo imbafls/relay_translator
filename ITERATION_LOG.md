@@ -1793,3 +1793,41 @@ ever feeds it a higher rate - the measurement above is of the shipped worklet
 and stays true. What changed is that the app no longer asks it to do the rate
 conversion. A real filter in the worklet would be a different, larger change,
 and is not needed while the context is asked for the right rate.
+
+### Turn 52 - Client UI (audit finding 9: the reconnect that kills the live socket)
+
+The other one an audience sees, and the sibling of finding 10 - both put THIS
+LINK HAS ENDED on a session that is still running.
+
+`connect()` had no re-entrancy guard, did not cancel the armed 2 s retry, and
+every handler acted on the module-level `ws` rather than on the socket that
+raised the event. A phone's socket drops and arms a retry; the user unlocks the
+phone inside that window, `visibilitychange` calls `connect()` (socket B), and
+then the timer fires and `connect()` runs again (socket C, `ws = C`). The relay
+allows one viewer per token, so it kicks B - and **B's still-bound handler**
+sets `closedByKick`, shows ENDED, and calls `ws.close()`, which by then means
+**C**, the healthy one. A live session goes dark until the page is reloaded.
+
+Separately, `visibilitychange` cleared `closedByKick` unconditionally, so a
+genuinely rotated token restarted a flat 2 s reconnect loop against a dead
+token, forever, every time the phone was unlocked.
+
+**Fixed the way `cc824dd` fixed `relayClient` and `uplinkClient`:** cancel the
+armed retry, drop any socket already open, capture the socket in a local, and
+give every handler a `current()` check before it acts. `closedByKick` is only
+cleared by TRY AGAIN, which reloads the page - the user actually asking.
+
+**Guards - four, three watched fail against their own reverts.** The fourth is
+the invariant that a kick on the LIVE socket must still end the session; a fix
+that ignored every kick would be a different bug.
+
+**One of those guards did not guard.** It first counted *live* sockets, and went
+green against the reverted `clearTimeout` - because `connect()` now closes the
+previous socket, so a third socket still leaves exactly one alive. It was
+measuring the symptom the other half of the fix already covers. It counts
+sockets *created* now, which is what the cancelled retry actually prevents, and
+reverting turns it red on `expected 3 to be 2`.
+
+That is the fourth time in this session a test has passed against code it was
+written to catch. The pattern each time: the assertion was one level away from
+the change.

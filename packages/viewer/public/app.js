@@ -373,6 +373,8 @@
 
   let ws = null;
   let closedByKick = false;
+  /** the armed reconnect, so a second connect() cannot leave one running */
+  let retryTimer = null;
 
   function langsLabel(msg) {
     const src = (msg.languages && msg.languages.source ? msg.languages.source : "").toUpperCase();
@@ -387,18 +389,54 @@
     tick();
   }
 
+  /**
+   * Open the one socket this page has.
+   *
+   * The re-entrancy is the whole point. connect() used to leave an armed retry
+   * running and act on the module-level `ws` from every handler, so a phone
+   * unlocked inside the 2 s retry window opened one socket from
+   * `visibilitychange` and another from the timer. The relay allows one viewer
+   * per token, so it kicked the first - and the FIRST socket's still-bound
+   * handler then called `ws.close()`, which by then meant the second, healthy
+   * one. A live session showed THIS LINK HAS ENDED and stopped receiving
+   * captions until the page was reloaded.
+   *
+   * So: cancel the retry, drop any socket already open, and give every handler
+   * the socket it was created for to compare against. This is the fix cc824dd
+   * applied to relayClient and uplinkClient.
+   */
   function connect() {
     if (closedByKick) return;
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    if (ws) {
+      const previous = ws;
+      ws = null;
+      try {
+        previous.close();
+      } catch {
+        /* already gone */
+      }
+    }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     setHud("off", "CONNECTING");
+    let sock;
     try {
-      ws = new WebSocket(`${proto}://${location.host}/ws/viewer?token=${encodeURIComponent(token)}`);
+      sock = new WebSocket(`${proto}://${location.host}/ws/viewer?token=${encodeURIComponent(token)}`);
     } catch {
       setHud("warn", "BAD LINK");
       return;
     }
-    ws.onopen = () => setHud("off", "OFF AIR");
-    ws.onmessage = (ev) => {
+    ws = sock;
+    /** an event from a socket this page has already replaced means nothing */
+    const current = () => sock === ws;
+    sock.onopen = () => {
+      if (current()) setHud("off", "OFF AIR");
+    };
+    sock.onmessage = (ev) => {
+      if (!current()) return;
       let msg;
       try {
         msg = JSON.parse(ev.data);
@@ -433,7 +471,7 @@
           $("savedCount").textContent = `${n} LINE${n === 1 ? "" : "S"} SAVED`;
           showScreen("ended");
           try {
-            ws.close();
+            sock.close();
           } catch {
             /* noop */
           }
@@ -443,12 +481,12 @@
           break;
       }
     };
-    ws.onclose = () => {
-      if (closedByKick) return;
+    sock.onclose = () => {
+      if (!current() || closedByKick) return;
       setHud("warn", "RECONNECTING");
-      setTimeout(connect, 2000);
+      retryTimer = setTimeout(connect, 2000);
     };
-    ws.onerror = () => {};
+    sock.onerror = () => {};
   }
 
   $("tryAgain").addEventListener("click", () => location.reload());
@@ -458,10 +496,11 @@
   tick();
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && ws && ws.readyState > WebSocket.OPEN) {
-      closedByKick = false;
-      connect();
-    }
+    // closedByKick is NOT cleared here. It used to be, which restarted a flat
+    // 2 s reconnect loop against a token the relay had already rotated away -
+    // forever, every time the phone was unlocked. Only TRY AGAIN, which
+    // reloads the page, is the user saying they want another go.
+    if (document.visibilityState === "visible" && ws && ws.readyState > WebSocket.OPEN) connect();
   });
 
   connect();

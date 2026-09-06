@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -357,4 +357,81 @@ describe("a kicked overlay does not paint onto the broadcast", () => {
     expect(shown("live")).toBe(false);
   });
 
+});
+
+describe("a viewer socket that drops and comes back", () => {
+  /**
+   * Audit finding 9. `connect()` had no re-entrancy guard and did not cancel
+   * the armed 2 s retry, and every handler acted on the module-level `ws`
+   * rather than on the socket that raised the event.
+   *
+   * A phone's socket drops and arms a retry. The user unlocks the phone inside
+   * that window, `visibilitychange` calls connect() (socket B), then the timer
+   * fires and connect() runs again (socket C, `ws = C`). The relay allows one
+   * viewer per token, so it kicks B - and B's still-bound handler sets
+   * `closedByKick`, shows ENDED and calls `ws.close()`, which is now **C**, the
+   * healthy socket. A live session shows THIS LINK HAS ENDED and stops
+   * receiving captions until the page is reloaded.
+   *
+   * cc824dd applied exactly this fix to relayClient and uplinkClient.
+   */
+  const live = (): number => opened.filter((s) => s.readyState === 1).length;
+  const drop = (s: (typeof opened)[number]): void => {
+    s.readyState = 3;
+    s.onclose?.({ code: 1006 });
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    boot();
+    vi.advanceTimersByTime(1);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not open a second socket when the retry and a wake-up race", () => {
+    const a = opened[0];
+    drop(a);
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(3000);
+
+    expect(live(), "two sockets were left open on one token").toBe(1);
+    // and the armed retry must not have fired at all. Counting only LIVE
+    // sockets hides this: connect() closes the previous one, so a third socket
+    // still leaves exactly one alive while churning through a needless kick.
+    expect(opened.length, "the wake-up connected and then the armed retry connected again").toBe(2);
+  });
+
+  it("ignores a kick aimed at a socket that is already replaced", () => {
+    const a = opened[0];
+    drop(a);
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(3000);
+
+    // the relay kicks the OLD socket, because the new one took the token
+    a.onmessage?.({ data: JSON.stringify({ type: "kicked", reason: "another device opened this link" }) });
+
+    const ended = document.getElementById("ended") as HTMLElement;
+    expect(ended.hidden, "a dead socket's kick put ENDED over a live session").toBe(true);
+    expect(live(), "a dead socket's kick closed the healthy one").toBe(1);
+  });
+
+  it("still ends the session when the live socket is the one kicked", () => {
+    const a = opened[0];
+    a.onmessage?.({ data: JSON.stringify({ type: "kicked", reason: "link was rotated" }) });
+    expect((document.getElementById("ended") as HTMLElement).hidden).toBe(false);
+  });
+
+  it("does not retry for ever against a token that was rotated away", () => {
+    const a = opened[0];
+    a.onmessage?.({ data: JSON.stringify({ type: "kicked", reason: "link was rotated" }) });
+    drop(a);
+    // waking the phone must not restart a reconnect loop against a dead token
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(10000);
+
+    expect(opened.length, "a kicked viewer reconnected to a token it cannot use").toBe(1);
+  });
 });
