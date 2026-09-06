@@ -355,3 +355,52 @@ describe("what's new after an auto-update", () => {
     expect(document.getElementById("whatsnew")?.hidden).toBe(true);
   });
 });
+
+describe("LINK MODE", () => {
+  /**
+   * The worst defect found in the UI review, because it is visible on a live
+   * broadcast. The control was bound with an empty callback, so a pick lived
+   * only in the DOM. Any other save in the same pane ran syncControlsFromConfig,
+   * which reset the buttons to the stored value; SAVE then read the reset DOM
+   * and wrote the old value back. A streamer who chose "fixed" so their OBS
+   * browser source kept working silently ended up on "unique", and the next
+   * START rotated the viewer token - painting THIS LINK HAS ENDED on stream.
+   */
+  const pick = (value: string): void => {
+    const seg = document.getElementById("linkModeSeg") as HTMLElement;
+    const btn = seg.querySelector(`button[data-value="${value}"]`) as HTMLButtonElement;
+    btn.click();
+  };
+
+  it("saves the pick immediately, like every other segmented control", async () => {
+    await bootWith({ setupDone: true, linkMode: "unique" });
+    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    await settle();
+
+    pick("fixed");
+    await settle(40);
+
+    expect(calls.setConfig.some((p) => p.linkMode === "fixed")).toBe(true);
+  });
+
+  it("survives an unrelated save in the same pane", async () => {
+    await bootWith({ setupDone: true, linkMode: "unique" });
+    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    await settle();
+
+    pick("fixed");
+    await settle(40);
+
+    // anything else in this pane that writes config re-syncs the controls
+    (document.getElementById("autoUpdate") as HTMLButtonElement).click();
+    await settle(40);
+
+    const seg = document.getElementById("linkModeSeg") as HTMLElement;
+    const active = seg.querySelector("button.active") as HTMLElement | null;
+    expect(active?.dataset.value, "the pick was reset by the re-sync").toBe("fixed");
+
+    // and the value that would reach main.ts is still the one chosen
+    const last = calls.setConfig[calls.setConfig.length - 1];
+    expect(last.linkMode === undefined || last.linkMode === "fixed").toBe(true);
+  });
+});

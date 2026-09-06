@@ -1907,7 +1907,13 @@ function bind(): void {
     checkGm();
   };
   inp("relayUrl").oninput = () => renderKeyStatuses();
-  bindSeg("linkModeSeg", () => {});
+  // persists like every other segmented control. It used to be a no-op, so the
+  // pick lived only in the DOM: any other save in this pane called
+  // syncControlsFromConfig, which reset the buttons to the STORED value, and
+  // SAVE then read the reset DOM and wrote the old value back. A streamer who
+  // chose "fixed" so their OBS source would keep working silently got "unique",
+  // and the next START rotated the token - putting THIS LINK HAS ENDED on air.
+  bindSeg("linkModeSeg", (v) => void saveAndApply({ linkMode: v as AppConfig["linkMode"] }));
   $("keysSave").onclick = () => void saveKeys();
   $("checkUpdate").onclick = async () => {
     log("checking for updates…");
