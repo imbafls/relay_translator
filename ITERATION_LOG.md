@@ -1588,3 +1588,48 @@ Both are their own turn.
 **Not verified in a browser.** Nothing here changes a pixel - it changes what
 `/health` and a viewer `hello` say, which the tests read directly off a real
 relay over real sockets.
+
+### Turn 48 - Stream & audio transport (audit finding 21: a device that goes away)
+
+The other half of "a dead session that reports itself live", from the capture
+end rather than the relay end.
+
+No `ended` listener existed anywhere in the companion package, and
+`get capturing()` returned the `active` flag - which only ever means "start()
+ran and stop() has not". So unplugging a USB headset mid-game ended its track,
+its merger input fed digital silence, and everything downstream carried on: the
+app stayed LIVE with the clock running, full-rate interleaved PCM kept flowing
+so the engine kept billing at the full channel rate, and that speaker's captions
+simply stopped. The surviving channel kept the level bar moving. Nothing on
+screen hinted at it, and recovery was a manual restart.
+
+**What changed.** `watchSourceTracks()` attaches an `ended` listener per slot
+and reports which slot went and how many are left. A track that has *already*
+ended is reported immediately - `ended` fired before anyone was listening and
+never fires twice, and a device can go between `getUserMedia` resolving and the
+graph being wired. `capturing` now means a track is actually live.
+
+The app names the device in its log, marks the slot in the 01 SOURCE meta -
+`YOU + CHAT LOST + CH3` - and, when the last source goes, stops the session and
+says so rather than sitting there ON AIR.
+
+**Guards - three, each watched fail against its own revert:** the `ended`
+listener removed, the already-ended case removed, and `capturing` back to the
+flag.
+
+That third one caught a hole in my own test. It first exercised `anyTrackLive()`
+directly, so reverting the *getter* left it green - the guard covered the helper
+and not the thing the finding is about. It now sets the state `start()` would
+have left and reads the shipped getter. White-box, and said so in the test,
+because the alternative was an assertion that could not fail.
+
+**Verified in a browser**, with a distinct live MediaStream per device so one
+could be pulled on its own:
+
+- pull slot 2 → `Wave Link chat disconnected - that source has stopped
+  captioning`, the meta reads `YOU + CHAT LOST + CH3`, session stays live and
+  the other two keep captioning;
+- pull the rest → `Coach line disconnected - no audio sources left, stopping the
+  session`, status ERROR, `every audio source disconnected` on the stage.
+
+Before this, every one of those was silent.

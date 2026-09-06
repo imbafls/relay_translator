@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { BrowserAudioCapture, captureSources, rmsLevel, SOURCE_DEFAULT_MIC, SOURCE_SYSTEM_LOOPBACK } from "../src/capture";
+import {
+  anyTrackLive,
+  BrowserAudioCapture,
+  captureSources,
+  rmsLevel,
+  SOURCE_DEFAULT_MIC,
+  SOURCE_SYSTEM_LOOPBACK,
+  watchSourceTracks,
+} from "../src/capture";
 import { clampChannels, MAX_CAPTURE_CHANNELS } from "@callout-relay/shared";
 
 /**
@@ -205,5 +213,113 @@ describe("the count the session announces against the count capture opens", () =
       const opened = captureSources(ids.slice(0, n)).length;
       expect(clampChannels(opened), `${n} sources opened ${opened} lanes, announced as something else`).toBe(opened);
     }
+  });
+});
+
+describe("a capture device that goes away mid-session", () => {
+  /**
+   * Audit finding 21. No `ended` listener existed anywhere in this package, and
+   * `capturing` reported a boolean flag rather than any track's state. Unplug a
+   * USB headset mid-game and the track ends, the merger input feeds digital
+   * silence, the app stays LIVE with the clock running, full-rate interleaved
+   * PCM keeps flowing so Deepgram keeps billing at the full channel rate, and
+   * that speaker's captions simply stop. The other channel keeps the level bar
+   * moving, so nothing on screen even hints at it.
+   */
+  type FakeTrack = {
+    readyState: string;
+    listeners: (() => void)[];
+    addEventListener(type: string, fn: () => void): void;
+    stop(): void;
+  };
+  const track = (readyState = "live"): FakeTrack => ({
+    readyState,
+    listeners: [],
+    addEventListener(type, fn) {
+      if (type === "ended") this.listeners.push(fn);
+    },
+    stop() {
+      this.readyState = "ended";
+    },
+  });
+  const streamOf = (t: FakeTrack): MediaStream =>
+    ({ getAudioTracks: () => [t] }) as unknown as MediaStream;
+  const end = (t: FakeTrack): void => {
+    t.readyState = "ended";
+    for (const fn of t.listeners) fn();
+  };
+
+  it("reports which slot was lost", () => {
+    const a = track();
+    const b = track();
+    const lost: { index: number; live: number }[] = [];
+    watchSourceTracks([streamOf(a), streamOf(b)], (info) => lost.push(info));
+
+    end(b);
+    expect(lost).toEqual([{ index: 1, live: 1 }]);
+  });
+
+  it("says nothing while every device is still there", () => {
+    const a = track();
+    const lost: unknown[] = [];
+    watchSourceTracks([streamOf(a)], (i) => lost.push(i));
+    expect(lost).toEqual([]);
+  });
+
+  it("says how many are left, so the caller can tell 'one gone' from 'all gone'", () => {
+    const a = track();
+    const b = track();
+    const c = track();
+    const lost: { index: number; live: number }[] = [];
+    watchSourceTracks([streamOf(a), streamOf(b), streamOf(c)], (info) => lost.push(info));
+
+    end(b);
+    end(a);
+    end(c);
+    expect(lost.map((l) => l.live)).toEqual([2, 1, 0]);
+  });
+
+  it("reports a device that had already gone before anyone looked", () => {
+    // a track can end between getUserMedia resolving and the graph being wired;
+    // "ended" has already fired by then and will never fire again
+    const gone = track("ended");
+    const lost: { index: number }[] = [];
+    watchSourceTracks([streamOf(gone)], (info) => lost.push(info));
+    expect(lost.map((l) => l.index), "a device that was already gone went unnoticed").toEqual([0]);
+  });
+
+  it("knows whether anything is still being captured", () => {
+    const a = track();
+    const b = track();
+    expect(anyTrackLive([streamOf(a), streamOf(b)])).toBe(true);
+    end(a);
+    expect(anyTrackLive([streamOf(a), streamOf(b)]), "one live track is still capturing").toBe(true);
+    end(b);
+    expect(anyTrackLive([streamOf(a), streamOf(b)]), "every device gone, still reported as capturing").toBe(false);
+  });
+
+  it("treats no streams at all as not capturing", () => {
+    expect(anyTrackLive([])).toBe(false);
+  });
+
+  /**
+   * The getter, not the helper underneath it. Reaching it the honest way needs
+   * an AudioContext and an AudioWorklet, so the state start() would have left
+   * behind is set directly - white-box, but it runs the shipped getter rather
+   * than a rewrite of it, and the whole defect was that this returned a flag.
+   */
+  it("stops calling itself capturing once every device has gone", () => {
+    const a = track();
+    const b = track();
+    const cap = new BrowserAudioCapture();
+    const priv = cap as unknown as { active: boolean; streams: MediaStream[] };
+    priv.active = true;
+    priv.streams = [streamOf(a), streamOf(b)];
+
+    expect(cap.capturing).toBe(true);
+    end(a);
+    expect(cap.capturing, "one device left is still capturing").toBe(true);
+    end(b);
+    expect(cap.capturing, "the app stayed LIVE with every device unplugged").toBe(false);
   });
 });

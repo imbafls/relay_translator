@@ -230,9 +230,21 @@ function paintSpeaker(el: HTMLElement, seg: { speaker?: string; color?: string }
   el.classList.toggle("other", !colour && !!seg.speaker && seg.speaker !== "YOU" && seg.speaker !== "CH1");
 }
 
-/** the 01 SOURCE meta: the roles once there are two, the device kind when there is one */
+/** slots whose device went away during this session (unplugged, disabled, taken) */
+let lostSlots = new Set<number>();
+
+/**
+ * The 01 SOURCE meta: the roles once there are two, the device kind when there
+ * is one, and a struck-through tag for any slot whose device has gone. Without
+ * that last part a lost source is completely invisible - the surviving channel
+ * keeps the level bar moving and the tag still reads normally.
+ */
 function sourceKindLabel(sources: string[]): string {
-  if (sources.length > 1) return channelLabels(sources).join(" + ");
+  if (sources.length > 1) {
+    return channelLabels(sources)
+      .map((tag, i) => (lostSlots.has(i) ? `${tag} LOST` : tag))
+      .join(" + ");
+  }
   return sourceKind(sources[0] || "") === "system" ? "SYSTEM" : "MIC";
 }
 function sourcesSummary(): string {
@@ -594,6 +606,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     });
 
     level = 0;
+    lostSlots = new Set();
     await capture.start(sources, (chunk) => {
       feedLevel(chunk);
       relayClient?.sendAudio(chunk.buffer);
@@ -1933,6 +1946,25 @@ function bind(): void {
   $("logBtn").onclick = () => setView(view === "log" ? "stage" : "log");
   $("settingsBack").onclick = () => setView("stage");
   $("logBack").onclick = () => setView("stage");
+
+  /**
+   * Audit finding 21. Nothing listened for a captured device going away, so
+   * unplugging a headset mid-game left the app LIVE with the clock running, the
+   * merger feeding digital silence into that lane, and full-rate PCM still
+   * billing - while that speaker's captions simply stopped.
+   */
+  capture.onSourceLost = ({ index, live, deviceId }) => {
+    lostSlots.add(index);
+    const name = sourceLabel(deviceId);
+    if (live === 0) {
+      log(`${name} disconnected - no audio sources left, stopping the session`, "err");
+      void stopSession();
+      setState("error", "every audio source disconnected");
+      return;
+    }
+    log(`${name} disconnected - that source has stopped captioning. Stop and start to pick another.`, "err");
+    renderChain();
+  };
 
   // chain
   $("rescan").onclick = () => void refreshDevices();

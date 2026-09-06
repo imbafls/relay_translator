@@ -59,6 +59,52 @@ export function rmsLevel(chunk: Int16Array): number {
   return Math.sqrt(sum / chunk.length);
 }
 
+/** a capture slot whose device has gone away, and what is left after it */
+export interface SourceLost {
+  /** slot index, i.e. which of the sources passed to start() */
+  index: number;
+  /** how many slots still have a live track */
+  live: number;
+}
+
+/** every audio track across the open streams, in slot order */
+const tracksOf = (streams: readonly MediaStream[]): MediaStreamTrack[] =>
+  streams.map((s) => s.getAudioTracks()[0]).filter(Boolean);
+
+/** whether anything at all is still being captured */
+export function anyTrackLive(streams: readonly MediaStream[]): boolean {
+  return tracksOf(streams).some((t) => t.readyState === "live");
+}
+
+/**
+ * Watch each slot's device and report the ones that go away.
+ *
+ * Nothing listened for this before. Unplug a USB headset mid-game and its track
+ * ends, its merger input feeds digital silence, and everything downstream
+ * carries on: the app stays LIVE with the clock running, full-rate interleaved
+ * PCM keeps flowing so the engine keeps billing at the full channel rate, and
+ * that speaker's captions simply stop. The other channel keeps the level bar
+ * moving, so there is nothing on screen to notice.
+ *
+ * A track that has ALREADY ended is reported immediately: `ended` fired before
+ * anyone was listening and will never fire again, and one can end between
+ * getUserMedia resolving and the graph being wired.
+ */
+export function watchSourceTracks(
+  streams: readonly MediaStream[],
+  onLost: (info: SourceLost) => void,
+): void {
+  const tracks = tracksOf(streams);
+  tracks.forEach((track, index) => {
+    const report = (): void => onLost({ index, live: tracks.filter((t) => t.readyState === "live").length });
+    if (track.readyState === "ended") {
+      report();
+      return;
+    }
+    track.addEventListener("ended", report);
+  });
+}
+
 export class BrowserAudioCapture {
   private ctx: AudioContext | null = null;
   private streams: MediaStream[] = [];
@@ -93,8 +139,20 @@ export class BrowserAudioCapture {
     ];
   }
 
+  /**
+   * Called when a captured device goes away - unplugged, disabled, or taken by
+   * another application. Set by the app; unset means the loss is invisible,
+   * which is exactly what it used to be.
+   */
+  onSourceLost?: (info: SourceLost & { deviceId: string }) => void;
+
+  /**
+   * Whether audio is still coming in. This returned the `active` flag, which
+   * only ever means "start() ran and stop() has not", so it stayed true with
+   * every device unplugged.
+   */
   get capturing(): boolean {
-    return this.active;
+    return this.active && anyTrackLive(this.streams);
   }
 
   /** channels in the PCM frames the current capture emits (1..MAX_CAPTURE_CHANNELS) */
@@ -195,6 +253,11 @@ export class BrowserAudioCapture {
     sink.gain.value = 0;
     node.connect(sink);
     sink.connect(ctx.destination);
+
+    watchSourceTracks(streams, (info) => {
+      const id = list[info.index] ?? "";
+      this.onSourceLost?.({ ...info, deviceId: id });
+    });
 
     this.ctx = ctx;
     this.streams = streams;
