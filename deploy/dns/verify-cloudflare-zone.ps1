@@ -7,7 +7,9 @@
 #
 # Every expectation here comes from deploy/dns/supr.systems-before-migration.md.
 
-$NS = "craig.ns.cloudflare.com"
+param([string]$NS = "craig.ns.cloudflare.com")
+# $NS = a specific nameserver to interrogate, or a public resolver like 8.8.8.8
+# to check what the world actually sees after a cutover.
 $Domain = "supr.systems"
 $fail = 0
 $pass = 0
