@@ -28,6 +28,69 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.5",
+    date: "2026-09-06",
+    headline: "Settings you can actually find, and up to three audio sources",
+    changes: [
+      {
+        kind: "added",
+        text: "SETTINGS. Everything you can change is behind one button, bottom right, or Ctrl and comma. It used to say KEYS, sat among the cost figures, and half the things you would look for were somewhere else entirely. The relay and port fields almost nobody needs are tucked behind ADVANCED.",
+      },
+      {
+        kind: "added",
+        text: "Up to three audio sources instead of two. Each is transcribed on its own channel and carries its own name and colour on the captions, so you, your team and a coach are told apart at a glance. Name them and pick their colours under SETTINGS; choose the devices under 01 SOURCE.",
+      },
+      {
+        kind: "added",
+        text: "The caption view's own display settings - size, font, colours - are one click from SETTINGS, including for the OBS overlay, where that button otherwise only appears on hover.",
+      },
+      {
+        kind: "fixed",
+        text: "THIS LINK HAS ENDED no longer appears on your broadcast. On the default link mode every press of START rotated the link, which kicked your OBS source and painted that panel onto the stream, where it stayed until you refreshed it.",
+      },
+      {
+        kind: "fixed",
+        text: "A phone that drops its connection and comes back no longer kills the good one. The reconnect could close the healthy socket, leaving a live session showing THIS LINK HAS ENDED until the page was reloaded.",
+      },
+      {
+        kind: "fixed",
+        text: "If speech recognition stops working, the app says so and reconnects. A dropped connection used to leave it ON AIR with the clock running, producing nothing and still counting billed minutes for audio that went nowhere.",
+      },
+      {
+        kind: "fixed",
+        text: "Unplugging a microphone mid-session is noticed and named. It used to leave the session live and silent, with the microphone indicator still lit and that speaker's captions simply stopped.",
+      },
+      {
+        kind: "fixed",
+        text: "Pressing STOP while the app is still opening a device now actually stops. It could leave the microphone held open behind an idle screen until the next time you started.",
+      },
+      {
+        kind: "fixed",
+        text: "A device unplugged since last time no longer traps you. It is dropped, and the app says which slot it was, instead of failing every START with the single word OverconstrainedError.",
+      },
+      {
+        kind: "fixed",
+        text: "A local port that cannot be used is refused rather than accepted. Typing one another program already owns used to save it, break the app, and report success - and it stayed broken after a restart.",
+      },
+      {
+        kind: "fixed",
+        text: "Speech is transcribed more accurately. The audio was being reduced to 16 kHz with no filter in front of it, folding everything above 8 kHz back over your voice.",
+      },
+      {
+        kind: "fixed",
+        text: "Translation that stops working says so. One failure used to silence every later one for the rest of the session, leaving viewers looking at a placeholder with nothing to explain it.",
+      },
+      {
+        kind: "fixed",
+        text: "The tray and the Stream Deck hand out the phone link, not the transparent OBS overlay. On a fresh install they gave out the overlay, which on a phone is white text on whatever the browser's background happens to be.",
+      },
+      {
+        kind: "fixed",
+        text: "A model download that fails now says which half failed - the download or the archive. It blamed the network every time, including for archives that had arrived perfectly.",
+      },
+    ],
+  },
+  {
     version: "0.5.4",
     date: "2026-09-06",
     headline: "Captions appear as you speak, and the OBS overlay finally has its settings",
