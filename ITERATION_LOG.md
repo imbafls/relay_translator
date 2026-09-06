@@ -1998,3 +1998,42 @@ reporting interval, so it saw exactly one report whether the latch was there or
 not. Reporting is rate-limited by wall clock, so the clock is what has to move:
 `Date.now` is stubbed and advanced 40 s between utterances. Without that the
 test passes against the unfixed code, which is the fifth time this session.
+
+### Turn 57 - Making the backlog true again, and guarding it
+
+`docs/OPEN-WORK.md` is the consolidated backlog, and it opened with three
+blockers that all said the same thing: **SSH into the Hostinger box.** There is
+no box. It was stopped on 2026-09-06 and `relay.supr.systems` is a Cloudflare
+Worker with one Durable Object per streamer. A backlog that sends the next
+session to mirror a release onto a machine that does not exist is worse than one
+that says nothing.
+
+**Rewritten.** The three VPS blockers are one short section explaining they are
+moot and why. Nine findings fixed this run are listed with their commits.
+Finding 11 is split, because only part of it is done — the reconnect ladder and
+the pong tracking are still open and should not hide inside a struck-through
+line. Four things found *while* fixing the others are written down as their own
+entries, including one nobody had noticed: a phone viewer that **loads** a dead
+link sits on `RECONNECTING` forever, because a rejected socket is a different
+path from a `kicked` message.
+
+**And guarded.** `packages/shared/test/handoff.test.ts` covered `HANDOFF.md`
+only. It now covers `HANDOFF.md`, `CLAUDE.md` and `docs/OPEN-WORK.md` - the
+three documents a session reads before touching anything - checking that every
+`pnpm <script>`, every code path and every document any of them names actually
+exists, plus that none of them still describes work blocked on SSH to the
+retired VPS. `CLAUDE.md` having no guard was itself an item in this file.
+
+Two false positives had to be fixed before it was worth anything:
+
+- it read `pnpm monorepo` out of the sentence describing what the repo **is**,
+  and reported a missing script. It searches fenced blocks and inline code spans
+  now, not prose.
+- `docs/OPEN-WORK.md` names `AUDIT-2026-09-05.md` relatively, because it sits
+  next to it. Paths resolve the way a reader would - beside the document, or
+  from the root.
+
+**Proved both ways.** Reverting the doc list to `["HANDOFF.md"]` drops the suite
+from 15 tests to 7 with every `CLAUDE.md` block gone, so the widening is
+coverage rather than decoration; and putting a "Blocked on: the same SSH
+credentials" line back into the backlog turns the VPS check red.
