@@ -63,3 +63,22 @@ Point the nameservers back at `ns1.dns-parking.com` / `ns2.dns-parking.com` at
 Hostinger and wait for propagation. A Hostinger DNS snapshot restores *records*
 and cannot undo a nameserver change — the Hostinger zone is still intact, so
 pointing back is the whole rollback.
+
+## Afterwards — what actually happened
+
+All of the above passed on 2026-09-06. Mail was confirmed by sending in both
+directions with DKIM passing, the Worker custom domain was attached, and
+`relay.supr.systems` now serves the hosted relay (14/14 runtime, 9/9 isolation
+on the live name).
+
+The VPS at `187.124.87.202` was then stopped and confirmed down. Before doing
+so, every domain on the Hostinger account was swept for records pointing at that
+IP. One existed — `status.supr.wtf` — and it was already broken: Traefik served
+it with its own default certificate and a 404, so no service had ever been
+routed there. It is now a dangling record pointing at a stopped machine and
+should be deleted.
+
+**Stopping a VPS does not stop the charges.** Hostinger treats it as a
+compute-only power change; billing ends when auto-renewal is disabled on the
+owning subscription (`AzZi20VCyXuHKe9L`). The disk is retained while the machine
+is stopped, so this is reversible until that subscription lapses.
