@@ -87,3 +87,18 @@ describe("the bump script reaches everything above", () => {
     expect(bump).toContain('"Version"');
   });
 });
+
+describe("a release has notes to publish", () => {
+  const changelog = fs.readFileSync(path.join(root, "packages/shared/src/changelog.ts"), "utf8");
+
+  it("has a changelog entry for the version being shipped", () => {
+    // the release notes and the app's what's-new panel come from one source, so
+    // a version with no entry ships a release page with nothing on it
+    expect(changelog, `no changelog entry for ${appVersion}`).toContain(`version: "${appVersion}"`);
+  });
+
+  it("keeps the generator that turns it into release notes", () => {
+    const script = fs.readFileSync(path.join(root, "scripts/release-notes.mjs"), "utf8");
+    expect(script).toContain("CHANGELOG");
+  });
+});
