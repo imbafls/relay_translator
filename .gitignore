@@ -33,3 +33,6 @@ packages/relay/sea/relay-bundle.cjs
 
 # local dev tooling (browser preview / mock relay launch config)
 .claude/
+
+# knowledge graph build output (graphify)
+graphify-out/
