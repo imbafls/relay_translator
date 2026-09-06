@@ -1274,3 +1274,81 @@ real link. The wider footer chip pushed the link row into the cost figures at
 **Not verified:** the Electron build itself. Everything here is renderer markup,
 CSS and DOM code exercised through the real `app.ts`, but the packaged app was
 not launched.
+
+### Turn 43 - Stream & audio transport (three sources, not two)
+
+**Asked for.** Multi-channel STT: several sources, isolated, used how the
+streamer wants. Scope settled with the user - up to **three**, each carrying its
+own identity into **one** tagged viewer feed. Not a link per source, not an
+engine per source.
+
+**What the stack already did.** Three sweeps of the audio path, one per layer,
+before touching anything. Most of it is already general over N and has been all
+along:
+
+- `capture/index.ts` builds the graph from `streams.length` - a `ChannelMerger`
+  sized to the source count, one input per source, one `AudioContext` so every
+  lane shares a clock. Nothing there needed changing.
+- `SpeakerTag { channel?: number; speaker?: string }` is unbounded already.
+- `session.ts` keys interim ids by channel and tags each caption through
+  `tag(channel)`; the uplink carries finished subtitles and never sees a channel
+  count at all.
+- Deepgram costs **no extra socket**: one connection with `multichannel=true`
+  and `channels=n`. Local STT costs **no extra worker thread**: one worker with
+  per-channel state inside it.
+
+So this was not a rewrite. It was four hard stops:
+
+| Where | The stop |
+|---|---|
+| `shared/src/index.ts` | `clampChannels(n): 1 \| 2` - and the return **type** capped it independently of the body |
+| `shared/src/index.ts` | the publisher hello's own `channels?: 1 \| 2` |
+| `capture/index.ts` | `.slice(0, 2)`, truncating silently before a stream is opened |
+| `capture/workletSource.ts` | `Math.min(2, ...)` plus a resampler hand-unrolled for exactly two lanes (`a`, `b`, two `prev` slots, two stores) |
+
+`MAX_CAPTURE_CHANNELS = 3` now lives in `shared` and every one of those reads
+it, including the worklet - which is a template string, so the cap is
+interpolated into it rather than written twice. If the worklet and the hello
+ever disagreed the relay would re-cut the frame on the wrong stride and every
+lane after the first would carry a different voice on every frame, which decodes
+to fluent speech and sounds like nothing is wrong.
+
+`clampChannels` still collapses an **over**-count to mono rather than rounding
+it down to the cap, and there is now a test saying why: the number is not a
+preference, it is how many samples each frame holds.
+
+**A bug the third channel would have shipped.** The 01 SOURCE level meter walked
+the frame with a stride of 3, commented "odd stride so interleaved stereo frames
+feed both channels into the meter". That holds only while the stride and the
+channel count share no factor. At three sources a stride of three lands on
+channel 0 every time: the meter moves convincingly and two of the three are
+invisible in it. No crash, no log line. It reads every sample now - 4800 per
+100 ms frame, which is not a cost worth being wrong for.
+
+**Guards, each watched fail against its own revert.** `clampChannels(3)` back to
+1; the worklet clamp back to 2; the capture slice back to 2; the meter back to a
+stride of 3. The source-list rule moved out of `start()` into `captureSources()`
+to be reachable at all - `start()` wants an `AudioContext`, an `AudioWorklet`
+and a real `getUserMedia`, so the only previous way to cover it was to rewrite
+it in a test and check the rewrite.
+
+**The one the tests could not have caught.** `@callout-relay/companion` has two
+entry points, and `package.json` maps the default to `dist/browser.js` for
+bundlers. The renderer is bundled for the browser, so it loads that one; vitest
+loads the other. `rmsLevel` was exported from `src/index.ts` and not from
+`src/browser.ts`: it typechecked, it built, all 504 tests passed, and the meter
+read a flat zero through a live session. Only the browser showed it, and only
+because the pre-change build was rebuilt from `git show HEAD:` and run side by
+side on the same synthetic stream - 11 bars lit against 0.
+`packages/shared/test/browserEntry.test.ts` now resolves every name the renderer
+imports against the browser barrel, and names the missing one when it fails.
+
+**Verified in a browser**: a live session on the mock relay with a resumed
+`AudioContext` feeding a synthetic `MediaStream`; meter reads 11 of 12 bars,
+identical to the pre-change build.
+
+**Not verified:** three sources end to end. Nothing in the UI can select a third
+yet - that is the next turn, and it needs a config shape, `CONTROL_PATCHABLE_KEYS`,
+the two hard-coded `<select>` slots in the markup, and `channelLabels()`, which
+returns a two-element literal and has no answer for what channel three is
+called.

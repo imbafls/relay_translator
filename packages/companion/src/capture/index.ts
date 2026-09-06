@@ -1,4 +1,4 @@
-import { AudioDeviceInfo } from "@callout-relay/shared";
+import { AudioDeviceInfo, MAX_CAPTURE_CHANNELS } from "@callout-relay/shared";
 import { PCM_WORKLET_SOURCE } from "./workletSource";
 
 export const TARGET_SAMPLE_RATE = 16000;
@@ -15,8 +15,50 @@ const PSEUDO_DEVICE_IDS = new Set(["default", "communications"]);
  *
  * One or two sources: each is downmixed to mono, merged into one graph so
  * they share a clock, and the worklet emits s16le 16 kHz PCM - mono, or
- * interleaved stereo when two sources are open (channel 0 = first source).
+ * interleaved by source when more than one is open (channel 0 = first source).
  */
+/**
+ * The source ids a capture will actually open, in the order picked.
+ *
+ * Empty slots are dropped and a device picked twice is collapsed: two channels
+ * carrying one voice is the most confusing failure this app has, because both
+ * transcribe fine and nothing says why every line is doubled. Order is kept -
+ * the speaker tag follows the slot, not the device.
+ *
+ * This lived inline in start(), where nothing could reach it: start() needs an
+ * AudioContext, an AudioWorklet and a real getUserMedia, so the only way to
+ * cover the rule was to rewrite it in a test and check the rewrite.
+ */
+export function captureSources(sources: string | string[]): string[] {
+  const list = Array.isArray(sources) ? sources : [sources];
+  return list.filter((s, i, a) => !!s && a.indexOf(s) === i).slice(0, MAX_CAPTURE_CHANNELS);
+}
+
+/**
+ * RMS of one interleaved PCM frame, 0..1 - what the 01 SOURCE meter shows.
+ *
+ * It used to walk the frame with a stride of 3, on the reasoning that an odd
+ * stride feeds both channels of an interleaved stereo frame into the meter.
+ * That holds only while the stride and the channel count share no factor: at
+ * three sources a stride of three lands on channel 0 every single time, so the
+ * meter moves convincingly while two of the three are invisible in it. There
+ * is no crash and no log line - the streamer simply cannot see that comms went
+ * dead.
+ *
+ * Every sample now, because there is no stride that is coprime with every
+ * channel count, and a frame is 100 ms: 4800 samples at three channels, which
+ * is not a cost worth being wrong for.
+ */
+export function rmsLevel(chunk: Int16Array): number {
+  if (chunk.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < chunk.length; i++) {
+    const v = chunk[i] / 32768;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / chunk.length);
+}
+
 export class BrowserAudioCapture {
   private ctx: AudioContext | null = null;
   private streams: MediaStream[] = [];
@@ -55,7 +97,7 @@ export class BrowserAudioCapture {
     return this.active;
   }
 
-  /** channels in the PCM frames the current capture emits (1 or 2) */
+  /** channels in the PCM frames the current capture emits (1..MAX_CAPTURE_CHANNELS) */
   get channels(): number {
     return this.chans;
   }
@@ -93,12 +135,12 @@ export class BrowserAudioCapture {
   }
 
   /**
-   * @param sources one or two source ids (see listDevices). The same id twice
-   *   is collapsed to one channel.
+   * @param sources up to MAX_CAPTURE_CHANNELS source ids (see listDevices),
+   *   normalised by captureSources().
    */
   async start(sources: string | string[], onPcm: (chunk: Int16Array) => void): Promise<void> {
     if (this.active) this.stop();
-    const list = (Array.isArray(sources) ? sources : [sources]).filter((s, i, a) => !!s && a.indexOf(s) === i).slice(0, 2);
+    const list = captureSources(sources);
     if (list.length === 0) throw new Error("no audio source selected");
 
     const streams: MediaStream[] = [];

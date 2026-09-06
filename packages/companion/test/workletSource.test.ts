@@ -152,3 +152,51 @@ describe("muting", () => {
     expect(h.all().length).toBeGreaterThan(before);
   });
 });
+
+describe("three capture sources", () => {
+  /**
+   * The interleave was two hand-written lanes: `a`, `b`, two `prev` slots and
+   * two stores per output sample. A third source had nowhere to go, and the
+   * constructor clamped the count to 2 so asking for one silently transcribed
+   * the first two and dropped the third - the worst shape, because the session
+   * still reports three channels and the relay still splits the frame by three.
+   */
+  it("keeps all three apart, with no bleed between lanes", () => {
+    const a = flat(48000, 1, 0.5);
+    const b = flat(48000, 1, -0.25);
+    const c = flat(48000, 1, 0.125);
+    const h = load(48000, { channels: 3 });
+    h.feed([a, b, c]);
+
+    const out = h.all();
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.length % 3).toBe(0);
+
+    // skip the first frame of three: prev starts at 0, so the first sample ramps
+    const rest = out.subarray(3);
+    const lane = (i: number): number[] => Array.from(rest).filter((_, k) => k % 3 === i);
+    expect(lane(0).every((v) => v === Math.trunc(0.5 * 32767))).toBe(true);
+    expect(lane(1).every((v) => v === Math.trunc(-0.25 * 32767))).toBe(true);
+    expect(lane(2).every((v) => v === Math.trunc(0.125 * 32767))).toBe(true);
+  });
+
+  it("posts frames holding the same 100 ms from every lane", () => {
+    const h = load(44100, { channels: 3 });
+    h.feed([flat(44100, 3, 0.1), flat(44100, 3, 0.2), flat(44100, 3, 0.3)]);
+    expect(h.frames.length).toBeGreaterThan(0);
+    expect(h.frames.every((f) => f.length === 4800)).toBe(true);
+  });
+
+  /**
+   * The relay splits an interleaved frame by the channel count in the hello.
+   * If the worklet quietly produced a different stride than it was asked for,
+   * every lane after the first would be a different voice on every frame.
+   */
+  it("never interleaves more lanes than it was built to hold", () => {
+    const h = load(48000, { channels: 9 });
+    h.feed([flat(48000, 1, 0.5), flat(48000, 1, -0.5), flat(48000, 1, 0.25)]);
+    expect(h.frames.length).toBeGreaterThan(0);
+    for (const f of h.frames) expect(f.length % 1600).toBe(0);
+    expect(h.frames[0].length / 1600).toBeLessThanOrEqual(3);
+  });
+});

@@ -162,8 +162,29 @@ export function isLocalStt(id: string): boolean {
   return info ? info.provider === "local" : id.startsWith("local-");
 }
 
-/** capture channels are 1 or 2; anything else on the wire collapses to mono */
-export function clampChannels(n: unknown): 1 | 2 {
+/**
+ * How many capture sources one session can carry. Every layer reads this: the
+ * worklet interleaves this many lanes, the relay splits a frame by this many,
+ * and the app offers this many pickers. Three covers you + the game + comms.
+ *
+ * The ceiling is cost, not code. Deepgram bills a multichannel stream per
+ * channel, so three sources bill roughly three times the per-minute rate, and
+ * on a local model it is a third resampler and a third decode on a machine
+ * that is also running the game.
+ */
+export const MAX_CAPTURE_CHANNELS = 3;
+
+/**
+ * Anything the pipeline cannot interleave collapses to mono.
+ *
+ * Note it does not round an over-count DOWN to the cap. The number is not a
+ * preference, it is how many samples every interleaved frame holds: read a
+ * 4-channel frame as 3 and every lane after the first is a different voice on
+ * every frame. Mono is the only reading that cannot be wrong about which
+ * sample belongs to whom.
+ */
+export function clampChannels(n: unknown): 1 | 2 | 3 {
+  if (n === 3) return 3;
   return n === 2 ? 2 : 1;
 }
 
@@ -713,8 +734,8 @@ export type PublisherToServer =
       latencyVisible?: boolean;
       /** false = relay sends source captions to viewers unmasked (default is masked) */
       profanityFilter?: boolean;
-      /** 1 (default) or 2 interleaved capture channels, each transcribed separately */
-      channels?: 1 | 2;
+      /** 1 (default) to MAX_CAPTURE_CHANNELS interleaved capture channels, each transcribed separately */
+      channels?: 1 | 2 | 3;
       /** speaker tag per channel, e.g. ["YOU", "CHAT"] */
       channelLabels?: string[];
     }

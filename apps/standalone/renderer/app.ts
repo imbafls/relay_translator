@@ -4,7 +4,7 @@
  * Layout: top bar · stage (or keys / log / onboarding view) · signal-chain strip · footer.
  * All state lives here; the main process owns config, the local relay and the uplink.
  */
-import { BrowserAudioCapture, RelayPublisherClient } from "@callout-relay/companion";
+import { BrowserAudioCapture, RelayPublisherClient, rmsLevel } from "@callout-relay/companion";
 import {
   AppConfig,
   AudioDeviceInfo,
@@ -484,16 +484,9 @@ function renderIdle(): void {
 
 let level = 0;
 function feedLevel(chunk: Int16Array): void {
-  let sum = 0;
-  let n = 0;
-  // odd stride so interleaved stereo frames feed both channels into the meter
-  for (let i = 0; i < chunk.length; i += 3) {
-    const v = chunk[i] / 32768;
-    sum += v * v;
-    n += 1;
-  }
-  const rms = n ? Math.sqrt(sum / n) : 0;
-  level = Math.max(level * 0.85, rms);
+  // rmsLevel reads every lane of the interleave; the stride this used to walk
+  // with saw only channel 0 once there were three sources
+  level = Math.max(level * 0.85, rmsLevel(chunk));
 }
 function renderMeter(): void {
   const bars = $("meter").children;

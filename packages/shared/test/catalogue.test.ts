@@ -7,6 +7,7 @@ import {
   STT_MODELS,
   TRANSLATION_MODELS,
   clampChannels,
+  MAX_CAPTURE_CHANNELS,
   isLocalStt,
   modelDiskBytes,
   recommendTier,
@@ -206,10 +207,11 @@ describe("hardware recommendation", () => {
 
 describe("channel clamping", () => {
   it.each([
+    [3, 3],
     [2, 2],
     [1, 1],
     [0, 1],
-    [3, 1],
+    [4, 1],
     [-1, 1],
     ["2", 1],
     [null, 1],
@@ -217,5 +219,20 @@ describe("channel clamping", () => {
     [NaN, 1],
   ])("clamps %p to %i", (input, expected) => {
     expect(clampChannels(input)).toBe(expected);
+  });
+
+  /**
+   * A count above the cap collapses to mono rather than to the cap. The number
+   * is not a preference, it is how many samples every interleaved frame holds:
+   * read a 4-channel frame as 3 and every channel after the first is a
+   * different voice on every frame. Mono is the only reading that cannot be
+   * wrong about which sample belongs to whom.
+   */
+  it("does not round an over-count down to the cap", () => {
+    expect(clampChannels(MAX_CAPTURE_CHANNELS + 1)).toBe(1);
+  });
+
+  it("caps at what the capture worklet can actually interleave", () => {
+    expect(clampChannels(MAX_CAPTURE_CHANNELS)).toBe(MAX_CAPTURE_CHANNELS);
   });
 });

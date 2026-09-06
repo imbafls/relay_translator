@@ -3,5 +3,5 @@
  * node-only modules (config store, control server) via "os"/"http".
  */
 export { RelayPublisherClient } from "./relayClient";
-export { BrowserAudioCapture, TARGET_SAMPLE_RATE } from "./capture";
+export { BrowserAudioCapture, captureSources, rmsLevel, TARGET_SAMPLE_RATE } from "./capture";
 export { PCM_WORKLET_SOURCE } from "./capture/workletSource";

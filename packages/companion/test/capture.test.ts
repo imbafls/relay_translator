@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { BrowserAudioCapture, SOURCE_DEFAULT_MIC, SOURCE_SYSTEM_LOOPBACK } from "../src/capture";
+import { BrowserAudioCapture, captureSources, rmsLevel, SOURCE_DEFAULT_MIC, SOURCE_SYSTEM_LOOPBACK } from "../src/capture";
+import { MAX_CAPTURE_CHANNELS } from "@callout-relay/shared";
 
 /**
  * listDevices is what fills both source pickers, and picking the wrong thing in
@@ -105,5 +106,82 @@ describe("the pseudo-devices Windows adds", () => {
     ]);
     const list = await new BrowserAudioCapture().listDevices();
     expect(list.map((d) => d.id)).toEqual([SOURCE_DEFAULT_MIC, SOURCE_SYSTEM_LOOPBACK, "hw-1"]);
+  });
+});
+
+describe("how many sources a capture opens", () => {
+  /**
+   * The rule used to live inline in start(), as
+   * `.filter(unique).slice(0, 2)`, where nothing could reach it: start() wants
+   * an AudioContext, an AudioWorklet and a real getUserMedia, and standing all
+   * three up would have meant testing a reimplementation. It is a pure
+   * function now, and this is the shipped one.
+   */
+  it("takes a bare string as a single source", () => {
+    expect(captureSources("default-mic")).toEqual(["default-mic"]);
+  });
+
+  it("collapses the same device picked twice, which would transcribe one voice on two channels", () => {
+    expect(captureSources(["default-mic", "default-mic"])).toEqual(["default-mic"]);
+  });
+
+  it("drops empty slots rather than opening a channel for nothing", () => {
+    expect(captureSources(["default-mic", "", "system-loopback"])).toEqual(["default-mic", "system-loopback"]);
+  });
+
+  it("opens three, which two used to cap", () => {
+    expect(captureSources(["a", "b", "c"])).toEqual(["a", "b", "c"]);
+  });
+
+  it("stops at the cap the worklet and the relay agree on", () => {
+    expect(captureSources(["a", "b", "c", "d", "e"])).toHaveLength(MAX_CAPTURE_CHANNELS);
+  });
+
+  it("keeps the order picked, because the speaker tag follows the slot", () => {
+    expect(captureSources(["system-loopback", "default-mic"])).toEqual(["system-loopback", "default-mic"]);
+  });
+});
+
+describe("the level meter's view of an interleaved frame", () => {
+  /**
+   * The meter walked the frame with a stride of 3, and the comment said "odd
+   * stride so interleaved stereo frames feed both channels into the meter".
+   * That reasoning holds only while the stride and the channel count share no
+   * factor. At three channels a stride of three lands on channel 0 every time:
+   * the meter moves, looks entirely plausible, and two of the three sources
+   * are invisible in it. Nothing crashes and nothing is logged - the streamer
+   * just cannot see that comms are dead.
+   */
+  const interleave = (lanes: number[][]): Int16Array => {
+    const frames = lanes[0].length;
+    const out = new Int16Array(frames * lanes.length);
+    for (let i = 0; i < frames; i++) for (let c = 0; c < lanes.length; c++) out[i * lanes.length + c] = lanes[c][i];
+    return out;
+  };
+  const silence = (n: number): number[] => new Array(n).fill(0);
+  const loud = (n: number): number[] => new Array(n).fill(16000);
+
+  it("sees a lone third source that a stride of three walked straight past", () => {
+    const frame = interleave([silence(300), silence(300), loud(300)]);
+    expect(rmsLevel(frame)).toBeGreaterThan(0.1);
+  });
+
+  it("sees a lone second source", () => {
+    expect(rmsLevel(interleave([silence(300), loud(300)]))).toBeGreaterThan(0.1);
+  });
+
+  it("still reads silence as silence", () => {
+    expect(rmsLevel(interleave([silence(300), silence(300), silence(300)]))).toBe(0);
+  });
+
+  it("reads a mono frame the same way", () => {
+    expect(rmsLevel(interleave([loud(300)]))).toBeGreaterThan(0.1);
+  });
+
+  it("is not fooled into reporting full scale by one loud lane", () => {
+    // three lanes, one loud: the meter is the frame's RMS, not the loudest lane
+    const mixed = rmsLevel(interleave([silence(300), silence(300), loud(300)]));
+    const all = rmsLevel(interleave([loud(300), loud(300), loud(300)]));
+    expect(mixed).toBeLessThan(all);
   });
 });
