@@ -94,19 +94,41 @@ way `postject` already is in the release workflow, so `pnpm install
 surface this service uses; `wrangler deploy` type-checks against the real
 definitions.
 
-## What is and is not tested here
+## What is tested
 
-**Tested** (`test/routes.test.ts`, 16 cases): routing, the token/filename
+**Unit** (`test/routes.test.ts`, 16 cases): routing, the token/filename
 disambiguation, traversal refusal, token round-trip, the alphabet both existing
-link checks enforce, malformed-token rejection, and constant-time secret
-comparison. That is where a bug is silent.
+link checks enforce, malformed-token rejection, constant-time comparison.
 
-**Not tested locally**: the Durable Object runtime itself — hibernation,
-`acceptWebSocket`, tag routing and storage. Exercising it needs
-`@cloudflare/vitest-pool-workers` or a live `wrangler dev`, and adding either
-changes the lockfile. Until that is done, treat the room's socket handling as
-reviewed but unproven, and shake it out on a `workers.dev` subdomain before
-pointing anyone at it.
+**Against a real deployment** - the Durable Object runtime, which unit tests
+cannot reach:
+
+    node scripts/verify-deploy.cjs    https://<your-worker>   # 14 checks
+    node scripts/verify-isolation.cjs https://<your-worker>   #  9 checks
+
+`verify-deploy` covers the uplink handshake, a viewer joining mid-stream and
+receiving the state it missed, captions arriving with their segment id intact,
+the viewer count reaching the uplink, per-room `/health`, 4401 on a bad
+credential for either role, and rotation actually killing the old link (4410 to
+the connected viewers, then 4401 when the dead link is retried). It claims its
+own room each run - reusing a fixture makes a successful rotation look like a
+failure, which is exactly how it misled me once.
+
+`verify-isolation` runs two streamers at once, which the single-tenant relay
+could not do at all: both uplinks stay up, each viewer gets its own room's
+languages, neither room's captions reach the other, one room's secret cannot
+open another, and each room counts only its own viewers.
+
+Both passed against a live deployment on 2026-09-06 (14/14 and 9/9).
+
+### One thing only deploying could catch
+
+Cloudflare serves any path matching an asset **before** the Worker runs, and its
+directory-index handling answered `/` with `index.html` - the viewer page -
+instead of letting the router serve `home.html`. `/watch/<token>` was reaching
+the right page by luck rather than by routing. `run_worker_first = true` fixes
+it. No unit test could have seen this: the behaviour is in the platform, not in
+the code.
 
 ## Cost, honestly
 
@@ -125,4 +147,5 @@ inviting anyone.
   without their secrets and idle ones cost nothing, but a rate limit belongs
   here before the endpoint is public.
 - Idle rooms are never reaped. A room's record is tiny, but there is no TTL.
-- The DO runtime is untested (above).
+- The temporary preview deployment used for verification is ephemeral. A
+  permanent one needs `wrangler login`, which is a browser flow.

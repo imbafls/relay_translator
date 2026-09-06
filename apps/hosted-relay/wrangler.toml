@@ -2,12 +2,22 @@ name = "callout-relay-hosted"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
+# Omertaji@gmail.com. Pinned so a deploy never has to guess between accounts.
+account_id = "c9b5a04c1a901e52c8d99c576ee55f90"
+
 # The viewer page is the one the desktop app already ships. Serving it from the
 # asset binding keeps it edge-cached and free, and keeps the page same-origin
 # with its WebSocket - app.js builds the socket URL from location.host.
 [assets]
 directory = "../../packages/viewer/public"
 binding = "ASSETS"
+# The Worker decides, always. Without this Cloudflare serves any path that
+# matches a file BEFORE the Worker runs, and its directory-index handling
+# answered "/" with index.html - the viewer page - instead of letting the
+# router serve home.html. It also meant /watch/<token> was reaching the page
+# by luck rather than by routing. Caught by deploying; no unit test could see
+# it, because the behaviour lives in the platform and not in the code.
+run_worker_first = true
 
 [[durable_objects.bindings]]
 name = "ROOM"
