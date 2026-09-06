@@ -1697,3 +1697,50 @@ protect something that costs nothing.
 
 The ~24 rooms that measurement minted joined the un-reaped pile the README
 already lists.
+
+### Turn 50 - Client UI (audit finding 7: a source whose device is gone)
+
+The trap: everything on screen says there is no second source, and START fails
+anyway, every time, with one word.
+
+`fillSelect` never sets `selected` when nothing matches, so a configured id that
+is no longer enumerated left the box on index 0 - "No second source" - while the
+config still held the dead id. `activeSources()` reads the config, not the
+select, so START opened the missing device with `deviceId: { exact: ... }`. And
+because the select's value was *already* `""`, choosing "No second source" fired
+no `change` event: the one path that could have cleared it never ran. The user
+could not fix it from the UI at all.
+
+The error text made it worse. It was `String(err.message || err)`, and Chromium
+leaves `OverconstrainedError.message` **empty** - so the banner read exactly
+`OverconstrainedError`, naming neither the slot nor the device nor the
+constraint, with `err.constraint` sitting in scope unread.
+
+**Both halves.** `refreshDevices` now drops any configured source that is not in
+the enumerated list and says which slot went - the same correction `boot()`
+already makes for a model that has left the catalogue. Not while live: dropping
+a slot mid-session would change the channel count under a running publisher, and
+a device lost *during* a session is finding 21's job, done last turn.
+`captureErrorText` turns the error into something that names what to do.
+
+**Where it lives matters.** `captureErrorText` was written in the renderer, where
+no test can reach it, and moved into `capture/` before it was believed - the
+same seam as `rmsLevel` and `captureSources`, exported from both barrels (the
+browser-entry guard would have caught it otherwise, which is what that guard is
+for).
+
+**Guards - five, three of them watched fail against their own revert:** the drop
+removed, the log line removed, and the `OverconstrainedError` branch removed
+(which returns the string `OverconstrainedError`, exactly the old symptom). Two
+more are invariants that must stay green: a live pair is not rewritten, and the
+built-in `system-loopback` is not mistaken for a dead device.
+
+The third revert had to be done by hand. The scripted one deleted a `return` and
+left the code after it unreachable, so it failed to compile - and a revert that
+does not compile proves nothing, which is the trap the harness was taught to
+report two turns ago.
+
+**Not verified in a browser.** The failing path needs a device that enumerates
+once and then does not, which the harness cannot produce; the DOM-level guards
+boot the real renderer against a device list that is missing an id, which is the
+same condition.

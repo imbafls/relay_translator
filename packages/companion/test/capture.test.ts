@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   anyTrackLive,
   BrowserAudioCapture,
+  captureErrorText,
   captureSources,
   rmsLevel,
   SOURCE_DEFAULT_MIC,
@@ -321,5 +322,41 @@ describe("a capture device that goes away mid-session", () => {
     expect(cap.capturing, "one device left is still capturing").toBe(true);
     end(b);
     expect(cap.capturing, "the app stayed LIVE with every device unplugged").toBe(false);
+  });
+});
+
+describe("what a failed capture tells the user", () => {
+  /**
+   * Audit finding 7, second half. The renderer built its banner from
+   * `String(err.message || err)`, and Chromium leaves `OverconstrainedError`'s
+   * `.message` EMPTY. So a streamer whose headset had been unplugged since the
+   * last run pressed START and got a banner reading exactly
+   * `OverconstrainedError` - naming neither the slot, nor the device, nor the
+   * constraint, which was sitting in `err.constraint` unread.
+   */
+  it("turns an empty-message OverconstrainedError into something actionable", () => {
+    const err = { name: "OverconstrainedError", message: "", constraint: "deviceId" };
+    const text = captureErrorText(err);
+    expect(text).not.toBe("OverconstrainedError");
+    expect(text.toLowerCase()).toContain("not available");
+    expect(text).toMatch(/01 SOURCE|RESCAN/);
+  });
+
+  it("keeps a real message when the browser gives one", () => {
+    expect(captureErrorText(new Error("device is busy"))).toBe("device is busy");
+  });
+
+  it("explains a refused permission as a permission, not as a failure", () => {
+    expect(captureErrorText({ name: "NotAllowedError", message: "" }).toLowerCase()).toContain("refused");
+  });
+
+  it("explains an empty device list", () => {
+    expect(captureErrorText({ name: "NotFoundError", message: "" }).toLowerCase()).toContain("no audio input");
+  });
+
+  it("falls back to something rather than [object Object]", () => {
+    expect(captureErrorText({})).not.toContain("[object");
+    expect(captureErrorText(undefined)).toBeTruthy();
+    expect(captureErrorText("plain string")).toBe("plain string");
   });
 });

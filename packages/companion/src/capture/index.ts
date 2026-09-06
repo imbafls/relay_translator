@@ -105,6 +105,29 @@ export function watchSourceTracks(
   });
 }
 
+/**
+ * What to put on screen when a start fails.
+ *
+ * `String(err.message || err)` was the whole of it, and Chromium leaves
+ * `OverconstrainedError.message` EMPTY - so a user whose headset had gone got a
+ * banner reading exactly `OverconstrainedError`, naming neither the slot nor
+ * the device nor the constraint, while `err.constraint` sat in scope unread.
+ */
+export function captureErrorText(err: unknown): string {
+  const e = err as { name?: string; message?: string; constraint?: string } | undefined;
+  if (e?.message) return e.message;
+  if (e?.name === "OverconstrainedError") {
+    const which = e.constraint === "deviceId" ? "device" : e.constraint || "device";
+    return `an audio source is not available any more (${which}) - pick another under 01 SOURCE, or hit RESCAN`;
+  }
+  if (e?.name === "NotAllowedError") return "microphone access was refused - allow it in Windows privacy settings";
+  if (e?.name === "NotFoundError") return "no audio input device was found";
+  if (typeof err === "string" && err) return err;
+  // never String(err) on an unknown: an object with no name stringifies to
+  // "[object Object]", which is worse than saying nothing useful on purpose
+  return e?.name || "the audio device could not be opened";
+}
+
 export class BrowserAudioCapture {
   private ctx: AudioContext | null = null;
   private streams: MediaStream[] = [];

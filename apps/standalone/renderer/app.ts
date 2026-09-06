@@ -4,7 +4,7 @@
  * Layout: top bar · stage (or keys / log / onboarding view) · signal-chain strip · footer.
  * All state lives here; the main process owns config, the local relay and the uplink.
  */
-import { BrowserAudioCapture, RelayPublisherClient, rmsLevel } from "@callout-relay/companion";
+import { BrowserAudioCapture, captureErrorText, RelayPublisherClient, rmsLevel } from "@callout-relay/companion";
 import {
   AppConfig,
   AudioDeviceInfo,
@@ -615,7 +615,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? ` (${channels} channels)` : ""}`, "ok");
     recomputeState();
   } catch (err) {
-    const message = String((err as Error).message || err);
+    const message = captureErrorText(err);
     log(`start failed: ${message}`, "err");
     stopSession(true);
     setState("error", message);
@@ -674,8 +674,35 @@ async function refreshDevices(): Promise<void> {
   fillSelect(sel("audioSource3"), second, slots[2] || "");
   fillSelect(sel("obAudioSource2"), second, slots[1] || "");
   cr.reportDevices(devices);
+  dropDisconnectedSources(devices);
   renderChain();
   renderIdle();
+}
+
+/**
+ * Audit finding 7. A configured source whose device has gone traps the user
+ * completely: the select falls back to index 0 because nothing matched, so the
+ * UI shows no such source, while the config still holds the dead id and
+ * activeSources() reads the config. START then opens a missing device with
+ * `deviceId: { exact: ... }` and fails every time - and because the select's
+ * value is ALREADY "", choosing "No second source" fires no change event, so
+ * the one path that could clear it never runs.
+ *
+ * boot() already does exactly this for a model that has left the catalogue.
+ * Not while live: dropping a slot mid-session would change the channel count
+ * under a running publisher, and a device lost mid-session is finding 21's job.
+ */
+function dropDisconnectedSources(devices: AudioDeviceInfo[]): void {
+  if (!config || session === "live" || session === "starting") return;
+  const known = new Set(devices.map((d) => d.id));
+  const configured = resolveSourceIds(config);
+  const gone = configured.map((id, i) => ({ id, slot: i + 1 })).filter((x) => !known.has(x.id));
+  if (!gone.length) return;
+
+  const alive = configured.filter((id) => known.has(id));
+  // the label is unrecoverable once the device is gone, so say which slot
+  log(`audio source ${gone.map((g) => g.slot).join(" and ")} is no longer connected - removed`, "err");
+  void saveAndApply({ sources: alive });
 }
 
 /** 02 TRANSCRIBE: cloud and local models in two groups */

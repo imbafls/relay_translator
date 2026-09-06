@@ -646,3 +646,51 @@ describe("three capture sources in the app", () => {
   });
 
 });
+
+describe("a source whose device is no longer plugged in", () => {
+  /**
+   * Audit finding 7. `fillSelect` never sets `selected` when nothing matches,
+   * so the box fell back to index 0 - "No second source" - while the config
+   * still held the dead id. `activeSources()` reads the config, not the select,
+   * so START still tried to open the missing device with
+   * `deviceId: { exact: ... }` and failed every single time. And because the
+   * select's value was ALREADY "", picking "No second source" fired no change
+   * event, so the one path that could have cleared it never ran.
+   *
+   * The user saw no second source, a chain that still said YOU + CHAT, and a
+   * START that failed with the single word `OverconstrainedError` - Chromium
+   * leaves that error's `.message` empty, so the banner named neither the slot
+   * nor the device nor the constraint.
+   */
+  const devices = [{ kind: "audioinput", deviceId: "mic-1", label: "Headset", groupId: "g1" }];
+
+  it("drops a source that is not in the device list any more", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic", "gone-usb-headset"] }, devices);
+    await settle(60);
+
+    const written = calls.setConfig.filter((p) => p.sources).pop();
+    expect(written?.sources, "the dead id was left in the config for START to trip over").toEqual(["default-mic"]);
+  });
+
+  it("says which device went, rather than correcting itself in silence", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic", "gone-usb-headset"] }, devices);
+    await settle(60);
+    const log = document.getElementById("log")?.textContent || "";
+    expect(log.toLowerCase()).toContain("no longer");
+  });
+
+  it("leaves a source alone while its device is still there", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic", "mic-1"] }, devices);
+    await settle(60);
+    const written = calls.setConfig.filter((p) => p.sources).pop();
+    expect(written, "a perfectly good pair of sources was rewritten").toBeUndefined();
+  });
+
+  it("keeps the built-in sources, which never appear in the device list", async () => {
+    // "system-loopback" is offered by the app, not by enumerateDevices()
+    await bootWith({ setupDone: true, sources: ["default-mic", "system-loopback"] }, devices);
+    await settle(60);
+    const written = calls.setConfig.filter((p) => p.sources).pop();
+    expect(written, "the built-in loopback source was treated as a dead device").toBeUndefined();
+  });
+});
