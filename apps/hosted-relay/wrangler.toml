@@ -1,0 +1,20 @@
+name = "callout-relay-hosted"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# The viewer page is the one the desktop app already ships. Serving it from the
+# asset binding keeps it edge-cached and free, and keeps the page same-origin
+# with its WebSocket - app.js builds the socket URL from location.host.
+[assets]
+directory = "../../packages/viewer/public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+# new_sqlite_classes, not new_classes: SQLite-backed objects are what the
+# current free tier covers, and this room's state is a single small record.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
