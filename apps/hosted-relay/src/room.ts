@@ -100,7 +100,14 @@ export class Room {
     }
 
     const room = await this.load();
-    if (!room) return json({ error: "no such room" }, 404);
+    if (!room) {
+      // A socket for a room that does not exist has to refuse the way a bad
+      // credential does. uplinkClient stops on a close code but treats an HTTP
+      // failure as a transport error and retries forever, so answering 404 here
+      // would put a user whose room had gone into a permanent reconnect loop.
+      if (op === "uplink" || op === "viewer") return closedSocket(CLOSE_UNAUTHORISED, "no such room");
+      return json({ error: "no such room" }, 404);
+    }
 
     if (op === "health") {
       // the same payload the single-tenant relay returns; docs/OPEN-WORK.md
@@ -132,9 +139,7 @@ export class Room {
       // transport error and retries forever, but reads a close code and stops -
       // so a bad credential has to arrive as 4401 on an open socket.
       if (!secretsMatch(secret, wanted)) {
-        server.accept();
-        server.close(CLOSE_UNAUTHORISED, "bad token");
-        return new Response(null, { status: 101, webSocket: client });
+        return closedSocket(CLOSE_UNAUTHORISED, "bad token");
       }
 
       if (op === "uplink") {
@@ -279,6 +284,18 @@ export class Room {
       }
     }
   }
+}
+
+/**
+ * Refuse a socket the way the desktop client can act on: upgrade, then close
+ * with a code. An HTTP status is retried forever; a close code stops it.
+ */
+function closedSocket(code: number, reason: string): Response {
+  const pair = new WebSocketPair();
+  const [client, server] = [pair[0], pair[1]];
+  server.accept();
+  server.close(code, reason);
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 function send(ws: WebSocket, msg: unknown): void {

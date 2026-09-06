@@ -119,9 +119,10 @@ could not do at all: both uplinks stay up, each viewer gets its own room's
 languages, neither room's captions reach the other, one room's secret cannot
 open another, and each room counts only its own viewers.
 
-Both passed against a live deployment on 2026-09-06 (14/14 and 9/9).
+Both passed against the live deployment on 2026-09-06 (14/14 and 9/9):
+https://callout-relay-hosted.omertaji.workers.dev
 
-### One thing only deploying could catch
+### Two things only deploying could catch
 
 Cloudflare serves any path matching an asset **before** the Worker runs, and its
 directory-index handling answered `/` with `index.html` - the viewer page -
@@ -129,6 +130,13 @@ instead of letting the router serve `home.html`. `/watch/<token>` was reaching
 the right page by luck rather than by routing. `run_worker_first = true` fixes
 it. No unit test could have seen this: the behaviour is in the platform, not in
 the code.
+
+Second, a socket for a room that does not exist answered **HTTP 404**, and
+`uplinkClient` treats an HTTP failure as a transport error and retries forever -
+so a user whose room had gone would have reconnected in a loop. An unknown room
+now refuses the same way a bad credential does, with a 4401 close, which is what
+stops the client. Found because a stale room id in the verification script
+happened to point at a room that did not exist on the new account.
 
 ## Cost, honestly
 

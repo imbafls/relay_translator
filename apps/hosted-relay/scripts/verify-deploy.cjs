@@ -47,7 +47,8 @@ function open(url) {
   const { publisherToken, viewerToken } = await fetch(`${BASE}/claim`, { method: "POST" }).then((r) => r.json());
 
   // 1. a bad credential must arrive as a close code, not an HTTP error
-  const bad = await open(`${wsBase}/ws/uplink?token=p1_376f01217b27e8e3_${"0".repeat(32)}`);
+  const rid = publisherToken.split("_")[1];
+  const bad = await open(`${wsBase}/ws/uplink?token=p1_${rid}_${"0".repeat(32)}`);
   await wait(1500);
   ok("bad publisher token closes with 4401", bad.closes.includes(4401), `codes=${bad.closes}`);
 
@@ -88,7 +89,7 @@ function open(url) {
   ok("caption keeps its segment id", sub?.id === 7);
 
   // 6. a wrong viewer token must not reach this room
-  const badView = await open(`${wsBase}/ws/viewer?token=v1_376f01217b27e8e3_${"1".repeat(32)}`);
+  const badView = await open(`${wsBase}/ws/viewer?token=v1_${rid}_${"1".repeat(32)}`);
   await wait(1500);
   ok("wrong viewer token closes with 4401", badView.closes.includes(4401), `codes=${badView.closes}`);
 
