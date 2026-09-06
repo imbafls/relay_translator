@@ -29,9 +29,25 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "0.5.4",
-    date: "2026-09-05",
-    headline: "Captions can be filtered, and the OBS overlay finally has its settings",
+    date: "2026-09-06",
+    headline: "Captions appear as you speak, and the OBS overlay finally has its settings",
     changes: [
+      {
+        kind: "fixed",
+        text: "Captions now appear on the OBS overlay while you are still speaking, instead of only when you finish a sentence. The overlay was building the in-progress line and never showing it, so it ran a whole sentence behind.",
+      },
+      {
+        kind: "fixed",
+        text: "The OBS overlay link is reachable. On the default settings the app only offered the phone link, so putting captions into a browser source meant using the wrong URL and getting an opaque page instead of a transparent overlay.",
+      },
+      {
+        kind: "fixed",
+        text: "The link mode you pick is kept. Choosing a fixed link so your OBS source keeps working could silently revert, and the next start then rotated the link and put THIS LINK HAS ENDED on your broadcast.",
+      },
+      {
+        kind: "fixed",
+        text: "No more warning about a Deepgram key when you are running speech on your own machine and do not need one.",
+      },
       {
         kind: "added",
         text: "Profanity filter, on by default. Viewers see f*** while your own log keeps the words as heard, so you can still tell what the microphone got. It masks the text as it streams in, not just the finished line.",

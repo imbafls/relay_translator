@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/streamdeck",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Stream Deck plugin for Callout Relay (controls the companion process)",
   "scripts": {

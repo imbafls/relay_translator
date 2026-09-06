@@ -105,10 +105,12 @@ installer. The relay can be that directory: it serves `<dataDir>/updates` at
 `/updates/`, and `/download` redirects to whatever `latest.yml` names, which
 gives you one stable link to hand out.
 
-```
-updateFeedUrl   https://relay.supr.systems/updates
-download link   https://relay.supr.systems/download
-```
+> **The box at `relay.supr.systems` is dormant and out of date.** It still
+> answers, and `/download` still hands out **0.5.1** - the build with the
+> whisper crash. Nothing points at it: the app ships with `updateFeedUrl`
+> empty and takes updates from GitHub Releases, which always has the current
+> version. Do not give anyone that download link. Either refresh the box
+> (below) or shut it down - no code depends on it.
 
 To publish a build there, copy the installer, its `.blockmap` and `latest.yml`
 from the GitHub release into `/opt/callout-relay/data/updates/` on the box.
@@ -190,7 +192,13 @@ design; `DESIGN.md` is the spec they are all built against.
 
 ### Relay standalone (VPS / remote friend)
 
-Your relay is already deployed and running:
+Optional, and currently unused. The relay runs fine embedded in the app -
+that is what serves LAN and OBS viewers - and a VPS only adds phone viewers
+reachable from outside your network. A single relay also serves exactly ONE
+streamer: a second publisher evicts the first, so it cannot be shared.
+`apps/hosted-relay` is the multi-tenant answer if that is what you want.
+
+The existing box, for reference:
 
 - **Public name:** `relay.supr.systems` (TLS via the Traefik already on the box)
 - **Host:** `187.124.87.202` (Hostinger, Ubuntu 24.04)

@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/viewer",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Phone/OBS subtitle page served by the relay",
   "main": "public/index.html",
