@@ -1744,3 +1744,52 @@ report two turns ago.
 once and then does not, which the harness cannot produce; the DOM-level guards
 boot the real renderer against a device list that is missing an id, which is the
 same condition.
+
+### Turn 51 - Stream & audio transport (audit finding 23: no anti-alias filter)
+
+One line, and it degraded every session this app has ever run.
+
+`new AudioContext()` took no options, so the graph ran at the device rate and
+the worklet dropped to 16 kHz by linear interpolation with a one-sample history.
+At the common 48 kHz the step is exactly 3 and the interpolation weight is
+identically **zero** - so it was not interpolation at all, it was pure
+decimation with no filter in front of it.
+
+**Measured against the shipped worklet source rather than taken on report:**
+
+```
+48000 Hz in -> 16000 Hz out, 12000 Hz tone
+   4000 Hz  amplitude 1.000  (-0.0 dB)
+   2000 Hz  amplitude 0.000  (-84.1 dB)
+   6000 Hz  amplitude 0.000  (-84.1 dB)
+```
+
+A 12 kHz tone arrives as a 4 kHz tone at full amplitude. Everything from 8-24
+kHz folds into the 0-8 kHz band the acoustic model reads: game transients land
+on the formant region, sibilance smears onto its own aliases.
+
+`new AudioContext({ sampleRate: TARGET_SAMPLE_RATE })` makes Chromium resample
+with its own windowed-sinc filter before the worklet sees anything, and the
+worklet's step becomes 1 - a case the existing
+`[16000, "no resampling at all"]` test already covers.
+
+**Reaching `start()` at all.** This is the first test that runs it. It needs an
+`AudioContext`, an `AudioWorkletNode`, `URL.createObjectURL`, `Blob` and a
+`getUserMedia`, so the Web Audio API is stood in for - which is standing in for
+the browser, not for the thing under test, the same way the renderer's tests run
+against happy-dom. What it checks is this package's own graph construction. It
+also, for the first time, covers the merger wiring: three sources land on
+merger inputs 0, 1 and 2, and the worklet is told three lanes.
+
+`navigator` is a getter-only global in node and has to be `defineProperty`'d,
+not assigned; assigning throws and every test in the block failed identically
+before that was fixed.
+
+**Guard watched fail**: reverting to `new AudioContext()` turns it red on
+`expected undefined to be 16000`.
+
+**What this does not fix.** The worklet itself is still a decimator if anything
+ever feeds it a higher rate - the measurement above is of the shipped worklet
+and stays true. What changed is that the app no longer asks it to do the rate
+conversion. A real filter in the worklet would be a different, larger change,
+and is not needed while the context is asked for the right rate.

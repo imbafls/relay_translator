@@ -7,6 +7,7 @@ import {
   rmsLevel,
   SOURCE_DEFAULT_MIC,
   SOURCE_SYSTEM_LOOPBACK,
+  TARGET_SAMPLE_RATE,
   watchSourceTracks,
 } from "../src/capture";
 import { clampChannels, MAX_CAPTURE_CHANNELS } from "@callout-relay/shared";
@@ -358,5 +359,124 @@ describe("what a failed capture tells the user", () => {
     expect(captureErrorText({})).not.toContain("[object");
     expect(captureErrorText(undefined)).toBeTruthy();
     expect(captureErrorText("plain string")).toBe("plain string");
+  });
+});
+
+describe("the sample rate the capture graph runs at", () => {
+  /**
+   * Audit finding 23. `new AudioContext()` took no options, so the graph ran at
+   * the device rate and the worklet dropped to 16 kHz by linear interpolation
+   * with a one-sample history. At the common 48 kHz the step is exactly 3 and
+   * the interpolation weight is identically zero - pure decimation, no filter.
+   * Measured against the shipped worklet: a 12 kHz tone comes out at 4 kHz with
+   * 0 dB attenuation. Everything from 8-24 kHz folds into the 0-8 kHz band the
+   * acoustic model reads, on every session.
+   *
+   * Asking the context for 16 kHz makes Chromium resample with its own
+   * windowed-sinc filter, and the worklet's step becomes 1.
+   *
+   * The Web Audio API is stood in for here. That is standing in for the
+   * browser, not for the thing under test - what is being checked is this
+   * package's own graph construction, the same way the renderer's tests run
+   * against happy-dom.
+   */
+  interface Built {
+    options: { sampleRate?: number } | undefined;
+    workletOptions: { channelCount?: number; processorOptions?: { channels?: number; targetRate?: number } } | undefined;
+    mergerInputs: number[];
+    closed: boolean;
+  }
+  let built: Built;
+  const saved: Record<string, unknown> = {};
+
+  const installWebAudio = (): void => {
+    for (const k of ["AudioContext", "AudioWorkletNode", "navigator", "URL", "Blob"]) {
+      saved[k] = (globalThis as Record<string, unknown>)[k];
+    }
+    built = { options: undefined, workletOptions: undefined, mergerInputs: [], closed: false };
+
+    const node = () => ({
+      channelCount: 0,
+      channelCountMode: "",
+      channelInterpretation: "",
+      gain: { value: 1 },
+      connect: (_t: unknown, _o?: number, input?: number) => {
+        if (typeof input === "number") built.mergerInputs.push(input);
+      },
+      disconnect: () => {},
+    });
+
+    class FakeAudioContext {
+      destination = node();
+      audioWorklet = { addModule: async () => {} };
+      constructor(options?: { sampleRate?: number }) {
+        built.options = options;
+      }
+      createChannelMerger(): ReturnType<typeof node> {
+        return node();
+      }
+      createGain(): ReturnType<typeof node> {
+        return node();
+      }
+      createMediaStreamSource(): ReturnType<typeof node> {
+        return node();
+      }
+      async close(): Promise<void> {
+        built.closed = true;
+      }
+    }
+    class FakeAudioWorkletNode {
+      port = { onmessage: null as unknown, postMessage: () => {} };
+      constructor(_ctx: unknown, _name: string, options?: Built["workletOptions"]) {
+        built.workletOptions = options;
+      }
+      connect(): void {}
+      disconnect(): void {}
+    }
+    const g = globalThis as Record<string, unknown>;
+    g.AudioContext = FakeAudioContext;
+    g.AudioWorkletNode = FakeAudioWorkletNode;
+    g.Blob = class {};
+    g.URL = { createObjectURL: () => "blob:worklet" };
+    // navigator is a getter-only global in node, so it has to be redefined
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      writable: true,
+      value: {
+      mediaDevices: {
+        getUserMedia: async () => ({
+          getAudioTracks: () => [{ readyState: "live", addEventListener: () => {}, stop: () => {} }],
+          getTracks: () => [{ stop: () => {} }],
+        }),
+      },
+      },
+    });
+  };
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: v });
+    }
+  });
+
+  it("asks for the rate the engines want, so the browser does the filtering", async () => {
+    installWebAudio();
+    const cap = new BrowserAudioCapture();
+    await cap.start("default-mic", () => {});
+    expect(built.options?.sampleRate, "the graph ran at the device rate and decimated to 16 kHz unfiltered").toBe(
+      TARGET_SAMPLE_RATE,
+    );
+    cap.stop();
+  });
+
+  it("still tells the worklet how many lanes to interleave", async () => {
+    installWebAudio();
+    const cap = new BrowserAudioCapture();
+    // plain device ids: the loopback source goes through getDisplayMedia,
+    // which is a different browser call and not what this is about
+    await cap.start(["default-mic", "mic-a", "mic-b"], () => {});
+    expect(built.workletOptions?.processorOptions?.channels).toBe(3);
+    expect(built.mergerInputs, "each source has to land on its own merger input").toEqual([0, 1, 2]);
+    cap.stop();
   });
 });

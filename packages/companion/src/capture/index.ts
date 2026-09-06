@@ -232,7 +232,16 @@ export class BrowserAudioCapture {
       throw err;
     }
 
-    const ctx = new AudioContext();
+    // Ask for the rate the engines want. Without this the graph ran at the
+    // device rate and the worklet dropped to 16 kHz by linear interpolation
+    // with a one-sample history - at the common 48 kHz the step is exactly 3
+    // and the interpolation weight is identically zero, so it was pure
+    // decimation with no filter at all. Measured against the shipped worklet: a
+    // 12 kHz tone came out at 4 kHz with 0 dB attenuation, and everything from
+    // 8-24 kHz folded into the 0-8 kHz band the acoustic model reads. On every
+    // session. Chromium resamples with its own windowed-sinc filter instead,
+    // and the worklet's step becomes 1.
+    const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
     if (!this.workletUrl) {
       this.workletUrl = URL.createObjectURL(
         new Blob([PCM_WORKLET_SOURCE], { type: "text/javascript" }),
