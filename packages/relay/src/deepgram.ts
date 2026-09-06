@@ -51,6 +51,34 @@ function dgParams(model: string, language: string, channels: number): URLSearchP
   return params;
 }
 
+/**
+ * Where a final sits on the audio clock, in seconds from the start of the
+ * stream. This is what the latency badge is measured against.
+ *
+ * Deepgram's word timings are ALREADY absolute offsets on that clock - the
+ * same one `start` is on - so the old `start + last.end` roughly doubled the
+ * position. session.ts subtracts this from the true wall elapsed, which made
+ * the badge collapse to `trueLatency - start * 1000`: honest only while the
+ * stream was younger than the latency itself, then clamped to 0 forever. A
+ * real session log showed "stt 0ms" on ~120 consecutive captions with one
+ * reading of 962ms, on the first final a second in.
+ *
+ * Exported because it is the whole defect, and a test that re-implemented this
+ * arithmetic instead of calling it would pass against the bug.
+ */
+export function finalAudioEndSec(msg: {
+  start?: unknown;
+  channel?: { start?: unknown; alternatives?: { words?: { end?: unknown }[] }[] };
+}): number | undefined {
+  const words = msg.channel?.alternatives?.[0]?.words || [];
+  const last = words[words.length - 1];
+  if (typeof last?.end === "number") return last.end;
+  // a final with no word timings still knows where its segment began
+  if (typeof msg.start === "number") return msg.start;
+  if (typeof msg.channel?.start === "number") return msg.channel.start;
+  return undefined;
+}
+
 export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStream {
   const channels = cfg.channels && cfg.channels > 1 ? cfg.channels : 1;
   const params = dgParams(cfg.model, cfg.language, channels);
@@ -71,12 +99,7 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
       if (!text) return;
       const channel = Array.isArray(msg.channel_index) ? Number(msg.channel_index[0]) || 0 : 0;
       if (msg.is_final) {
-        const words = alt.words || [];
-        const last = words[words.length - 1];
-        const base = typeof msg.start === "number" ? msg.start : msg.channel?.start;
-        const audioEndSec =
-          typeof base === "number" && typeof last?.end === "number" ? base + last.end : undefined;
-        events.onFinal?.(text, { audioEndSec, channel });
+        events.onFinal?.(text, { audioEndSec: finalAudioEndSec(msg), channel });
       } else {
         events.onPartial?.(text, channel);
       }
