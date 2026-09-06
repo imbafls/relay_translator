@@ -155,5 +155,16 @@ inviting anyone.
   without their secrets and idle ones cost nothing, but a rate limit belongs
   here before the endpoint is public.
 - Idle rooms are never reaped. A room's record is tiny, but there is no TTL.
-- The temporary preview deployment used for verification is ephemeral. A
-  permanent one needs `wrangler login`, which is a browser flow.
+- **An unexplained viewer socket.** The room the desktop app is attached to
+  reports one viewer with nothing watching. It is not the app (which holds a
+  single Cloudflare connection, the uplink), not a browser tab, and not a tag
+  bug - a fresh room with only an uplink correctly reports zero, and captions
+  do not echo back to the uplink. A real viewer joining still counts correctly
+  on top of it (1 -> 2). Cosmetic today, since the number is only shown in the
+  app's readout, but it is unaccounted for and should be chased before anyone
+  relies on the count.
+- **The URL carries the account name.** `<worker>.<account-subdomain>.workers.dev`
+  - the subdomain is account-wide and changeable only in the dashboard, under
+  Workers & Pages, not through wrangler or the API. A custom domain would need
+  the zone on Cloudflare; `supr.systems` is on Hostinger nameservers and served
+  by Vercel, so that is a migration rather than a setting.
