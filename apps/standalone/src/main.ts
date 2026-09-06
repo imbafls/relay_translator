@@ -462,6 +462,10 @@ function registerIpc(): void {
     clipboard.writeText(String(text ?? ""));
   });
 
+  // the renderer compares this against config.lastSeenVersion to decide whether
+  // an auto-update has happened since the last run
+  ipcMain.handle("app:version", () => app.getVersion());
+
   ipcMain.handle("updates:check", async (): Promise<UpdateStatus | undefined> => {
     if (!updater) return undefined;
     return updater.check(true);

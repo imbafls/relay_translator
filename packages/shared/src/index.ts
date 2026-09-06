@@ -3,6 +3,9 @@
  * Used by relay, companion, standalone app and stream deck plugin.
  */
 
+/** what the app shows after it updates itself */
+export * from "./changelog";
+
 export type LanguageCode = string;
 
 export interface Languages {
@@ -46,6 +49,9 @@ export interface AppConfig {
   output: OutputTarget;
   /** first-run setup finished (it can be re-run any time from KEYS or the tray) */
   setupDone: boolean;
+  /** the version whose changelog has been shown. Absent on a fresh install,
+   *  which is how "never run before" is told from "updated since last run". */
+  lastSeenVersion?: string;
 
   /** secrets (stored in local config file / env, never shipped) */
   deepgramApiKey?: string;

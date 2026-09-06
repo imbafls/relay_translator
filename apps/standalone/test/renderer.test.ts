@@ -36,6 +36,8 @@ let calls: Calls;
  * where they go on firing into a page that has been torn down.
  */
 let timers: ReturnType<typeof setInterval>[] = [];
+/** what cr.appVersion() answers; the what's-new panel keys off it */
+let appVersion = "0.5.4";
 const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 
 /** everything behind the preload bridge, answering the way the app would */
@@ -62,6 +64,7 @@ function bridge(config: AppConfig) {
     writeClipboard: async (text: string) => {
       calls.clipboard.push(text);
     },
+    appVersion: async () => appVersion,
     reportState: () => {},
     reportDevices: () => {},
     modelStatus: async () => [],
@@ -295,5 +298,60 @@ describe("copying the viewer link", () => {
     expect(main, "Electron's clipboard module is what bypasses the permission").toMatch(
       /clipboard\s*\.\s*writeText/,
     );
+  });
+});
+
+describe("what's new after an auto-update", () => {
+  /**
+   * The update happens on restart without being asked for, so the panel is the
+   * only thing that tells the user why the app looks different. It must appear
+   * exactly once, and never on a machine that has just installed.
+   */
+  it("appears when the running version is newer than the last one seen", async () => {
+    appVersion = "0.5.4";
+    await bootWith({ setupDone: true, lastSeenVersion: "0.5.2" });
+    await settle(60);
+
+    expect(document.getElementById("whatsnew")?.hidden).toBe(false);
+    expect(document.getElementById("wnVersion")?.textContent).toBe("0.5.4");
+    // the jump skipped 0.5.3, so both releases are listed
+    expect(document.getElementById("wnBody")?.textContent).toContain("Linux");
+    expect(document.getElementById("wnFrom")?.textContent).toContain("0.5.2");
+  });
+
+  it("records the version it showed, so it does not come back", async () => {
+    appVersion = "0.5.4";
+    await bootWith({ setupDone: true, lastSeenVersion: "0.5.2" });
+    await settle(60);
+
+    expect(calls.setConfig.some((p) => p.lastSeenVersion === "0.5.4")).toBe(true);
+  });
+
+  it("stays shut on a fresh install, which has updated from nothing", async () => {
+    appVersion = "0.5.4";
+    await bootWith({ setupDone: true });
+    await settle(60);
+
+    expect(document.getElementById("whatsnew")?.hidden).toBe(true);
+    // but the version is still recorded, so the NEXT update does show one
+    expect(calls.setConfig.some((p) => p.lastSeenVersion === "0.5.4")).toBe(true);
+  });
+
+  it("stays shut when nothing has changed", async () => {
+    appVersion = "0.5.4";
+    await bootWith({ setupDone: true, lastSeenVersion: "0.5.4" });
+    await settle(60);
+
+    expect(document.getElementById("whatsnew")?.hidden).toBe(true);
+  });
+
+  it("closes on GOT IT", async () => {
+    appVersion = "0.5.4";
+    await bootWith({ setupDone: true, lastSeenVersion: "0.5.2" });
+    await settle(60);
+    expect(document.getElementById("whatsnew")?.hidden).toBe(false);
+
+    (document.getElementById("wnClose") as HTMLButtonElement).click();
+    expect(document.getElementById("whatsnew")?.hidden).toBe(true);
   });
 });

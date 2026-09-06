@@ -625,3 +625,57 @@ select option { background: var(--bg); color: var(--ink); }
 .ob-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
 #modelAction { color: var(--ink); }
 #modelAction.warn { color: var(--amber); }
+
+/* ------------------------------------------------------------- what's new */
+/* Shown once after the app updates itself. It sits over the stage rather than
+   becoming a view: the update already interrupted them by restarting, and a
+   panel they can dismiss in one click costs less than a screen they have to
+   navigate out of. Amber stays on the version and the rule, per DESIGN.md. */
+.whatsnew {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 10, 0.72);
+  padding: 32px;
+}
+.wn-card {
+  width: min(680px, 100%);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  background-image: var(--hatch);
+  padding: 26px 30px 22px;
+}
+.wn-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--rule-2); padding-bottom: 12px; }
+.wn-version { margin-left: auto; color: var(--amber); font-size: 12px; letter-spacing: 0.08em; }
+.wn-headline {
+  margin: 18px 0 4px;
+  font: 600 20px/1.28 var(--sans);
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.wn-body { overflow-y: auto; margin-top: 14px; padding-right: 6px; }
+.wn-release + .wn-release { margin-top: 22px; border-top: 1px solid var(--rule-2); padding-top: 18px; }
+.wn-release-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.wn-release-ver { font: 11px var(--mono); color: var(--amber); letter-spacing: 0.08em; }
+.wn-release-date { font: 11px var(--mono); color: var(--dim); }
+.wn-line { display: grid; grid-template-columns: 62px 1fr; gap: 14px; padding: 7px 0; align-items: baseline; }
+.wn-kind {
+  font: 10px var(--mono);
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  text-transform: uppercase;
+  border: 1px solid var(--rule-2);
+  padding: 2px 0;
+  text-align: center;
+}
+.wn-kind[data-kind="added"] { color: var(--amber); border-color: rgba(224, 164, 58, 0.35); }
+.wn-text { color: var(--ink-2); line-height: 1.5; }
+.wn-foot { display: flex; align-items: center; gap: 14px; margin-top: 20px; border-top: 1px solid var(--rule-2); padding-top: 16px; }
+.wn-from { color: var(--dim); font-size: 11px; }
+.wn-foot .mono-btn { margin-left: auto; }
