@@ -265,6 +265,29 @@
     const finals = linesEl.querySelectorAll(".row:not(.interim)");
     const latest = finals[finals.length - 1] || null;
     for (const el of rows.values()) el.classList.toggle("latest", el === latest);
+    markOverlayLine();
+  }
+
+  /**
+   * The overlay renders exactly one row. That row used to be chosen by
+   * markLatest, which only ever considered `.row:not(.interim)` - so nothing
+   * reached the broadcast until the speaker finished a sentence, leaving the
+   * captions a whole utterance behind (up to the local model 15s segment cap).
+   * A viewer reported it as "it doesn't put anything in until the whole
+   * message is done".
+   *
+   * An open interim IS the live line. It takes the same slot as the finished
+   * one, so the text resolves in place rather than the row moving. `.latest`
+   * keeps its old meaning - on the phone page it means hero size, and
+   * promoting an interim there would make every line jump as it was spoken.
+   */
+  function markOverlayLine() {
+    const finals = linesEl.querySelectorAll(".row:not(.interim)");
+    let target = finals[finals.length - 1] || null;
+    // insertion order: with two capture sources the most recently opened
+    // interim is the one being spoken now
+    for (const el of interims.values()) target = el;
+    for (const el of linesEl.querySelectorAll(".row")) el.classList.toggle("obs-live", el === target);
   }
 
   function showPartial(msg) {
@@ -284,6 +307,9 @@
     const c = document.createElement("span");
     c.className = "cursor";
     src.appendChild(c);
+    // markOverlayLine only, not markLatest/renderPreview: partials arrive
+    // several times a second per channel and renderPreview rebuilds innerHTML
+    markOverlayLine();
   }
 
   function showSubtitle(msg) {

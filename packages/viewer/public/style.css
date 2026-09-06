@@ -132,7 +132,7 @@ body.no-ts .row .ts { display: none; }
 /* the second source reads at a glance, on the phone and in the overlay */
 .row .who.other { color: var(--chat-2); }
 .row.latest .who.other, body.obs .row.latest .who.other { color: var(--chat); }
-body.obs .row.latest .who { color: var(--accent); font-size: 0.5em; display: block; margin: 0 0 4px; }
+body.obs .row.obs-live .who { color: var(--accent); font-size: 0.5em; display: block; margin: 0 0 4px; }
 body.obs .row .who.other { color: var(--chat); }
 .cursor {
   display: inline-block;
@@ -286,7 +286,7 @@ body.obs .lines {
   justify-content: flex-end;
 }
 body.obs .row { display: none; }
-body.obs .row.latest {
+body.obs .row.obs-live {
   display: grid;
   grid-template-columns: 8px 1fr;
   gap: 28px;
@@ -295,20 +295,26 @@ body.obs .row.latest {
   max-width: 1100px;
   color: var(--fg);
 }
-body.obs.center .row.latest { margin: 0 auto; }
-body.obs .row.latest::before { content: ""; background: var(--accent); display: block; }
+body.obs.center .row.obs-live { margin: 0 auto; }
+body.obs .row.obs-live::before { content: ""; background: var(--accent); display: block; }
 /* ?bar=0 drops the amber marker. Removing only the ::before would leave its
    8px column and the 28px gap behind, indenting every caption by 36px, so the
    grid has to collapse with it. */
-body.obs.no-bar .row.latest { grid-template-columns: 1fr; gap: 0; }
-body.obs.no-bar .row.latest::before { display: none; }
-body.obs .row.latest .ts { display: none; }
+body.obs.no-bar .row.obs-live { grid-template-columns: 1fr; gap: 0; }
+body.obs.no-bar .row.obs-live::before { display: none; }
+body.obs .row.obs-live .ts { display: none; }
+/* The line still being spoken takes the finished line's slot at the finished
+   line's size, so the caption resolves in place instead of the row jumping.
+   Only the colour says it has not landed yet - no new hue, no weight change
+   (in the translation-off path .src IS the hero line, and reweighting it there
+   would re-render the same string differently mid-sentence). */
+body.obs .row.interim.obs-live .src { color: var(--ink-2); }
 /* 34px / 46px at the default 18px base, scaling with the viewer's size setting */
-body.obs .row.latest .src { color: var(--ink-2); font-size: calc(var(--size) * 1.889); line-height: 1.25; font-weight: 400; }
-body.obs .row.latest .tgt { font-size: calc(var(--size) * 2.556); line-height: 1.2; font-weight: 600; margin-top: 8px; }
-body.obs.no-tgt .row.latest .src { color: var(--fg); font-size: calc(var(--size) * 2.556); font-weight: 600; }
+body.obs .row.obs-live .src { color: var(--ink-2); font-size: calc(var(--size) * 1.889); line-height: 1.25; font-weight: 400; }
+body.obs .row.obs-live .tgt { font-size: calc(var(--size) * 2.556); line-height: 1.2; font-weight: 600; margin-top: 8px; }
+body.obs.no-tgt .row.obs-live .src { color: var(--fg); font-size: calc(var(--size) * 2.556); font-weight: 600; }
 /* the drop shadow is part of the overlay itself - it keeps text legible over any video */
-body.obs .row.latest .src, body.obs .row.latest .tgt { text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7); }
-body.obs.obs-black .row.latest { background: rgba(0, 0, 0, 0.55); padding: 18px 28px 18px 0; }
-body.obs.obs-black .row.latest::before { margin-left: 0; }
+body.obs .row.obs-live .src, body.obs .row.obs-live .tgt { text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7); }
+body.obs.obs-black .row.obs-live { background: rgba(0, 0, 0, 0.55); padding: 18px 28px 18px 0; }
+body.obs.obs-black .row.obs-live::before { margin-left: 0; }
 body.obs .display-body, body.obs #display { background: var(--bgc); }

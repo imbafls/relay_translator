@@ -47,9 +47,15 @@ const $ = (id: string): HTMLElement => {
 const lineTexts = (): string[] =>
   Array.from(document.querySelectorAll("#lines .row .src .txt")).map((n) => n.textContent ?? "");
 
-beforeEach(() => {
+/**
+ * Boot the shipped page. `search` selects the surface: "" is the phone
+ * viewer, "?obs=1" the OBS overlay, which behaves differently enough that it
+ * needs its own coverage - the overlay renders exactly one row and hides the
+ * rest, so a bug there is invisible to every phone-viewer assertion.
+ */
+function boot(search = ""): void {
   // the token comes out of the path, so the page has to believe it is there
-  window.history.pushState({}, "", "/watch/test-token");
+  window.history.pushState({}, "", `/watch/test-token${search}`);
 
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   // the shipped markup, minus its own script tags: app.js is evaluated below
@@ -84,7 +90,9 @@ beforeEach(() => {
 
   window.eval(appJs);
   socket = created[0];
-});
+}
+
+beforeEach(() => boot());
 
 afterEach(() => {
   // onopen is scheduled, so without this it fires into a cleared page and
@@ -160,5 +168,67 @@ describe("the stream ending", () => {
     push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
     push({ type: "kicked", reason: "another device opened this link" });
     expect($("endedAt").textContent).toMatch(/^ENDED \d{2}:\d{2}$/);
+  });
+});
+
+describe("the OBS overlay shows the line being spoken", () => {
+  /**
+   * The overlay renders exactly one row: everything but the chosen line is
+   * display:none. That line used to be picked by markLatest, which only ever
+   * considered `.row:not(.interim)` - so an in-progress caption was built,
+   * filled and never shown, and the broadcast stayed a whole utterance behind.
+   * A viewer put it as "it doesn't put anything in until the whole message is
+   * done".
+   *
+   * On the phone page `.latest` means hero size, so the fix must NOT promote an
+   * interim there - that would make every line jump as it was spoken.
+   */
+  const overlayRow = (): HTMLElement | null =>
+    document.querySelector("#lines .row.obs-live");
+
+  it("renders a partial as the live line", () => {
+    boot("?obs=1");
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false });
+    push({ type: "partial", id: 1, source: "enemy pushing" });
+
+    const row = overlayRow();
+    expect(row, "no row was marked as the overlay line").not.toBeNull();
+    expect(row?.classList.contains("interim")).toBe(true);
+    expect(row?.querySelector(".src")?.textContent).toContain("enemy pushing");
+  });
+
+  it("hands the slot to the final and drops the interim", () => {
+    boot("?obs=1");
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false });
+    push({ type: "partial", id: 1, source: "enemy pu" });
+    push({ type: "subtitle", id: 1, source: "enemy pushing mid", final: true });
+
+    const row = overlayRow();
+    expect(row?.classList.contains("interim"), "the interim outlived its final").toBe(false);
+    expect(row?.querySelector(".src")?.textContent).toContain("enemy pushing mid");
+    expect(document.querySelectorAll("#lines .row.obs-live")).toHaveLength(1);
+  });
+
+  it("keeps exactly one overlay line as captions accumulate", () => {
+    boot("?obs=1");
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false });
+    for (let i = 1; i <= 4; i += 1) {
+      push({ type: "subtitle", id: i, source: `line ${i}`, final: true });
+    }
+    push({ type: "partial", id: 5, source: "still talking" });
+
+    expect(document.querySelectorAll("#lines .row.obs-live")).toHaveLength(1);
+    expect(overlayRow()?.querySelector(".src")?.textContent).toContain("still talking");
+  });
+
+  it("does not promote an interim on the phone page, where it would resize", () => {
+    boot();
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false });
+    push({ type: "subtitle", id: 1, source: "settled line", final: true });
+    push({ type: "partial", id: 2, source: "being said" });
+
+    const latest = document.querySelector("#lines .row.latest");
+    expect(latest?.classList.contains("interim"), "the hero row became an interim").toBe(false);
+    expect(latest?.querySelector(".src")?.textContent).toContain("settled line");
   });
 });
