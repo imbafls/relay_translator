@@ -166,10 +166,40 @@ inviting anyone.
   on top of it (1 -> 2). Cosmetic today, since the number is only shown in the
   app's readout, but it is unaccounted for and should be chased before anyone
   relies on the count.
-- **Cost is unmeasured.** Durable Objects bill wall-clock duration while a
-  WebSocket is accepted, not requests, and that has never been checked against a
-  real stream. `LocalServer/SUPR-SYSTEMS-PROBES.md` puts a weekly look on the
-  list.
+- ~~**Cost is unmeasured.**~~ **Measured 2026-09-06, and it inverts the
+  assumption this design was built on.**
+
+  One room held live for 22 minutes with an uplink and a viewer, publishing 527
+  captions (a dense stream - one every 2.5 s), read back from the GraphQL
+  analytics API. Reproduce with `scripts/measure-cost.cjs` then
+  `scripts/read-cost.cjs`, which print the exact window to query.
+
+  | per hour of live room | measured |
+  |---|---|
+  | captions | 1,436 |
+  | billed requests | 1,597 |
+  | billed duration | **3.83 GB-s** |
+  | active time | 30 s |
+
+  An idle hour on the same account was 0.04 GB-s, so essentially all of that is
+  the room.
+
+  **Hibernation works, and works so well that duration stopped being the
+  question.** 3.83 GB-s/hr against the free plan's 13,000 GB-s/day is 3,400
+  room-hours a day. The premise - that hosting friends is effectively free - is
+  correct.
+
+  **But the binding constraint is requests, not duration.** Every inbound
+  WebSocket message on a hibernating object is a billed request, so a caption is
+  a request. At 1,597/hr against the free plan's 100,000/day that is **63
+  room-hours a day** - two or three people streaming a full evening. Duration
+  allows fifty times more.
+
+  On the Workers Paid plan the included 1M requests/month is ~626 room-hours,
+  and past that the whole cost is about **$0.29 per 1,000 room-hours**. Still
+  nothing, but the number to watch is the request count, and the lever that
+  would move it is batching or debouncing captions - not anything about
+  hibernation.
 - **`POST /claim` is rate limited, but loosely - know what that buys.** A
   `[[ratelimits]]` binding, 5 per 60s keyed on `CF-Connecting-IP`, checked
   before any room id is minted so a refused claim wakes no Durable Object.

@@ -1831,3 +1831,57 @@ reverting turns it red on `expected 3 to be 2`.
 That is the fourth time in this session a test has passed against code it was
 written to catch. The pattern each time: the assertion was one level away from
 the change.
+
+### Turn 53 - Measuring what a live room actually costs
+
+The second sharing gate, and the one the board said could change the plan. It
+could not be answered by reading code, so it was not.
+
+`scripts/measure-cost.cjs` claims a room, attaches an uplink and a viewer,
+publishes a caption every 2.5 s - a dense stream - and prints the exact UTC
+window. `scripts/read-cost.cjs` reads that window back from the GraphQL
+analytics API. **22 minutes, 527 captions sent, 527 received at the viewer.**
+
+Units were not guessed. GraphQL introspection on
+`AccountDurableObjectsPeriodicGroupsSum` says `activeTime` is microseconds and
+**`duration` is GB\*s** - the billed quantity itself - so the script reads
+`duration` rather than converting something and hoping.
+
+| per hour of live room | measured |
+|---|---|
+| captions | 1,436 |
+| billed requests | 1,597 |
+| billed duration | **3.83 GB-s** |
+| active time | 30 s |
+
+An idle hour on the same account measured 0.04 GB-s, so essentially all of that
+is the room.
+
+**Hibernation works, and it works so well that it answered a different question
+than the one that matters.** The design comment in `room.ts` says hibernation is
+the whole design because a four-hour stream would otherwise be billed for four
+hours of compute. That is right, and the result is 30 seconds of active time per
+hour. Against the free plan's 13,000 GB-s/day that is **3,400 room-hours a
+day**. The premise holds: hosting friends is effectively free.
+
+**But the binding constraint turned out to be requests, not duration.** Every
+inbound WebSocket message on a hibernating object is a billed request, so each
+caption is a request. 1,597/hr against 100,000/day is **63 room-hours a day** -
+two or three people streaming a full evening. Duration allows fifty times more
+than that.
+
+So the answer to "is hosting others viable" is yes, and the number to watch is
+the one nobody was watching. On Workers Paid the included million requests is
+~626 room-hours a month, and beyond that the entire cost is about **$0.29 per
+1,000 room-hours**. The lever, if it is ever needed, is batching or debouncing
+captions - nothing to do with hibernation.
+
+**Read the credential, did not print it.** The analytics query uses
+`CLOUDFLARE_API_TOKEN` if set, otherwise the OAuth token wrangler already stores
+on this machine - the same credential `wrangler deploy` used earlier, for a
+read-only query.
+
+**No guard test.** There is nothing here to regress: two operational scripts and
+a number written down. What would rot is the number, and the way to keep it
+honest is to re-run the two scripts, which is why they are committed rather than
+thrown away.
