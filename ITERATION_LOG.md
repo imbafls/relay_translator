@@ -1352,3 +1352,81 @@ yet - that is the next turn, and it needs a config shape, `CONTROL_PATCHABLE_KEY
 the two hard-coded `<select>` slots in the markup, and `channelLabels()`, which
 returns a two-element literal and has no answer for what channel three is
 called.
+
+### Turn 44 - Client UI (picking and naming three sources)
+
+Turn 43 made the pipeline carry three channels. Nothing in the app could choose
+a third, so this is the half a user can see.
+
+**The config shape.** `sources: string[]` is the truth now, with
+`sourceLabels: string[]` beside it. `audioSource` / `audioSource2` stay, marked
+deprecated, because deleting them would break two things at once: every
+`config.json` already on disk, and the Stream Deck property inspector, which
+patches those two names through the control API and knows nothing about a list.
+
+`resolveSourceIds()` reads the list when there is one and folds in the pair when
+there is not - that order matters, because preferring the pair would drop a
+third source every time a Stream Deck key was pressed.
+
+**A legacy patch names a slot, not the list.** That question only surfaced
+because the test was written first. The first version asserted that patching
+`audioSource` collapsed the config back to one source, which is what a naive
+fold does - and it is wrong. An old client patching slot 0 is saying "slot 0 is
+this"; it has no idea a third slot exists, so it cannot be asking to delete one.
+`syncSources()` applies the slots a legacy patch names and leaves the rest, then
+mirrors the first two back onto the pair so an older build still sees something.
+
+**The tag rule moved into `shared` and grew a third case.** It was structurally
+binary: it compared `kinds[0]` against `kinds[1]` and returned the literal
+`["YOU", "CHAT"]`, so a three-channel session got a two-long array and the relay
+fell through to `CH3`. The two-source behaviour is unchanged and pinned by tests
+saying so. Past the second slot there is no role left to derive - two
+microphones are two microphones, and nothing in a device list says which one is
+the coach - so the third defaults to its slot number and the streamer names it.
+That is the whole reason `sourceLabels` exists, and why the field shows the tag
+it will otherwise carry as its placeholder rather than a blank.
+
+Names ship in the publisher hello like the caption toggles, so they carry the
+same live lock and the same sentence.
+
+**The bug only the browser found.** The renderer computed
+`const channels = sources.length === 2 ? 2 : 1`. Three sources therefore
+announced **one** channel while capture opened three lanes, and the relay would
+have re-cut every frame on the wrong stride - which decodes to fluent speech
+from the wrong people. It never got that far: `if (capture.channels !== channels)`
+turned it into a clean refusal to start. That check earned its keep today.
+
+There is no unit test for that call site - it needs an `AudioContext` and a live
+relay. What is pinned instead is the contract the two sides now share, that
+`clampChannels(captureSources(ids).length)` equals the number of lanes actually
+opened, for every count the app can produce. The call site itself was caught in
+a browser and is verified there, not in the suite. Said plainly because it
+matters.
+
+**Guards - six, each watched fail against its own revert:** the third picker
+removed from the chain; saving one named field per picker instead of the list;
+the third name field removed; the two-element tag literal restored; the empty-slot
+rows shown; and the legacy fold disabled.
+
+The proof harness itself was wrong first. A revert that failed to typecheck was
+being reported as GREEN, because the build error was caught by the same `catch`
+that catches a failing test and then found no "Tests" line to read. That is
+lesson 1 from this file in a new costume - a run that proves nothing looks
+exactly like a run that proves the fix. It now reports a build failure as its own
+outcome.
+
+**Verified in a browser, end to end.** Three devices enumerated, three slots
+picked, the third named COACH in SETTINGS, then a live session against
+`scripts/mock-relay.mjs`. The relay logged
+`publisher session: ... (3 channels: YOU/CHAT/COACH)` and
+`stt open (deepgram-nova-3, en, 3 channels)`, and captions arrived tagged YOU,
+CHAT and COACH.
+
+That run also caught a **stale process**: the mock relay still running from an
+earlier session had the old `clampChannels`, so it read three channels as mono
+and stripped every speaker tag. The relay was restarted on the new build before
+anything was believed.
+
+**Known gap, next.** `isOtherSpeaker()` is binary - `YOU` versus everyone else -
+so on the stage and in the viewer, CHAT and COACH are the same colour. Three
+speakers are tagged but only two are distinguishable at a glance.

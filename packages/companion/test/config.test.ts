@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ConfigStore } from "../src/config";
+import { resolveSourceIds } from "@callout-relay/shared";
 
 /**
  * config.json is the user's whole setup: which model, which languages, and both
@@ -252,5 +253,66 @@ describe("a key that only exists in the environment", () => {
     store.update({ deepgramApiKey: "dg-saved" });
     expect(store.get().deepgramApiKey).toBe("dg-saved");
     expect(new ConfigStore(dir).load().deepgramApiKey).toBe("dg-saved");
+  });
+});
+
+describe("the legacy pair and the source list", () => {
+  /**
+   * `sources` is the truth, but audioSource/audioSource2 are still what the
+   * Stream Deck property inspector patches through the control API - and that
+   * patch arrives with no `sources` in it. Merged naively it would land beside
+   * a stale list that resolveSourceIds prefers, so pressing a Stream Deck key
+   * would silently revert the source the user just chose, with the pane still
+   * showing the new one.
+   */
+  it("sets the slot a legacy patch names, without dropping the slots it cannot see", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["mic-a", "loopback", "coach"] });
+    store.update({ audioSource: "mic-b" });
+
+    // an old client patching slot 0 is saying "slot 0 is this", not "there is
+    // one source now" - it has no idea a third slot exists to be deleted
+    expect(store.get().sources).toEqual(["mic-b", "loopback", "coach"]);
+    expect(resolveSourceIds(store.get())).toEqual(["mic-b", "loopback", "coach"]);
+  });
+
+  it("takes both halves of a legacy patch together, still keeping the third", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["a", "b", "c"] });
+    store.update({ audioSource: "mic-b", audioSource2: "loopback-b" });
+    expect(store.get().sources).toEqual(["mic-b", "loopback-b", "c"]);
+  });
+
+  it("lets a legacy patch clear the second slot without taking the third with it", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["a", "b", "c"] });
+    store.update({ audioSource2: "" });
+    expect(store.get().sources).toEqual(["a", "c"]);
+  });
+
+  it("leaves the list alone when the patch names it, even alongside the pair", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["a", "b", "c"], audioSource: "a", audioSource2: "b" });
+    expect(store.get().sources).toEqual(["a", "b", "c"]);
+  });
+
+  it("mirrors the list back onto the pair, so an old reader still sees a source", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["mic-a", "loopback", "coach"] });
+    const saved = store.get();
+    expect(saved.audioSource).toBe("mic-a");
+    expect(saved.audioSource2).toBe("loopback");
+  });
+
+  it("gives a config written before the list one, so nothing has to migrate on disk", () => {
+    write(JSON.stringify({ audioSource: "old-mic", audioSource2: "old-loopback" }));
+    expect(resolveSourceIds(new ConfigStore(dir).load())).toEqual(["old-mic", "old-loopback"]);
+  });
+
+  it("does not let an unrelated patch disturb the list", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["a", "b", "c"] });
+    store.update({ profanityFilter: false });
+    expect(store.get().sources).toEqual(["a", "b", "c"]);
   });
 });

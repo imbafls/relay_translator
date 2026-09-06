@@ -67,6 +67,14 @@
           <p id="captionsLock" class="hint warn" hidden>Locked while live — viewers are told how to render captions when the session opens. Stop the session to change either.</p>
         </div>
         <div class="field">
+          <div class="field-label">SPEAKER NAMES<span id="sourceCount" class="field-status dim"></span></div>
+          <p class="hint">Each source is captioned on its own channel and tagged with a name. Blank uses the slot&#39;s default, and past the second slot there is no default worth guessing — name it.</p>
+          <div class="namerow"><span class="namerow-slot label">01</span><span id="sourceDevice1" class="namerow-device"></span><input id="sourceName1" type="text" class="uinput mono namerow-input" maxlength="12" autocomplete="off" spellcheck="false" /></div>
+          <div class="namerow"><span class="namerow-slot label">02</span><span id="sourceDevice2" class="namerow-device"></span><input id="sourceName2" type="text" class="uinput mono namerow-input" maxlength="12" autocomplete="off" spellcheck="false" /></div>
+          <div class="namerow"><span class="namerow-slot label">03</span><span id="sourceDevice3" class="namerow-device"></span><input id="sourceName3" type="text" class="uinput mono namerow-input" maxlength="12" autocomplete="off" spellcheck="false" /></div>
+          <p class="hint">Pick the devices themselves under 01 SOURCE.</p>
+        </div>
+        <div class="field">
           <div class="field-label">CAPTION APPEARANCE<span class="field-status dim">SET ON EACH VIEWER</span></div>
           <p class="hint">Size, font and colours belong to the device that is watching, so a phone and an OBS source can differ. In OBS the view&#39;s AA button only appears on hover — opening it from here pins it.</p>
           <div class="field-row">
@@ -307,6 +315,7 @@
       <div class="block-label"><span class="num">01</span>SOURCE</div>
       <div class="block-value select-row"><select id="audioSource" class="vselect"></select><span class="chev"></span></div>
       <div class="block-value select-row select-row-2" id="source2Row"><span class="plus mono">+</span><select id="audioSource2" class="vselect vselect-2"></select><span class="chev"></span></div>
+      <div class="block-value select-row select-row-2" id="source3Row"><span class="plus mono">+</span><select id="audioSource3" class="vselect vselect-2"></select><span class="chev"></span></div>
       <div class="block-meta mono" id="metaSource"><span id="sourceKind">MIC</span><button id="rescan" class="ulink-mono">RESCAN</button></div>
       <div class="meter" id="meter" hidden><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
     </div>

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { BrowserAudioCapture, captureSources, rmsLevel, SOURCE_DEFAULT_MIC, SOURCE_SYSTEM_LOOPBACK } from "../src/capture";
-import { MAX_CAPTURE_CHANNELS } from "@callout-relay/shared";
+import { clampChannels, MAX_CAPTURE_CHANNELS } from "@callout-relay/shared";
 
 /**
  * listDevices is what fills both source pickers, and picking the wrong thing in
@@ -183,5 +183,27 @@ describe("the level meter's view of an interleaved frame", () => {
     const mixed = rmsLevel(interleave([silence(300), silence(300), loud(300)]));
     const all = rmsLevel(interleave([loud(300), loud(300), loud(300)]));
     expect(mixed).toBeLessThan(all);
+  });
+});
+
+describe("the count the session announces against the count capture opens", () => {
+  /**
+   * These are two different rules in two different packages, and they have to
+   * agree exactly: the relay re-cuts each interleaved frame by the number in
+   * the publisher hello. They did not agree - the renderer announced
+   * `sources.length === 2 ? 2 : 1`, so three sources were declared as one while
+   * capture opened three lanes. A frame read on the wrong stride still decodes
+   * to fluent speech, from the wrong people.
+   *
+   * This pins the contract those two sides now share. It does not reach the
+   * call site itself, which needs an AudioContext and a live relay - that was
+   * caught in a browser, by a session refusing to start.
+   */
+  it("agrees for every source count the app can produce", () => {
+    const ids = ["a", "b", "c", "d", "e"];
+    for (let n = 1; n <= ids.length; n++) {
+      const opened = captureSources(ids.slice(0, n)).length;
+      expect(clampChannels(opened), `${n} sources opened ${opened} lanes, announced as something else`).toBe(opened);
+    }
   });
 });

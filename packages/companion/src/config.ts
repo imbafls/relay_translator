@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { AppConfig, DEFAULT_CONFIG } from "@callout-relay/shared";
+import { AppConfig, DEFAULT_CONFIG, resolveSourceIds } from "@callout-relay/shared";
 
 export function defaultDataDir(): string {
   if (process.env.CALLOUT_RELAY_DATA) return process.env.CALLOUT_RELAY_DATA;
@@ -61,6 +61,7 @@ export class ConfigStore {
     if (stored.setupDone === undefined && (stored.deepgramApiKey || process.env.DEEPGRAM_API_KEY)) {
       this.cached.setupDone = true;
     }
+    this.cached = syncSources(this.cached, {}, resolveSourceIds(this.cached));
     return this.withEnv(this.cached);
   }
 
@@ -95,7 +96,9 @@ export class ConfigStore {
     // merge into what is stored, never into the env-applied view, or the
     // environment's value is what gets persisted
     if (!this.cached) this.load();
+    const before = resolveSourceIds(this.cached as AppConfig);
     this.cached = this.merge(this.cached as AppConfig, patch);
+    this.cached = syncSources(this.cached, patch, before);
     this.persist();
     return this.withEnv(this.cached);
   }
@@ -143,4 +146,45 @@ export class ConfigStore {
 
     return out;
   }
+}
+
+/**
+ * Keep `sources` and the deprecated audioSource/audioSource2 pair telling the
+ * same story after a patch.
+ *
+ * The pair is not dead weight: it is what the Stream Deck property inspector
+ * writes through the control API, and such a patch arrives with no `sources`
+ * in it at all. Merged and left alone it would sit beside a list that
+ * resolveSourceIds prefers, so a Stream Deck key press would appear to do
+ * nothing - or worse, revert a source the user had just chosen.
+ *
+ * A legacy patch names a SLOT, not the whole list. An old client patching
+ * `audioSource` is saying "slot 0 is this"; it has no idea a third slot exists,
+ * so it cannot be asking to delete one. Higher slots survive.
+ */
+function syncSources(cfg: AppConfig, patch: Partial<AppConfig>, before: string[]): AppConfig {
+  const out = { ...cfg };
+  const namesList = Object.prototype.hasOwnProperty.call(patch, "sources");
+  const legacySlot: Record<number, string | undefined> = {
+    0: Object.prototype.hasOwnProperty.call(patch, "audioSource") ? patch.audioSource : undefined,
+    1: Object.prototype.hasOwnProperty.call(patch, "audioSource2") ? patch.audioSource2 : undefined,
+  };
+  const touchesLegacy = legacySlot[0] !== undefined || legacySlot[1] !== undefined;
+
+  if (!namesList && touchesLegacy) {
+    const next = [...before];
+    for (const slot of [0, 1]) {
+      const value = legacySlot[slot];
+      if (value === undefined) continue;
+      if (slot < next.length) next[slot] = value;
+      else if (value) next.push(value);
+    }
+    out.sources = next;
+  }
+
+  out.sources = resolveSourceIds(out);
+  // an older build reads only the pair, so leave it pointing at the first two
+  out.audioSource = out.sources[0] ?? "";
+  out.audioSource2 = out.sources[1] ?? "";
+  return out;
 }

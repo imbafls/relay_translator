@@ -249,6 +249,12 @@ button:disabled { cursor: default; }
 }
 .settings .toggle-wrap:not(:disabled):hover { color: var(--ink); }
 .settings .toggle-wrap + .hint { margin: -4px 0 6px 30px; }
+/* one row per capture slot: which device it holds, what viewers call it */
+.namerow { display: grid; grid-template-columns: 22px 1fr 130px; align-items: baseline; gap: 12px; }
+.namerow-slot { color: var(--mute); }
+.namerow-device { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.namerow-input { font-size: 12px; }
+.namerow-input:disabled { color: var(--mute); }
 .settings .toggle-wrap:disabled { color: var(--mute); }
 /* ADVANCED: shut on open, because nothing inside it is needed to run Relay */
 .advanced > summary { cursor: pointer; list-style: none; }

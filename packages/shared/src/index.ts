@@ -20,11 +20,32 @@ export interface AppConfig {
   stt: string;
   /** Translation model id, e.g. "gemini-2.5-flash" */
   translation: string;
-  /** "default-mic" | "system-loopback" | a deviceId from enumerateDevices() */
+  /**
+   * The capture sources, in slot order, at most MAX_CAPTURE_CHANNELS of them.
+   * Each is "default-mic", "system-loopback" or a deviceId from
+   * enumerateDevices(). This is the authoritative list; read it through
+   * resolveSourceIds(), which folds in the legacy pair below.
+   */
+  sources?: string[];
+  /**
+   * Speaker tag per slot, parallel to `sources`. A blank entry means "work it
+   * out from the slot" - which is what every install had before names existed,
+   * and still the right default for someone who never opens the field.
+   */
+  sourceLabels?: string[];
+  /**
+   * @deprecated superseded by `sources`. Still written and still read: it is
+   * what the Stream Deck property inspector patches through the control API,
+   * and what every config.json already on disk contains.
+   * "default-mic" | "system-loopback" | a deviceId from enumerateDevices()
+   */
   audioSource: string;
-  /** optional second source captured alongside `audioSource` (e.g. system
-   *  loopback for voice chat while the mic is the first). Empty = off. Each
-   *  source is transcribed on its own channel and captions carry a speaker tag. */
+  /**
+   * @deprecated superseded by `sources`, kept for the same reasons.
+   * Optional second source captured alongside `audioSource` (e.g. system
+   * loopback for voice chat while the mic is the first). Empty = off. Each
+   * source is transcribed on its own channel and captions carry a speaker tag.
+   */
   audioSource2?: string;
   languages: Languages;
   /** false = relay skips Gemini, viewers get source-language only.
@@ -173,6 +194,71 @@ export function isLocalStt(id: string): boolean {
  * that is also running the game.
  */
 export const MAX_CAPTURE_CHANNELS = 3;
+
+/** the source every install starts on, and the fallback when nothing is named */
+export const DEFAULT_SOURCE = "default-mic";
+
+/**
+ * The capture sources a config actually names, in slot order.
+ *
+ * `sources` wins when it is a usable list; otherwise the legacy
+ * audioSource/audioSource2 pair is folded in. That order matters: the pair is
+ * what the Stream Deck writes, so preferring it would silently drop a third
+ * source every time someone pressed a Stream Deck key.
+ *
+ * Blanks are dropped and a device named twice is collapsed - two channels
+ * carrying one voice is the most confusing failure this app has, because both
+ * transcribe fine and nothing says why every line is doubled. Entries that are
+ * not strings are ignored rather than coerced: a hand-edited config should not
+ * be able to open a channel called "[object Object]".
+ */
+export function resolveSourceIds(cfg: Partial<AppConfig> | null | undefined): string[] {
+  const listed = Array.isArray(cfg?.sources) ? cfg.sources : undefined;
+  const raw = listed ?? [cfg?.audioSource ?? "", cfg?.audioSource2 ?? ""];
+  const ids = raw
+    .filter((s): s is string => typeof s === "string" && s.length > 0)
+    .filter((s, i, a) => a.indexOf(s) === i)
+    .slice(0, MAX_CAPTURE_CHANNELS);
+  // a list present but unusable still falls back to the pair before giving up
+  if (!ids.length && listed) return resolveSourceIds({ ...cfg, sources: undefined });
+  return ids.length ? ids : [DEFAULT_SOURCE];
+}
+
+/** what a device enumerates as; a virtual chat mix is indistinguishable from a headset */
+export type SourceKind = "mic" | "system";
+
+/** the longest speaker tag the relay will carry (server.ts slices to this) */
+export const MAX_SPEAKER_TAG = 12;
+
+/**
+ * The speaker tag shown against each source's captions, in slot order.
+ *
+ * The role follows the SLOT, not the device kind: a chat mix off a virtual
+ * audio device (Wave Link, VoiceMeeter, VB-Cable) enumerates as a microphone
+ * exactly like a headset does, so the kind cannot tell "me" from "the others".
+ * A system source is the exception - it is always the other voices, whichever
+ * slot it sits in.
+ *
+ * Past the second slot there is no role left to derive. Two microphones are
+ * two microphones; nothing in the device list says which one is the coach. So
+ * the third defaults to a slot number and the answer is that the streamer
+ * names it - which is the whole reason `sourceLabels` exists.
+ *
+ * One source gets no tag at all: there is nobody to tell it apart from.
+ */
+export function speakerTags(kinds: readonly SourceKind[], labels?: readonly (string | undefined)[]): string[] {
+  if (kinds.length < 2) return [];
+  const derived =
+    kinds[0] !== kinds[1]
+      ? kinds.map((k) => (k === "system" ? "CHAT" : "YOU"))
+      : kinds.map((_, i) => (i === 0 ? "YOU" : "CHAT"));
+  return kinds.map((_, i) => {
+    const given = labels?.[i];
+    const name = typeof given === "string" ? given.trim() : "";
+    if (name) return name.slice(0, MAX_SPEAKER_TAG);
+    return i < 2 ? derived[i] : `CH${i + 1}`;
+  });
+}
 
 /**
  * Anything the pipeline cannot interleave collapses to mono.

@@ -101,7 +101,10 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
   }
 }
 
-async function bootWith(config: Partial<AppConfig>): Promise<void> {
+/** what enumerateDevices() answers; the built-in two are added by the app */
+let fakeDevices: { kind: string; deviceId: string; label: string; groupId: string }[] = [];
+
+async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
   calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [] };
   pushStatus = undefined;
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
@@ -110,7 +113,7 @@ async function bootWith(config: Partial<AppConfig>): Promise<void> {
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     writable: true,
-    value: { mediaDevices: { enumerateDevices: async () => [] } },
+    value: { mediaDevices: { enumerateDevices: async () => devices } },
   });
   // happy-dom has no document.fonts; the renderer waits on it while laying out
   // and an exception there stops boot() before it chooses a view
@@ -146,6 +149,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  fakeDevices = [];
   for (const t of timers) clearInterval(t);
   timers = [];
   vi.restoreAllMocks();
@@ -562,4 +566,83 @@ describe("finding the settings", () => {
     expect(calls.opened.length, "clicking it opened nothing").toBeGreaterThan(0);
     expect(calls.opened[calls.opened.length - 1]).toContain("settings=1");
   });
+});
+
+describe("three capture sources in the app", () => {
+  /**
+   * The app offered two source pickers and stored them in two named fields.
+   * The pipeline carries three now, so the app has to be able to name three -
+   * and the third has no role that can be derived from a device list, which is
+   * why the slots are nameable at all.
+   */
+  const devices = [
+    { kind: "audioinput", deviceId: "mic-1", label: "Headset", groupId: "g1" },
+    { kind: "audioinput", deviceId: "mix-1", label: "Wave Link chat", groupId: "g2" },
+  ];
+
+  const openSettings = async (): Promise<void> => {
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+  };
+
+  it("offers a third picker, filled with the same devices as the others", async () => {
+    await bootWith({ setupDone: true }, devices);
+    const third = document.getElementById("audioSource3") as HTMLSelectElement | null;
+    expect(third, "there is no third source slot").not.toBeNull();
+    const values = [...third!.options].map((o) => o.value);
+    expect(values).toContain("mic-1");
+    expect(values).toContain("mix-1");
+  });
+
+  it("saves all three slots as one list, not three separate fields", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic"] }, devices);
+    const set = (id: string, value: string): void => {
+      const el = document.getElementById(id) as HTMLSelectElement;
+      el.value = value;
+      el.dispatchEvent(new Event("change"));
+    };
+    set("audioSource2", "mic-1");
+    await settle(40);
+    set("audioSource3", "mix-1");
+    await settle(40);
+
+    const last = calls.setConfig.filter((p) => p.sources).pop();
+    expect(last?.sources, "the third pick never reached the config").toEqual(["default-mic", "mic-1", "mix-1"]);
+  });
+
+  it("lets a slot be named, and keeps the names as one list", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic", "mic-1", "mix-1"] }, devices);
+    await openSettings();
+
+    const name = document.getElementById("sourceName3") as HTMLInputElement | null;
+    expect(name, "the third source cannot be named").not.toBeNull();
+    name!.value = "COACH";
+    name!.dispatchEvent(new Event("change"));
+    await settle(40);
+
+    const last = calls.setConfig.filter((p) => p.sourceLabels).pop();
+    expect(last?.sourceLabels?.[2]).toBe("COACH");
+  });
+
+  it("shows the tag a slot will actually carry, so a blank field is not a mystery", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic", "system-loopback", "mic-1"] }, devices);
+    await openSettings();
+
+    expect((document.getElementById("sourceName1") as HTMLInputElement).placeholder).toBe("YOU");
+    expect((document.getElementById("sourceName2") as HTMLInputElement).placeholder).toBe("CHAT");
+    // the third has no derivable role - the point is that it says so rather
+    // than showing a blank the user has to guess about
+    expect((document.getElementById("sourceName3") as HTMLInputElement).placeholder).toBe("CH3");
+  });
+
+  it("hides the rows for slots that hold no device", async () => {
+    await bootWith({ setupDone: true, sources: ["default-mic"] }, devices);
+    await openSettings();
+    const row = (n: number): HTMLElement =>
+      (document.getElementById(`sourceName${n}`) as HTMLElement).closest(".namerow") as HTMLElement;
+    expect(row(1).hidden).toBe(false);
+    expect(row(2).hidden, "an empty slot offered a name field").toBe(true);
+    expect(row(3).hidden).toBe(true);
+  });
+
 });

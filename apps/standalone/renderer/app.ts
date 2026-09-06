@@ -25,6 +25,10 @@ import {
   isLocalStt,
   sttModel,
   changesSince,
+  clampChannels,
+  resolveSourceIds,
+  speakerTags,
+  MAX_CAPTURE_CHANNELS,
 } from "@callout-relay/shared";
 import type { ChangelogEntry } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
@@ -184,10 +188,14 @@ let deviceList: AudioDeviceInfo[] = [];
 function sourceKind(id: string): "mic" | "system" {
   return deviceList.find((d) => d.id === id)?.kind || status?.devices.find((d) => d.id === id)?.kind || (id === "system-loopback" ? "system" : "mic");
 }
-/** the sources a session captures: primary + optional second (deduplicated) */
+/** the sources a session captures, in slot order (deduplicated, capped) */
 function activeSources(): string[] {
-  const list = [config.audioSource, config.audioSource2 || ""].filter((x, i, a) => !!x && a.indexOf(x) === i);
-  return list.length ? list : ["default-mic"];
+  return resolveSourceIds(config);
+}
+/** the three pickers, whatever is in them right now */
+const SOURCE_SLOTS = ["audioSource", "audioSource2", "audioSource3"] as const;
+function pickedSources(): string[] {
+  return SOURCE_SLOTS.map((id) => sel(id).value).filter(Boolean);
 }
 /**
  * Speaker tag per channel. The role follows the slot, not the device kind: a
@@ -197,10 +205,7 @@ function activeSources(): string[] {
  * the other voices, whichever slot it sits in.
  */
 function channelLabels(sources: string[]): string[] {
-  if (sources.length < 2) return [];
-  const kinds = sources.map(sourceKind);
-  if (kinds[0] !== kinds[1]) return kinds.map((k) => (k === "system" ? "CHAT" : "YOU"));
-  return ["YOU", "CHAT"];
+  return speakerTags(sources.map(sourceKind), config?.sourceLabels);
 }
 
 /** every channel except the first reads as "the others" and gets its own colour */
@@ -540,7 +545,12 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     // the channel count follows the (deduplicated) source list, so the relay
     // can be told before capture opens and no early audio is dropped
     const sources = activeSources();
-    const channels = sources.length === 2 ? 2 : 1;
+    // clampChannels, not a literal: this read `sources.length === 2 ? 2 : 1`,
+    // so three sources announced ONE channel while capture opened three. The
+    // interleave would then have been re-cut on the wrong stride, which decodes
+    // to fluent speech from the wrong people. The mismatch check below is what
+    // turned that into a refusal to start instead.
+    const channels = clampChannels(sources.length);
 
     relayClient = new RelayPublisherClient(prep.publisherUrl, {
       onState: (clientState, detail) => {
@@ -571,7 +581,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       relayClient?.sendAudio(chunk.buffer);
     });
     if (capture.channels !== channels) throw new Error("capture channel count does not match the session");
-    log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? " (2 channels)" : ""}`, "ok");
+    log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? ` (${channels} channels)` : ""}`, "ok");
     recomputeState();
   } catch (err) {
     const message = String((err as Error).message || err);
@@ -626,10 +636,12 @@ async function refreshDevices(): Promise<void> {
   deviceList = devices;
   const entries = devices.map((d) => ({ value: d.id, label: d.label }));
   const second = [{ value: "", label: "No second source" }, ...entries];
-  fillSelect(sel("audioSource"), entries, config.audioSource);
+  fillSelect(sel("audioSource"), entries, resolveSourceIds(config)[0] || "");
   fillSelect(sel("obAudioSource"), entries, config.audioSource);
-  fillSelect(sel("audioSource2"), second, config.audioSource2 || "");
-  fillSelect(sel("obAudioSource2"), second, config.audioSource2 || "");
+  const slots = activeSources();
+  fillSelect(sel("audioSource2"), second, slots[1] || "");
+  fillSelect(sel("audioSource3"), second, slots[2] || "");
+  fillSelect(sel("obAudioSource2"), second, slots[1] || "");
   cr.reportDevices(devices);
   renderChain();
   renderIdle();
@@ -660,8 +672,12 @@ function syncControlsFromConfig(): void {
   syncing = true;
   const langs = LANGUAGES.map((l) => ({ value: l.code, label: langName(l.code) }));
   fillSttSelect(sel("stt"), config.stt);
-  sel("audioSource2").value = config.audioSource2 || "";
-  sel("audioSource2").classList.toggle("set", !!config.audioSource2);
+  const picked = activeSources();
+  sel("audioSource").value = picked[0] || "";
+  sel("audioSource2").value = picked[1] || "";
+  sel("audioSource3").value = picked[2] || "";
+  sel("audioSource2").classList.toggle("set", !!picked[1]);
+  sel("audioSource3").classList.toggle("set", !!picked[2]);
   fillSelect(sel("translation"), TRANSLATION_MODELS.map((m) => ({ value: m.id, label: trFull(m.id).toUpperCase() })), config.translation);
   fillSelect(sel("langSource"), langs, config.languages.source);
   fillSelect(sel("langTarget"), langs, config.languages.target);
@@ -793,8 +809,12 @@ function renderChain(): void {
   // 01 SOURCE
   const srcs = activeSources();
   $("sourceKind").textContent = sourceKindLabel(srcs);
-  $("source2Row").hidden = live && !config.audioSource2;
-  sel("audioSource2").classList.toggle("set", !!config.audioSource2);
+  // a slot appears once the one before it holds a device: three empty "+" rows
+  // on a fresh install reads as three things gone wrong, not three on offer
+  $("source2Row").hidden = live ? !srcs[1] : false;
+  $("source3Row").hidden = live ? !srcs[2] : !srcs[1];
+  sel("audioSource2").classList.toggle("set", !!srcs[1]);
+  sel("audioSource3").classList.toggle("set", !!srcs[2]);
   $("meter").hidden = !live;
   $("metaSource").hidden = live;
   $("rescan").hidden = live;
@@ -970,6 +990,7 @@ function renderCaptionSettings(): void {
     ($(id) as HTMLButtonElement).disabled = live;
   }
   $("captionsLock").hidden = !live;
+  renderSourceNames(live);
 
   // ?settings=1 pins the viewer's HUD. In OBS that HUD is hover-only and a
   // browser source never hovers, so without this the display settings are
@@ -979,6 +1000,27 @@ function renderCaptionSettings(): void {
   $("captionViewHint").textContent = url
     ? `OPENS THE ${linkChoice === "obs" ? "OBS" : "PHONE"} VIEW`
     : "APPEARS ONCE A SESSION IS RUNNING, OR STRAIGHT AWAY ON A FIXED LINK";
+}
+
+/**
+ * One row per filled slot: which device it holds, and what viewers will call
+ * it. The name travels in the publisher hello like the caption toggles do, so
+ * it is locked for the same reason and with the same sentence.
+ */
+function renderSourceNames(live: boolean): void {
+  const ids = activeSources();
+  const tags = channelLabels(ids);
+  $("sourceCount").textContent = ids.length > 1 ? `${ids.length} SOURCES` : "ONE SOURCE - NOT TAGGED";
+  for (let i = 0; i < MAX_CAPTURE_CHANNELS; i++) {
+    const input = inp(`sourceName${i + 1}`);
+    const row = input.closest(".namerow") as HTMLElement | null;
+    if (row) row.hidden = !ids[i];
+    $(`sourceDevice${i + 1}`).textContent = ids[i] ? sourceLabel(ids[i]) : "";
+    // never overwrite what someone is in the middle of typing
+    if (document.activeElement !== input) input.value = config?.sourceLabels?.[i] || "";
+    input.placeholder = tags[i] || "no tag";
+    input.disabled = live;
+  }
 }
 
 function captionSettingsUrl(): string | undefined {
@@ -1425,6 +1467,7 @@ function renderOnboardingChain(): void {
 
   // 01
   $("source2Row").hidden = true;
+  $("source3Row").hidden = true;
   if (obStep === 3) {
     $("blkSource").classList.remove("placeholder");
     $("blkSource").classList.add("current");
@@ -1867,8 +1910,11 @@ function bind(): void {
 
   // chain
   $("rescan").onclick = () => void refreshDevices();
-  sel("audioSource").onchange = () => void saveAndApply({ audioSource: sel("audioSource").value }, { restart: true });
-  sel("audioSource2").onchange = () => void saveAndApply({ audioSource2: sel("audioSource2").value }, { restart: true });
+  for (const id of SOURCE_SLOTS) {
+    // the whole list, not the one slot: dropping a device out of slot 2 has to
+    // close the gap, and the legacy pair is mirrored from this by the store
+    sel(id).onchange = () => void saveAndApply({ sources: pickedSources() }, { restart: true });
+  }
   $("cloudAction").onclick = () => {
     if (!config.deepgramApiKey) {
       setView("settings");
@@ -1909,6 +1955,15 @@ function bind(): void {
       inp("geminiApiKey").focus();
     }
   };
+  for (let i = 0; i < MAX_CAPTURE_CHANNELS; i++) {
+    const input = inp(`sourceName${i + 1}`);
+    // on change, not on input: this restarts a session, and every keystroke
+    // rebuilding the publisher would be its own kind of broken
+    input.onchange = () => {
+      const labels = [0, 1, 2].map((slot) => inp(`sourceName${slot + 1}`).value.trim());
+      void saveAndApply({ sourceLabels: labels }, { restart: true });
+    };
+  }
   $("openCaptionView").onclick = () => {
     const url = captionSettingsUrl();
     if (url) void cr.openExternal(url);
@@ -2020,7 +2075,7 @@ function bind(): void {
     const out = (($("obOutputSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as OutputTarget) || "phone";
     const a = sel("obAudioSource").value || config.audioSource;
     const b = sel("obAudioSource2").value;
-    await saveAndApply({ audioSource: a, audioSource2: b && b !== a ? b : "", output: out, setupDone: true });
+    await saveAndApply({ sources: [a, b].filter(Boolean), output: out, setupDone: true });
     $("translateToggle").hidden = false;
     setView("stage");
     log("setup complete - hit START SESSION when ready", "ok");
