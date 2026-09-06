@@ -323,3 +323,38 @@ describe("the harness itself", () => {
     expect(document.getElementById("lines")).not.toBeNull();
   });
 });
+
+describe("a kicked overlay does not paint onto the broadcast", () => {
+  /**
+   * Audit finding 10. The `kicked` handler called showScreen("ended") with no
+   * `?obs=1` guard, and the OBS rules hide only the HUD and the non-latest
+   * rows - there was no `body.obs #ended`. So on the DEFAULT link mode, every
+   * press of START rotated the token, kicked the overlay, and composited
+   * "THIS LINK HAS ENDED" plus a solid TRY AGAIN button straight onto the live
+   * stream, where it stayed until someone refreshed the browser source.
+   *
+   * A phone viewer wants that panel. An overlay wants to disappear.
+   */
+  const shown = (id: string): boolean => !(document.getElementById(id) as HTMLElement).hidden;
+  const kick = (): void => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "on air", final: true });
+    push({ type: "kicked", reason: "link was rotated" });
+  };
+
+  it("shows nothing at all in the overlay", () => {
+    boot("?obs=1");
+    kick();
+    expect(shown("ended"), "THIS LINK HAS ENDED was composited onto the broadcast").toBe(false);
+    expect(shown("live"), "the stale captions stayed on the broadcast").toBe(false);
+    expect(shown("display")).toBe(false);
+  });
+
+  it("still tells a phone viewer what happened", () => {
+    boot();
+    kick();
+    expect(shown("ended"), "a phone viewer was left staring at a dead page").toBe(true);
+    expect(shown("live")).toBe(false);
+  });
+
+});

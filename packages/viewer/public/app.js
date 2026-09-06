@@ -180,8 +180,18 @@
   // screens + clock
   // ---------------------------------------------------------------------------
 
+  /**
+   * In OBS this page is a transparent overlay composited onto the broadcast,
+   * and the ENDED panel is a solid card with a TRY AGAIN button. Showing it
+   * there put "THIS LINK HAS ENDED" on the actual stream, where it stayed
+   * until somebody refreshed the browser source - and on the default link mode
+   * that happened on every press of START, because starting rotates the token
+   * and rotating kicks the overlay. A phone viewer needs that panel; an
+   * overlay needs to disappear.
+   */
   function showScreen(name) {
-    for (const id of ["live", "display", "ended"]) $(id).hidden = id !== name;
+    const vanish = obs && name === "ended";
+    for (const id of ["live", "display", "ended"]) $(id).hidden = vanish || id !== name;
     if (name === "display") syncDisplayUI();
   }
 

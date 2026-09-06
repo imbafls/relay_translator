@@ -285,6 +285,9 @@ body.obs .lines {
   padding: 0 max(24px, 6.25vw) max(24px, 7.4vh);
   justify-content: flex-end;
 }
+/* belt and braces for the same thing showScreen does: nothing about the
+   ENDED panel belongs on a broadcast, whatever puts it there */
+body.obs #ended { display: none !important; }
 body.obs .row { display: none; }
 body.obs .row.obs-live {
   display: grid;

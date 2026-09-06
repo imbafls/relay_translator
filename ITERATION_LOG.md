@@ -1484,3 +1484,45 @@ The mock relay had to be restarted twice during this run - a process started
 before a rebuild still had the old `clampChannels` and read three channels as
 mono, stripping every tag. Worth remembering: a stale relay looks exactly like a
 broken feature.
+
+### Turn 46 - Client UI (audit finding 10: ENDED on the broadcast)
+
+The only finding in the audit that an audience can see, and it fires on the
+default settings.
+
+`kicked` called `showScreen("ended")` with no `?obs=1` guard, and the OBS rules
+hide the HUD and the non-latest rows but nothing else - there was no
+`body.obs #ended`. So with `linkMode: "unique"` (the default), every press of
+START rotated the viewer token, the rotation kicked the overlay, and the browser
+source composited **THIS LINK HAS ENDED**, a line of explanation and a solid
+TRY AGAIN button onto the live stream. It stayed there until someone refreshed
+the source. Mid-stream, when a second device opened the link, the same panel
+appeared and its text was also factually wrong.
+
+`showScreen` now blanks everything when the overlay is the one being kicked -
+the panel, the captions, all of it - so an overlay that has lost its link
+disappears instead of announcing itself. A phone viewer still gets the panel;
+that is the whole point of it. `body.obs #ended { display: none !important }`
+backs it up in CSS.
+
+**Guards, watched fail:** the overlay showing nothing on a kick, and the phone
+still showing the panel. Reverting the guard turns the first red and leaves the
+second green, which is the pair that matters - a fix that blanked both would
+have been a different bug.
+
+A third assertion was written and then deleted rather than kept. It checked
+`checkVisibility()` on the surviving row, which in happy-dom ignores an
+ancestor's `hidden` attribute - so it was reporting on the DOM implementation,
+not on this code. The first test already covers `#live` being hidden, which is
+what actually blanks the overlay.
+
+**Verified in a browser against a real kick**, not a simulated one: an overlay
+on `/watch/<token>?obs=1` showing live captions, then
+`POST /admin/rotate-viewer-token` with the publisher's bearer token. The overlay
+went to `live`, `display` and `ended` all hidden, body text empty - a blank
+transparent page. Screenshot before and after.
+
+**Noticed while verifying, not fixed:** a phone viewer who *loads* a dead link
+gets `RECONNECTING` forever rather than the ENDED panel, because a rejected
+socket is not the same path as a `kicked` message. Different defect, adjacent to
+audit finding 9. Written down rather than folded in.
