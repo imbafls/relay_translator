@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ServerToViewer } from "@callout-relay/shared";
 import { PublisherSession } from "../src/session";
+import type { SttEvents } from "../src/deepgram";
 import type { Translator } from "../src/gemini";
 
 /**
@@ -270,5 +271,96 @@ describe("the colour a speaker's tag carries", () => {
     expect(byChannel.get(0)?.color).toBe("#e0a43a");
     expect(byChannel.get(1)?.color).toBeUndefined();
     expect(byChannel.get(1)?.speaker).toBe("CHAT");
+  });
+});
+
+describe("a speech pipeline that dies under a live session", () => {
+  /**
+   * Audit finding 11. When the STT socket closed on its own - Deepgram 1011, a
+   * quota, an idle timeout - the session logged a line, told viewers
+   * `live: false`, and called `setLive(false)`, which at the server was
+   * `() => {}`. Nothing reached the publisher app: `onSttError` was wired only
+   * to `onError`, never to `onClose`. So the desktop stayed ON AIR with the
+   * clock running, every chunk was dropped by a readyState guard, and billed
+   * seconds kept accruing for audio that never left the process.
+   *
+   * The app's own socket to the relay is untouched by any of this, which is
+   * exactly why nothing noticed.
+   */
+  function dying() {
+    const viewers: ServerToViewer[] = [];
+    const errors: string[] = [];
+    const liveCalls: boolean[] = [];
+    let closeIt: (() => void) | undefined;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        // a stand-in for the socket, not for the session: it hands the test the
+        // close callback so the death can happen the way Deepgram's does
+        makeStt: (events: SttEvents) => {
+          // a closed socket refuses the chunk, the way Deepgram's readyState
+          // guard does - a fake that kept accepting would hide the whole bug
+          let open = true;
+          closeIt = () => {
+            open = false;
+            events.onClose?.();
+          };
+          setImmediate(() => events.onOpen?.());
+          return { sendAudio: () => open, close: () => { open = false; } };
+        },
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: (live: boolean) => liveCalls.push(live),
+        onSttError: (message: string) => errors.push(message),
+        log: () => {},
+        sttStats: { seconds: 0, localSeconds: 0 },
+      },
+    );
+    return { session, viewers, errors, liveCalls, kill: () => closeIt?.() };
+  }
+
+  it("tells the publisher app, not just the log", async () => {
+    const d = dying();
+    d.session.start();
+    await tick();
+    d.kill();
+    await tick();
+    expect(d.errors.length, "the app was never told the speech pipeline died").toBeGreaterThan(0);
+    d.session.stop();
+  });
+
+  it("says it is no longer live", async () => {
+    const d = dying();
+    d.session.start();
+    await tick();
+    d.kill();
+    await tick();
+    expect(d.liveCalls).toContain(false);
+    expect(d.viewers.some((m) => m.type === "status" && m.live === false)).toBe(true);
+    d.session.stop();
+  });
+
+  it("stops billing for audio that is no longer going anywhere", async () => {
+    const d = dying();
+    const stats = { seconds: 0, localSeconds: 0 };
+    (d.session as unknown as { deps: { sttStats: typeof stats } }).deps.sttStats = stats;
+    d.session.start();
+    await tick();
+    d.session.audio(Buffer.alloc(SAMPLE_RATE * 2 * 2, 1));
+    const billedWhileAlive = stats.seconds;
+    expect(billedWhileAlive, "nothing was billed even while it worked").toBeGreaterThan(0);
+
+    d.kill();
+    await tick();
+    d.session.audio(Buffer.alloc(SAMPLE_RATE * 2 * 2, 1));
+    expect(stats.seconds, "billed seconds kept accruing after the stream was gone").toBe(billedWhileAlive);
+    d.session.stop();
   });
 });

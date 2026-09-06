@@ -16,7 +16,7 @@ import {
   UsageInfo,
 } from "@callout-relay/shared";
 import { loadState, generateToken, RelayState, saveState } from "./config";
-import { PublisherSession, SessionConfig, GeminiStats, SttStats } from "./session";
+import { PublisherSession, SessionConfig, GeminiStats, SttStats, SessionDeps } from "./session";
 import { SAMPLE_RATE } from "./deepgram";
 import { LocalSttOptions } from "./localStt";
 
@@ -84,6 +84,8 @@ export interface RelayOptions {
   mockGemini?: boolean;
   /** local (sherpa-onnx) STT: models dir + worker script. Absent = cloud only. */
   localStt?: LocalSttOptions;
+  /** stand in for the STT socket (tests, and embedders bringing their own) */
+  makeStt?: SessionDeps["makeStt"];
   log?: (level: "info" | "warn" | "error", message: string) => void;
   /** called whenever the number of attached viewers changes */
   onViewers?: (count: number) => void;
@@ -221,6 +223,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const broadcastListeners = new Set<(msg: ServerToViewer) => void>();
   /** epoch ms when the current stream went live (viewers run a session clock from it) */
   let liveSince: number | undefined;
+  /** false once the speech pipeline has gone away under a connected publisher */
+  let sttLive = true;
 
   /** track live-since and attach it to status/hello messages */
   const stamp = (msg: ServerToViewer): ServerToViewer => {
@@ -274,7 +278,19 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     }
   };
 
-  const isLive = (): boolean => publisher !== null || uplink !== null;
+  /**
+   * Whether anything is actually reaching viewers.
+   *
+   * This was pure socket presence, and `setLive` below was `() => {}`. So when
+   * the speech pipeline died under a live publisher - a Deepgram quota, an idle
+   * close - `/health` and every viewer `hello` went on saying live: true while
+   * not a single caption was being produced. A viewer joining after that saw ON
+   * AIR with a running timer, forever.
+   *
+   * An uplink carries finished subtitles and has no STT of its own, so it is
+   * live on its own terms.
+   */
+  const isLive = (): boolean => (publisher !== null && sttLive) || uplink !== null;
 
   function buildSession(ws: WebSocket, cfg: SessionConfig): void {
     // viewers are not kicked on a rebuild, so their rows survive it - the new
@@ -287,6 +303,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         /* noop */
       }
     }
+    // a rebuilt session starts from "the pipeline is up"; its own STT will say
+    // otherwise soon enough if it is not
+    sttLive = true;
     currentLanguages = { ...cfg.languages };
     currentTranslates = cfg.translationEnabled !== false;
     const session = new PublisherSession(cfg, {
@@ -295,6 +314,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       mockStt,
       mockGemini,
       localStt: opts.localStt,
+      makeStt: opts.makeStt,
       geminiStats,
       sttStats,
       toViewers,
@@ -306,7 +326,13 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         }
       },
       onSttError: (message) => sendPublisher(ws, { type: "error", message }),
-      setLive: () => {},
+      setLive: (live) => {
+        if (sttLive === live) return;
+        sttLive = live;
+        // viewers already get a status message from the session; this is what
+        // makes /health and a LATER viewer's hello agree with it
+        if (!live) liveSince = undefined;
+      },
       log,
     }, carryOver);
     session.start();

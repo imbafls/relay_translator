@@ -11,6 +11,7 @@ import {
   SAMPLE_RATE,
   createDeepgramStream,
   createMockSttStream,
+  SttEvents,
   SttStream,
 } from "./deepgram";
 import { createLocalSttStream, LocalSttOptions } from "./localStt";
@@ -67,6 +68,14 @@ export interface SessionDeps {
   mockGemini?: boolean;
   /** stand in for Gemini (tests, and any embedder that brings its own engine) */
   translator?: Translator;
+  /**
+   * Stand in for the STT socket itself. Everything the session does with the
+   * stream stays real; only the connection is supplied. This is what lets a
+   * test kill the stream the way Deepgram does - `mockStt` never closes, and
+   * without a seam the only way to reach the close path was to dial the real
+   * service from a test and hope it hung up.
+   */
+  makeStt?(events: SttEvents): SttStream;
   /** where local models live + the worker script; absent = local STT unavailable */
   localStt?: LocalSttOptions;
   /** fan-out to all viewers */
@@ -275,15 +284,22 @@ export class PublisherSession {
       },
       onClose: () => {
         if (!this.closing) {
+          // onError reached the app and onClose did not, so the failure that
+          // matters most - the socket simply going away, on a quota or an idle
+          // timeout - was the one nobody was told about. The desktop stayed ON
+          // AIR with the clock running and every chunk quietly dropped.
           this.deps.log("warn", "stt closed unexpectedly");
           this.deps.toViewers({ type: "status", live: false, message: "speech pipeline lost" });
           this.deps.setLive(false);
+          this.deps.onSttError?.("speech pipeline closed - captions have stopped");
         }
       },
     };
 
     const channels = clampChannels(this.cfg.channels);
-    if (this.deps.mockStt) {
+    if (this.deps.makeStt) {
+      this.stt = this.deps.makeStt(events);
+    } else if (this.deps.mockStt) {
       this.stt = createMockSttStream(
         events,
         channels,
@@ -293,7 +309,7 @@ export class PublisherSession {
       if (!this.deps.localStt) {
         this.deps.log("error", "local STT requested but this relay has no local model support");
         setImmediate(() => events.onClose());
-        this.stt = { sendAudio() {}, close() {} };
+        this.stt = { sendAudio: () => false, close() {} };
       } else {
         this.stt = createLocalSttStream(
           this.deps.localStt,
@@ -326,13 +342,16 @@ export class PublisherSession {
     if (this.streamWallStart === 0) this.streamWallStart = now;
     else if (now - this.lastAudioAt > GAP_MS) this.silentMs += now - this.lastAudioAt;
     this.lastAudioAt = now;
-    if (this.deps.sttStats) {
+    // bill what was actually sent. This ran before the send and ignored its
+    // result, so a stream that had closed under us kept charging for audio the
+    // readyState guard was dropping on the floor.
+    const sent = this.stt?.sendAudio(chunk) ?? false;
+    if (sent && this.deps.sttStats) {
       // bytes -> seconds of (mono-equivalent) audio; Deepgram bills every channel
       const seconds = chunk.length / (SAMPLE_RATE * 2 * Math.max(1, this.cfg.channels));
       if (this.local) this.deps.sttStats.localSeconds += seconds;
       else this.deps.sttStats.seconds += seconds * Math.max(1, this.cfg.channels);
     }
-    this.stt?.sendAudio(chunk);
   }
 
   stop(): void {

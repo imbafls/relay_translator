@@ -101,7 +101,7 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
       events.onError?.(message);
       events.onClose?.();
     });
-    return { sendAudio() {}, close() {} };
+    return { sendAudio: () => false, close() {} };
   };
   if (!info || info.provider !== "local" || !info.engine) return fail(`unknown local model "${cfg.model}"`);
   if (!localModelReady(opts.modelsDir, cfg.model)) return fail(`model "${info.label}" is not downloaded yet (02 TRANSCRIBE → DOWNLOAD)`);
@@ -215,27 +215,29 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     });
   }
 
-  function sendAudio(chunk: Buffer): void {
-    if (done) return;
+  /** whether the chunk was taken, either into the queue or to the worker */
+  function sendAudio(chunk: Buffer): boolean {
+    if (done) return false;
     if (!ready) {
       // still probing and loading the model; hold the audio rather than lose it
       if (pendingBytes + chunk.length <= maxPendingBytes) {
         pending.push(Buffer.from(chunk));
         pendingBytes += chunk.length;
-      } else {
-        droppedBytes += chunk.length;
+        return true;
       }
-      return;
+      droppedBytes += chunk.length;
+      return false;
     }
     // copy into a standalone ArrayBuffer so it can be transferred
     const ab = new ArrayBuffer(chunk.length);
     new Uint8Array(ab).set(chunk);
     send({ type: "audio", buffer: ab }, [ab]);
+    return true;
   }
 
   return {
-    sendAudio(chunk: Buffer) {
-      if (!closing) sendAudio(chunk);
+    sendAudio(chunk: Buffer): boolean {
+      return closing ? false : sendAudio(chunk);
     },
     close() {
       if (closing || done) return;

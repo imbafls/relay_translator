@@ -1526,3 +1526,65 @@ transparent page. Screenshot before and after.
 gets `RECONNECTING` forever rather than the ENDED panel, because a rejected
 socket is not the same path as a `kicked` message. Different defect, adjacent to
 audit finding 9. Written down rather than folded in.
+
+### Turn 47 - Message orchestration (audit finding 11: a dead pipeline that says it is live)
+
+The failure shape the audit calls the worst one for a live tool: the app claims
+to be working while producing nothing.
+
+When the STT socket closed on its own - a Deepgram 1011, a quota, an idle
+timeout - `onClose` logged a line, told viewers `live: false`, and called
+`setLive(false)`, which at the server was **`() => {}`**. Nothing reached the
+publisher app, because `onSttError` was wired to `onError` and never to
+`onClose`. `isLive()` was pure socket presence, so `/health` and every viewer
+`hello` went on saying live. And `audio()` billed the chunk *before* handing it
+to a stream whose `readyState` guard was dropping it, so billed seconds kept
+accruing for audio that never left the process.
+
+The app's own socket to the relay is untouched by any of this. That is why
+nothing noticed: the desktop stayed ON AIR with the clock running.
+
+**Three changes, one story - the pipeline is gone, so stop pretending:**
+
+1. `onClose` now calls `onSttError` as well, so the failure reaches the app's
+   log instead of the Electron main-process console, which is invisible in a
+   packaged build.
+2. `setLive` at the server is real, and `isLive()` is
+   `(publisher !== null && sttLive) || uplink !== null`. An uplink carries
+   finished subtitles and has no STT of its own, so it stays live on its own
+   terms. A rebuilt session resets the flag.
+3. `SttStream.sendAudio` returns whether the chunk actually went to the engine,
+   and `audio()` bills only what was sent. Deepgram, the mock, the local worker
+   and the two failure stubs all answer it honestly.
+
+**A seam, added deliberately.** There was no way to reach the close path from a
+test: `mockStt` never closes, so the only route was to dial the real Deepgram
+from a test and hope it hung up. `SessionDeps.makeStt` supplies the socket and
+nothing else - every decision the session makes about a dead stream stays real.
+It is the same shape as the existing `translator` and `localStt` deps, and
+`startRelay` takes it too, which is what makes the end-to-end test possible.
+
+**Guards - seven, each watched fail against its own revert.** Three at the
+session (the app is told, viewers are told, billing stops) and four at the
+server, from the outside: `/health` live while up, not live once the pipeline
+dies, a viewer joining afterwards told `live: false` rather than shown ON AIR
+forever, and live again on a fresh session.
+
+One of those nearly proved nothing. The first version of the billing test used a
+fake whose `sendAudio` always returned true, including after its own close - so
+it would have passed against the unfixed code. A fake that keeps accepting
+audio after the socket is gone is not a fake of a socket.
+
+The viewer test also had to attach its listener before the socket opened: the
+connect `hello` is sent the instant the socket is accepted, and the file's own
+`waitFor()` helper attaches after `open` resolves, so it missed it every time.
+That looked exactly like "no hello is sent".
+
+**Still open from finding 11**, deliberately not folded in: no reconnect ladder
+for the Deepgram socket, and the heartbeat still pings without tracking pongs or
+calling `terminate()`, so a half-open publisher holds a session for minutes.
+Both are their own turn.
+
+**Not verified in a browser.** Nothing here changes a pixel - it changes what
+`/health` and a viewer `hello` say, which the tests read directly off a real
+relay over real sockets.

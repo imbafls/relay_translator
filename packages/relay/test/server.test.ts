@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -186,5 +186,121 @@ describe("the speaker colours a publisher announces", () => {
     expect(msg?.speaker).toBe("YOU");
     expect(msg?.color).toBeUndefined();
     expect(await stillUp()).toBe(true);
+  });
+});
+
+describe("what the relay says once the speech pipeline has died", () => {
+  /**
+   * Audit finding 11, from the outside. `isLive()` was pure socket presence and
+   * `setLive` at the server was `() => {}`, so a publisher whose STT had gone
+   * away still made `/health` and every viewer `hello` report live: true. A
+   * viewer joining after that showed ON AIR with a running timer while not one
+   * caption was being produced.
+   *
+   * This stands up its own relay so the STT socket can be killed the way
+   * Deepgram kills it - the shared one in this file is on the canned mock,
+   * which never closes.
+   */
+  let own: Awaited<ReturnType<typeof startRelay>>;
+  let ownDir: string;
+  let killStt: (() => void) | undefined;
+
+  beforeEach(async () => {
+    ownDir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-stt-death-"));
+    killStt = undefined;
+    own = await startRelay({
+      port: 0,
+      dataDir: ownDir,
+      mockGemini: true,
+      makeStt: (events) => {
+        let open = true;
+        killStt = () => {
+          open = false;
+          events.onClose?.();
+        };
+        setImmediate(() => events.onOpen?.());
+        return { sendAudio: () => open, close: () => { open = false; } };
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await own.close();
+    try {
+      fs.rmSync(ownDir, { recursive: true, force: true });
+    } catch {
+      /* disposable */
+    }
+  });
+
+  const health = async (): Promise<{ live?: boolean }> =>
+    (await (await fetch(`http://127.0.0.1:${own.port}/health`)).json()) as { live?: boolean };
+
+  async function publish(): Promise<WebSocket> {
+    const ws = await open(`ws://127.0.0.1:${own.port}/ws/publisher?token=${own.state.publisherToken}`);
+    ws.send(
+      JSON.stringify({
+        type: "hello",
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        channels: 1,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    return ws;
+  }
+
+  it("reports live while the pipeline is up", async () => {
+    const ws = await publish();
+    expect((await health()).live).toBe(true);
+    ws.close();
+  });
+
+  it("stops reporting live once the pipeline is gone", async () => {
+    const ws = await publish();
+    expect(killStt, "the stand-in stream was never built").toBeTypeOf("function");
+    killStt!();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect((await health()).live, "/health still claimed live with no speech pipeline").toBe(false);
+    ws.close();
+  });
+
+  it("tells a viewer that joins afterwards, rather than showing it ON AIR forever", async () => {
+    const ws = await publish();
+    killStt!();
+    await new Promise((r) => setTimeout(r, 80));
+
+    // the connect hello is sent the instant the socket is accepted, so the
+    // listener has to be attached before "open" - waitFor() would miss it
+    const viewer = new WebSocket(`ws://127.0.0.1:${own.port}/ws/viewer?token=${own.state.viewerToken}`);
+    const hello = await new Promise<Record<string, unknown> | null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), 4000);
+      viewer.on("message", (data: Buffer) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === "hello") {
+          clearTimeout(timer);
+          resolve(msg);
+        }
+      });
+    });
+    expect(hello, "no hello reached the viewer").not.toBeNull();
+    expect(hello?.live, "a viewer joining a dead session was told it was on air").toBe(false);
+    viewer.close();
+    ws.close();
+  });
+
+  it("is live again when the publisher opens a new session", async () => {
+    const ws = await publish();
+    killStt!();
+    await new Promise((r) => setTimeout(r, 80));
+    expect((await health()).live).toBe(false);
+
+    const ws2 = await publish();
+    expect((await health()).live, "a fresh session stayed marked dead").toBe(true);
+    ws.close();
+    ws2.close();
   });
 });

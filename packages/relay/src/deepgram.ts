@@ -12,8 +12,13 @@ export interface SttEvents {
 }
 
 export interface SttStream {
-  /** s16le 16 kHz, mono or interleaved stereo (see SttConfig.channels) */
-  sendAudio(chunk: Buffer): void;
+  /**
+   * s16le 16 kHz, mono or interleaved by channel count (see SttConfig.channels).
+   * Returns whether the chunk actually went to the engine: a stream that has
+   * closed under us drops it, and the caller must not bill for audio nobody
+   * transcribed.
+   */
+  sendAudio(chunk: Buffer): boolean;
   close(): void;
 }
 
@@ -119,8 +124,10 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
   });
 
   return {
-    sendAudio(chunk: Buffer) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(chunk, { binary: true });
+    sendAudio(chunk: Buffer): boolean {
+      if (ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(chunk, { binary: true });
+      return true;
     },
     close() {
       closedByUs = true;
@@ -169,8 +176,8 @@ export function createMockSttStream(
   });
 
   return {
-    sendAudio(chunk: Buffer) {
-      if (!opened) return;
+    sendAudio(chunk: Buffer): boolean {
+      if (!opened) return false;
       bytesSeen += chunk.length;
       if (bytesSeen >= nextAt) {
         const text = lines[line % lines.length];
@@ -182,6 +189,7 @@ export function createMockSttStream(
         events.onFinal?.(text, { audioEndSec: bytesSeen / (SAMPLE_RATE * 2 * channels), channel });
         nextAt = bytesSeen + bytesPerLine;
       }
+      return true;
     },
     close() {
       opened = false;
