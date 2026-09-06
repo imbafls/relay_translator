@@ -16,3 +16,17 @@ default certificate and a 404, so no service was ever routed there.
 
 The apex is **not** on the VPS — `2.57.91.91` is elsewhere — so removing `status`
 does not touch the live site.
+
+## Done
+
+`status` deleted 2026-09-06 through the Hostinger panel, not the API: the delete
+endpoint exposed here takes no record filter, and the only zone snapshot is from
+March, which would not have restored today's state. A precise click was safer
+than a call that might have taken the whole zone.
+
+Zone now reads back as two records, as intended:
+
+| Type | Name | Content | TTL |
+| --- | --- | --- | --- |
+| CNAME | `www` | `supr.wtf.` | 300 |
+| A | `@` | `2.57.91.91` | 50 |
