@@ -2120,3 +2120,53 @@ fix, the same run ended with a phantom `capture started` after it.
 verified on this machine. Both archive models in the models directory are
 `.part` files - which is B6's symptom - so the local engine has never run here,
 and a fix to its pacing would be unverifiable beyond unit tests.
+
+### Turn 60 - Resilience & state (audit finding 26, and a guard that guarded nothing)
+
+Started as a sweep: the backlog was written at v0.5.3, v0.5.4 shipped after it,
+and nobody had checked which findings were already fixed. Three were —
+**19** (`cad0d83`), **29** (`71ffe88`) and **31** (`680d528`), all in the v0.5.4
+batch, all with guard tests, all still listed as open. A backlog that sends the
+next session to redo finished work is its own defect.
+
+Four agents then read the current code for the twelve remaining findings. Every
+one is genuinely still open (24 partly), which is the useful half of that
+answer: it stopped me marking things done on a hunch.
+
+**One of them found something better than a status.** `models.test.ts`'s
+"blames the archive only when every announced byte did arrive" **cannot fail.**
+`serve()` enqueued the whole body in a single chunk, so every byte reached the
+counter before the decoder could object and `received === declared` always. It
+passes against the broken code and would keep passing after any fix.
+
+**Reproducing finding 26 for real** needed a body big enough to backpressure.
+512 KB of `0x41` in 4 KB chunks:
+
+```
+the download stopped early: 28672 of 524288 bytes (5%) - No magic number found
+```
+
+An archive that arrived **perfectly** and simply was not bz2, reported as a
+download that died at 5%. That is the message that has been sending people
+chasing B6 down the network half for weeks.
+
+**The first fix was wrong, and the test caught it.** I tagged errors raised by
+the body, planning to attribute the failure by origin. But when the decoder
+throws, `pipeline` destroys the source **with that same error**, so the body
+re-emits the decoder's error and the tag marks it as transport. It reported the
+corrupt archive as a broken download all over again. The comment in the code now
+says so, because it is a natural thing to try.
+
+What actually discriminates: the error's `code` being a stream/socket failure,
+or the source having **ended** while short - a server that closed early and
+cleanly raises nothing, so the byte count still earns a place, as the second
+question rather than the first. A decoder error on a body that never ended is
+the archive, whatever the count says.
+
+**Proved twice over.** Reverting to the byte-count rule turns the new test red.
+And reverting the *harness* to a single chunk - with the fix still reverted -
+turns it green again, which is the demonstration that the harness was what made
+the old guard vacuous.
+
+This unblocks B6: the next real model-download failure will name which half
+broke.

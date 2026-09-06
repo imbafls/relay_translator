@@ -66,14 +66,26 @@ afterEach(() => {
   }
 });
 
-/** answer the archive URL with `body`, announcing `declared` bytes */
-function serve(body: Buffer, opts: { status?: number; declared?: number } = {}): void {
+/**
+ * Answer the archive URL with `body`, announcing `declared` bytes.
+ *
+ * Chunked, because a real HTTP body is. Serving the whole thing in one
+ * `enqueue` meant every byte reached the counter before the decoder could
+ * fail, so `received === declared` always - which made the test below
+ * ("blames the archive only when every announced byte did arrive") pass
+ * whatever the code did. `chunk` is what lets a decode failure happen with
+ * bytes still unread, which is the entire case finding 26 is about.
+ */
+function serve(body: Buffer, opts: { status?: number; declared?: number; chunk?: number } = {}): void {
   globalThis.fetch = (async () => {
     const status = opts.status ?? 200;
     if (status !== 200) return new Response("nope", { status });
+    const size = opts.chunk ?? 16;
     const stream = new ReadableStream({
       start(c) {
-        c.enqueue(new Uint8Array(body));
+        for (let at = 0; at < body.length; at += size) {
+          c.enqueue(new Uint8Array(body.subarray(at, Math.min(at + size, body.length))));
+        }
         c.close();
       },
     });
@@ -177,13 +189,44 @@ describe("a download that stops early", () => {
     expect(fs.existsSync(`${modelDir()}.part`)).toBe(false);
   });
 
+  it("blames the archive when the bytes were fine and the archive was not", async () => {
+    /**
+     * Audit finding 26, and the case the previous version of this test could
+     * not reach. `received` counts bytes pulled from a DEMAND-DRIVEN body: when
+     * the decoder throws part-way, the pipeline destroys the source with most
+     * of it still unread, so `received < declared` and the message blames the
+     * transport - "the download stopped early: 48 of 190 bytes (25%)" - for an
+     * archive that arrived perfectly and simply was not a bz2 stream.
+     *
+     * That is the message that has been sent people chasing B6.
+     */
+    // big enough that the pipeline backpressures: with a 190-byte body every
+    // byte reaches the counter before the decoder can object, which is exactly
+    // why the old single-chunk test could not fail
+    const garbage = Buffer.alloc(512 * 1024, 0x41);
+    serve(garbage, { chunk: 4096 });
+    await store().download("test-archive-model");
+
+    expect(failure(), "a corrupt archive was reported as a broken download").not.toMatch(/stopped early/);
+    expect(failure()).toMatch(/would not unpack/);
+  });
+
+  it("blames the transport when the body really did stop short", async () => {
+    // 120 of an announced 190, ended cleanly - the server actually did stop
+    serve(FIXTURE.subarray(0, 120), { declared: FIXTURE.length, chunk: 16 });
+    await store().download("test-archive-model");
+
+    expect(failure()).toMatch(/stopped early/);
+    expect(failure()).toMatch(/120 of 190/);
+  });
+
   it("blames the archive only when every announced byte did arrive", async () => {
     // all 190 bytes, but they are not a valid bz2 stream
     const garbage = Buffer.alloc(FIXTURE.length, 0x41);
     serve(garbage);
     await store().download("test-archive-model");
 
-    expect(failure()).toMatch(/would not unpack after all 190 bytes/);
+    expect(failure()).toMatch(/would not unpack \(190 bytes read\)/);
     expect(failure()).not.toMatch(/stopped early/);
   });
 });

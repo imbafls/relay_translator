@@ -81,10 +81,12 @@ Downloading `local-whisper-tiny-en` in the app fails with
 Node, and per-file Hugging Face downloads work in the app, so it is not simply
 "big downloads fail" — something in Electron's network stack is suspected.
 
-**Audit finding 26 says the instrumentation is unsound** — it compares bytes
-pulled from a demand-driven body, so a decode failure always reads as a
-truncated download. Fix 26 first, or the next real failure message will point at
-the wrong half.
+**Finding 26 is fixed, so this is now diagnosable.** The instrumentation used
+to compare bytes pulled from a demand-driven body, so every decode failure read
+as a truncated download — a 512 KB archive that arrived perfectly and simply was
+not bz2 reported *"the download stopped early: 28672 of 524288 bytes (5%)"*.
+That is the message that has been pointing at the wrong half. The next real
+failure will name which half it was.
 
 Until this is resolved no new archive model can be installed through the UI, so
 **the seven archive models have never been run end-to-end in-app**.
@@ -109,7 +111,11 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 22 | Translation failures are logged once and never reach the user | `58d80dd` |
 | 23 | The 48 kHz → 16 kHz downsample has no anti-alias filter | `3fe8db5` |
 | 11b | No reconnect for a dropped speech socket | `4fbaec5` |
-| 15 | A STOP during `start()` is silently undone; devices stay captured | *(this commit)* |
+| 15 | A STOP during `start()` is silently undone; devices stay captured | `44de691` |
+| 19 | Re-entered setup rejects a working key and locks step 1 | `cad0d83` (v0.5.4) |
+| 26 | An archive failure always blames the transport | *(this commit)* |
+| 29 | `audioEndSec` double-counts `msg.start`, pinning latency at 0 | `71ffe88` (v0.5.4) |
+| 31 | Any save re-syncs LINK MODE and discards the unsaved pick | `680d528` (v0.5.4) |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -121,15 +127,11 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | 8 | high | Offline local STT has no backpressure and can never catch up: partials are gated on buffered samples rather than wall clock, and the worker queue is unbounded. **Cannot be verified on this machine** - both archive models in the models dir are `.part` files, which is B6's symptom, so the local engine has never run here. | `packages/relay/src/localSttWorker.ts` |
 | 11c | medium | **The last of finding 11.** The heartbeat pings without tracking pongs or calling `terminate()`, so a half-open publisher holds a session for minutes. The reconnect half is done. | `packages/relay/src/server.ts` |
 | 17 | medium | The flat 4 s kill timer discards the local STT worker's flush finals, so the last utterance before STOP never reaches viewers. | `packages/relay/src/localStt.ts` |
-| 19 | medium | Re-entered setup rejects a working key and locks step 1 — the verdict cache is keyed by provider, not by the value validated. | `apps/standalone/renderer/app.ts` |
 | 24 | medium | The uplink fights a 4409 kick forever at ~1 s intervals, and its 4401 branch is unreachable dead code. | `packages/companion/src/uplinkClient.ts` |
 | 25 | medium | Two concurrent model downloads collide on the shared VAD `.part` file. | `apps/standalone/src/models.ts` |
-| 26 | medium | An archive failure always blames the transport, never the archive. **Blocks diagnosing B6.** | `apps/standalone/src/models.ts` |
 | 27 | low | Changing `updateFeedUrl` has no effect until restart. | `apps/standalone/src/updater.ts` |
 | 28 | low | An unguarded `await startControl()` aborts startup before the tray and window exist. | `apps/standalone/src/main.ts` |
-| 29 | low | `audioEndSec` double-counts `msg.start`, pinning reported STT latency at 0. | `packages/relay/src/deepgram.ts` |
 | 30 | low | The Deepgram key validator repaints the live console as a setup placeholder. | `apps/standalone/renderer/app.ts` |
-| 31 | low | Any save re-syncs LINK MODE and discards the unsaved pick. | `apps/standalone/renderer/app.ts` |
 | 32 | low | The error overlay paints on top of the previous transcript. | `apps/standalone/renderer/app.ts` |
 | 33 | low | `runtime:prepare` rotates the viewer link **before** checking the relay. | `apps/standalone/src/main.ts` |
 | 34 | low | A successful local-STT probe is discarded when the session already stopped. | `packages/relay/src/localStt.ts` |

@@ -172,15 +172,37 @@ export class ModelStore {
     for (const [local, entry] of Object.entries(archive.pick)) wanted.set(entry, local);
 
     // A stream that stops early and one that arrives corrupted both surface as
-    // the same decoder error ("crc32 do not match"), which sends you looking at
-    // the archive when the transport is what broke. Count what actually arrives
-    // so the message can tell the two apart.
+    // the same decoder error, which sends you looking at the wrong half. Two
+    // things tell them apart, and the byte count is NOT one of them:
+    //
+    // `received` counts bytes pulled from a demand-driven body, so when the
+    // decoder throws part-way the pipeline destroys the source with most of it
+    // unread. A 512 KB archive that arrived perfectly and simply was not bz2
+    // reported "the download stopped early: 28672 of 524288 bytes (5%) - No
+    // magic number found". That message is what has been sending people
+    // chasing a network problem that was never there.
+    //
+    // What does tell them apart is WHERE the error came from. Every error the
+    // body raises is tagged, so whichever one `pipeline` surfaces first can be
+    // attributed. A server that ends cleanly but short raises nothing, so the
+    // byte count still earns its place - as the second question, not the first.
     const declared = Number(res.headers.get("content-length")) || archive.size || 0;
     let received = 0;
+    let sourceEnded = false;
     const body = Readable.fromWeb(res.body as never);
     body.on("data", (chunk: Buffer) => {
       received += chunk.length;
       tick(chunk);
+    });
+    body.on("end", () => {
+      sourceEnded = true;
+    });
+    // deliberately no "which stream errored" flag: when the decoder throws,
+    // pipeline destroys the source WITH THAT ERROR, so the body re-emits the
+    // decoder's own error and tagging it proves nothing. Tried, and it happily
+    // reported a corrupt archive as a broken download all over again.
+    body.on("error", () => {
+      /* handled by the pipeline; this only stops an unhandled 'error' */
     });
     try {
       await pipeline(
@@ -198,13 +220,26 @@ export class ModelStore {
       );
     } catch (err) {
       const detail = String((err as Error).message || err);
-      if (declared > 0 && received < declared) {
-        const pct = Math.floor((received / declared) * 100);
+      // Two signals, neither of which is "how many bytes did we pull":
+      //  - the error is a stream/socket failure, i.e. the transport broke;
+      //  - or the source ENDED and still delivered less than it announced,
+      //    which is a server that closed short cleanly and raises nothing.
+      // A decoder error on a body that never ended is the archive, whatever
+      // the byte count says - and that is the case this was getting wrong.
+      const code = (err as NodeJS.ErrnoException).code;
+      const transportish =
+        code === "ERR_STREAM_PREMATURE_CLOSE" ||
+        code === "ECONNRESET" ||
+        code === "ETIMEDOUT" ||
+        code === "UND_ERR_SOCKET";
+      const endedShort = sourceEnded && declared > 0 && received < declared;
+      if (transportish || endedShort) {
+        const pct = declared > 0 ? Math.floor((received / declared) * 100) : 100;
         throw new Error(
           `the download stopped early: ${received} of ${declared} bytes (${pct}%) - ${detail}`,
         );
       }
-      throw new Error(`the archive would not unpack after all ${received} bytes arrived - ${detail}`);
+      throw new Error(`the archive would not unpack (${received} bytes read) - ${detail}`);
     }
 
     // the catalog carries the exact unpacked size of every entry. A short file
