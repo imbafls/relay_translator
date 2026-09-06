@@ -31,7 +31,18 @@ interface FakeSocket {
 
 let socket: FakeSocket;
 /** every socket a test opened, so their handlers can be detached at the end */
-let opened: FakeSocket[] = [];
+/** every socket every boot in this test opened; never reassigned, so a
+ *  re-boot cannot orphan the previous page's pending onopen */
+const opened: FakeSocket[] = [];
+
+function detachAll(): void {
+  for (const ws of opened.splice(0)) {
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+  }
+}
 
 /** deliver a message the way the relay would */
 function push(msg: Record<string, unknown>): void {
@@ -61,8 +72,13 @@ function boot(search = ""): void {
   // the shipped markup, minus its own script tags: app.js is evaluated below
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
 
+  // Detach anything an EARLIER boot in this same test left behind. Each socket
+  // announces itself on a timer, so a re-boot leaves the first page's onopen
+  // queued; it then fires into the markup this boot just replaced and reports a
+  // null element from inside teardown. It survived locally on timing alone and
+  // failed on CI.
+  detachAll();
   const created: FakeSocket[] = [];
-  opened = created;
   class FakeWebSocket {
     static readonly CONNECTING = 0;
     static readonly OPEN = 1;
@@ -76,6 +92,7 @@ function boot(search = ""): void {
     sent: string[] = [];
     constructor(readonly url: string) {
       created.push(this as unknown as FakeSocket);
+      opened.push(this as unknown as FakeSocket);
       // let the page finish wiring its handlers before it is told we are open
       setTimeout(() => this.onopen?.(), 0);
     }
@@ -97,13 +114,7 @@ beforeEach(() => boot());
 afterEach(() => {
   // onopen is scheduled, so without this it fires into a cleared page and
   // reports an error that belongs to the teardown rather than the test
-  for (const ws of opened) {
-    ws.onopen = null;
-    ws.onmessage = null;
-    ws.onclose = null;
-    ws.onerror = null;
-  }
-  opened = [];
+  detachAll();
   document.body.innerHTML = "";
 });
 
@@ -230,5 +241,27 @@ describe("the OBS overlay shows the line being spoken", () => {
     const latest = document.querySelector("#lines .row.latest");
     expect(latest?.classList.contains("interim"), "the hero row became an interim").toBe(false);
     expect(latest?.querySelector(".src")?.textContent).toContain("settled line");
+  });
+});
+
+describe("the harness itself", () => {
+  /**
+   * A test that re-boots the page (the overlay cases do) used to orphan the
+   * first page's socket: each one announces itself on a timer, so the queued
+   * onopen fired into markup that had already been replaced and threw a null
+   * element from inside teardown. It passed locally on timing and failed on CI
+   * four times in one run - once per re-booting test.
+   */
+  it("leaves no live handler from a page it replaced", async () => {
+    const first = socket;
+    boot("?obs=1");
+    expect(socket, "the re-boot did not open its own socket").not.toBe(first);
+
+    expect(first.onopen, "the replaced page can still be called back").toBeNull();
+    expect(first.onmessage).toBeNull();
+
+    // and letting every queued timer run must not throw into the new page
+    await new Promise((r) => setTimeout(r, 5));
+    expect(document.getElementById("lines")).not.toBeNull();
   });
 });
