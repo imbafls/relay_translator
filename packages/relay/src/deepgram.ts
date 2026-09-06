@@ -108,6 +108,10 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
     }
   });
   ws.on("error", (err: Error) => {
+    // symmetric with the close guard below: a socket we closed on purpose
+    // aborts its own handshake, and ws reports that abort as an error. That is
+    // our teardown, not Deepgram failing, and it must not reach the app.
+    if (closedByUs) return;
     events.onError?.(err.message);
   });
   ws.on("close", () => {

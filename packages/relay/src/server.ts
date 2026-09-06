@@ -16,6 +16,7 @@ import {
 } from "@callout-relay/shared";
 import { loadState, generateToken, RelayState, saveState } from "./config";
 import { PublisherSession, SessionConfig, GeminiStats, SttStats } from "./session";
+import { SAMPLE_RATE } from "./deepgram";
 import { LocalSttOptions } from "./localStt";
 
 const MIME: Record<string, string> = {
@@ -203,7 +204,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const geminiStats: GeminiStats = { count: 0, cacheHits: 0, tokensIn: 0, tokensOut: 0 };
   const sttStats: SttStats = { seconds: 0, localSeconds: 0 };
 
-  let publisher: { ws: WebSocket; session: PublisherSession } | null = null;
+  let publisher: { ws: WebSocket; session: PublisherSession | null } | null = null;
   /** remote app mirroring finished subtitles via /ws/uplink */
   let uplink: WebSocket | null = null;
   /** single-connection-per-token: new viewer with the same token kicks the old */
@@ -274,7 +275,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     const carryOver = publisher?.session?.lastSegId ?? 0;
     if (publisher) {
       try {
-        publisher.session.stop();
+        publisher.session?.stop();
       } catch {
         /* noop */
       }
@@ -307,7 +308,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
 
   function dropPublisher(reason: string): void {
     if (!publisher) return;
-    publisher.session.stop();
+    publisher.session?.stop();
     try {
       publisher.ws.close(4409, reason);
     } catch {
@@ -556,27 +557,24 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       dropPublisher("replaced by new publisher");
     }
 
-    publisher = { ws, session: null as unknown as PublisherSession };
-    buildSession(ws, {
-      stt: DEFAULT_CONFIG.stt,
-      translation: DEFAULT_CONFIG.translation,
-      languages: { ...currentLanguages },
-      translationEnabled: DEFAULT_CONFIG.translationEnabled !== false,
-      latencyVisible: DEFAULT_CONFIG.showLatency !== false,
-      profanityFilter: DEFAULT_CONFIG.profanityFilter !== false,
-      channels: 1,
-    });
+    // No session until the hello lands. Building one here on DEFAULT_CONFIG
+    // opened a REAL Deepgram socket purely to read a constant, and the hello
+    // arriving ~1 ms later tore it down mid-handshake - which ws reports as
+    // "WebSocket was closed before the connection was established", forwarded
+    // to the app on every single session start. The sample rate is a module
+    // constant, not session state.
+    publisher = { ws, session: null };
 
     sendPublisher(ws, {
       type: "ready",
-      sampleRate: publisher.session.sampleRate,
+      sampleRate: SAMPLE_RATE,
     });
 
     ws.on("message", (data: RawData, isBinary: boolean) => {
       if (!publisher || publisher.ws !== ws) return;
 
       if (isBinary) {
-        publisher.session.audio(Buffer.from(data as Buffer));
+        publisher.session?.audio(Buffer.from(data as Buffer));
         return;
       }
 
