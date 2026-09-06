@@ -51,6 +51,7 @@ function bridge(config: AppConfig) {
   return {
     getConfig: async () => current,
     setConfig: async (patch: Partial<AppConfig>) => {
+      if (setConfigFails) throw new Error("EADDRINUSE: port 3000 is already in use");
       calls.setConfig.push(patch);
       current = { ...current, ...patch };
       return current;
@@ -103,6 +104,8 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 
 /** what enumerateDevices() answers; the built-in two are added by the app */
 let fakeDevices: { kind: string; deviceId: string; label: string; groupId: string }[] = [];
+/** make the main process refuse the save, the way a relay that cannot bind does */
+let setConfigFails = false;
 
 async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
   calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [] };
@@ -150,6 +153,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fakeDevices = [];
+  setConfigFails = false;
   for (const t of timers) clearInterval(t);
   timers = [];
   vi.restoreAllMocks();
@@ -692,5 +696,74 @@ describe("a source whose device is no longer plugged in", () => {
     await settle(60);
     const written = calls.setConfig.filter((p) => p.sources).pop();
     expect(written, "the built-in loopback source was treated as a dead device").toBeUndefined();
+  });
+});
+
+describe("a save that did not work", () => {
+  /**
+   * Audit finding 6, from the user's side. `applyConfig` persists the patch
+   * with a synchronous write BEFORE attempting the relay restart, and the
+   * restart tears the working relay down before it knows the replacement can
+   * bind. When it throws, the renderer swallowed it into one log line and then
+   * unconditionally ran `log("keys & relay saved", "ok")` and went back to the
+   * stage - so the app reported success, closed the panel, and from then on
+   * every START failed with "local relay not ready".
+   *
+   * The port that gets you there is not exotic: 3000, which another dev server
+   * on the same machine already owns.
+   */
+  const openSettings = async (): Promise<void> => {
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+  };
+  const logText = (): string => document.getElementById("log")?.textContent || "";
+
+  it("does not claim the settings were saved when they were not", async () => {
+    await bootWith({ setupDone: true });
+    await openSettings();
+    setConfigFails = true;
+
+    (document.getElementById("settingsSave") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(logText()).not.toContain("settings saved");
+    expect(logText().toLowerCase()).toContain("failed");
+  });
+
+  it("keeps the panel open, so the user can see and fix what failed", async () => {
+    await bootWith({ setupDone: true });
+    await openSettings();
+    setConfigFails = true;
+
+    (document.getElementById("settingsSave") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect((document.getElementById("app") as HTMLElement).dataset.view, "the panel closed over a failed save").toBe(
+      "settings",
+    );
+  });
+
+  it("still says saved, and closes, when the save worked", async () => {
+    await bootWith({ setupDone: true });
+    await openSettings();
+
+    (document.getElementById("settingsSave") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(logText()).toContain("settings saved");
+    expect((document.getElementById("app") as HTMLElement).dataset.view).toBe("stage");
+  });
+
+  it("refuses a port the relay could never bind, before anything is written", async () => {
+    await bootWith({ setupDone: true });
+    await openSettings();
+    const port = document.getElementById("relayPort") as HTMLInputElement;
+    port.value = "70000";
+
+    (document.getElementById("settingsSave") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(calls.setConfig.some((p) => "relayPort" in p), "an unbindable port was persisted").toBe(false);
+    expect(logText().toLowerCase()).toContain("port");
   });
 });

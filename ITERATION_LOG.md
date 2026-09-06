@@ -1885,3 +1885,53 @@ read-only query.
 a number written down. What would rot is the number, and the way to keep it
 honest is to re-run the two scripts, which is why they are committed rather than
 thrown away.
+
+### Turn 54 - Resilience & state (audit finding 6: a save that bricks the app and says it worked)
+
+The audit calls this "six defects, one incident", and the entry point is typing
+`3000` into LOCAL PORT - a port another dev server on the same machine already
+owns.
+
+`applyConfig` calls `configStore.update(patch)` - a synchronous `writeFileSync`
+- **before** `await restartEmbeddedRelay()`. The restart closes the working
+relay and sets it to `null` before it knows the replacement can bind, with no
+rollback. `server.listen` rejects with EADDRINUSE, `applyConfig` throws, and the
+renderer swallows it into one log line and then unconditionally runs
+`log("keys & relay saved", "ok")` and `setView("stage")`.
+
+From then on `publisherWsUrl()` is `undefined` and every START fails with "local
+relay not ready". A relaunch re-reads the persisted `3000` and fails identically.
+One typo, permanently dead app, reported as success.
+
+**Three changes, three different reasons:**
+
+- **`validRelayPort()`** - the input's `min`/`max` are inert (no `<form>`,
+  nothing calls `checkValidity()`), so the port was `Number(value) || 8787` and
+  `0`, `-1` and `70000` all sailed through. It is checked now *before the patch
+  is built*, because the write happens before the restart is attempted.
+- **`relayRollbackPatch()`** - puts the relay fields back when a restart fails,
+  and only the relay fields. The same save can carry a language change and a
+  port change; reverting the language because the port failed would be its own
+  bug. A field that was *cleared* comes back as `""`, not `undefined`, because
+  `ConfigStore.merge` skips `undefined` and the bad value would simply stay.
+- **`saveAndApply` returns whether it worked**, and `saveSettings` only reports
+  success and closes the panel when it did.
+
+`main.ts` now catches the failed restart, rolls back, restarts on the old
+settings, tells the renderer, and rethrows.
+
+**Guards - five, each watched fail against its own revert.** Two in the renderer
+(saying saved anyway, closing the panel anyway), one on the port check, and two
+on the pure helpers.
+
+**What is and is not covered.** `main.ts` imports Electron and is not reachable
+from the suite, so the rollback *glue* has no test - what is tested is the two
+pure functions it is built from and the renderer behaviour on the other side of
+the IPC. Said plainly rather than implied: the try/catch itself was read, not
+executed.
+
+**Verified in a browser.** `70000` into LOCAL PORT and SAVE: `local port must be
+a number between 1024 and 65535 - "70000" is not`, the panel stays open, and
+focus lands on the offending field. `8787` and SAVE: `settings saved`, panel
+closes. Before this, the first of those wrote the bad port and closed the panel
+saying it had worked.

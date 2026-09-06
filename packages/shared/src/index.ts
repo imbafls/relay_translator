@@ -197,6 +197,57 @@ export function isLocalStt(id: string): boolean {
  */
 export const MAX_CAPTURE_CHANNELS = 3;
 
+/**
+ * The config fields that decide what the embedded relay and the uplink are.
+ * Changing any of them means the relay has to be rebuilt.
+ */
+export const RELAY_CONFIG_KEYS = [
+  "deepgramApiKey",
+  "geminiApiKey",
+  "relayPort",
+  "relayUrl",
+  "publisherToken",
+  "viewerToken",
+] as const;
+
+/**
+ * A port the embedded relay can actually bind, or undefined.
+ *
+ * The app read this as `Number(input.value) || 8787`, and the input's min/max
+ * are inert - there is no <form> and nothing calls checkValidity(). So 0,
+ * 70000 and -1 were all accepted, persisted with a synchronous write, and only
+ * then handed to server.listen, which is far too late: by then the working
+ * relay had already been torn down.
+ */
+export function validRelayPort(value: unknown): number | undefined {
+  const n = typeof value === "string" ? Number(value.trim()) : typeof value === "number" ? value : NaN;
+  if (!Number.isInteger(n)) return undefined;
+  // below 1024 needs privileges the app does not have and should not ask for
+  return n >= 1024 && n <= 65535 ? n : undefined;
+}
+
+/**
+ * The patch that puts the relay-shaped settings back the way they were.
+ *
+ * Used when a restart fails: the new config has already been written (the
+ * write happens before the restart is attempted), so without this a port that
+ * cannot be bound becomes the saved port, every START fails with "local relay
+ * not ready", and a relaunch re-reads it and fails identically.
+ *
+ * Only the relay fields. The same save can carry a language change and a port
+ * change; reverting the language because the port failed would be its own bug.
+ * A field that was CLEARED comes back as "" rather than undefined, because
+ * ConfigStore.merge skips undefined and the bad value would simply stay.
+ */
+export function relayRollbackPatch(before: AppConfig, after: AppConfig): Partial<AppConfig> {
+  const patch: Record<string, unknown> = {};
+  for (const key of RELAY_CONFIG_KEYS) {
+    if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
+    patch[key] = before[key] === undefined ? "" : before[key];
+  }
+  return patch as Partial<AppConfig>;
+}
+
 /** the source every install starts on, and the fallback when nothing is named */
 export const DEFAULT_SOURCE = "default-mic";
 

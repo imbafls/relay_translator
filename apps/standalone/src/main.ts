@@ -28,6 +28,8 @@ import {
   UpdateStatus,
   UsageInfo,
   controlConfigPatch,
+  RELAY_CONFIG_KEYS,
+  relayRollbackPatch,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
 import { ModelStore } from "./models";
@@ -393,14 +395,7 @@ function broadcastStatus(): void {
  * Config side effects: relay restart when secrets/topology change,
  * renderer notification, control broadcast.
  */
-const RELAY_KEYS: (keyof AppConfig)[] = [
-  "deepgramApiKey",
-  "geminiApiKey",
-  "relayPort",
-  "relayUrl",
-  "publisherToken",
-  "viewerToken",
-];
+const RELAY_KEYS: (keyof AppConfig)[] = [...RELAY_CONFIG_KEYS];
 
 async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   const before = config();
@@ -408,7 +403,27 @@ async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   const relayChanged = RELAY_KEYS.some((k) => JSON.stringify(before[k]) !== JSON.stringify(cfg[k]));
   if (relayChanged) {
     log("info", "relay-affecting config changed, restarting local relay + uplink");
-    await restartEmbeddedRelay();
+    try {
+      await restartEmbeddedRelay();
+    } catch (err) {
+      // The write above already happened - configStore.update is synchronous
+      // and runs before this - so a port that cannot be bound is now the SAVED
+      // port. Without putting it back, every START fails with "local relay not
+      // ready" and a relaunch re-reads the same bad value and fails the same
+      // way. The app is dead, permanently, from one typo.
+      const reason = String((err as Error)?.message || err);
+      log("error", `relay restart failed (${reason}) - putting the previous relay settings back`);
+      configStore.update(relayRollbackPatch(before, cfg));
+      try {
+        await restartEmbeddedRelay();
+        log("info", "previous relay settings restored and the relay is up again");
+      } catch (again) {
+        log("error", `could not restart on the previous settings either: ${String((again as Error)?.message || again)}`);
+      }
+      win?.webContents.send("config:changed", config());
+      broadcastStatus();
+      throw new Error(`relay could not restart: ${reason}`);
+    }
   } else {
     // language/toggle changes flow into a live uplink immediately
     uplink?.connected &&

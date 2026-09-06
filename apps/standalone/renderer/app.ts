@@ -27,6 +27,7 @@ import {
   changesSince,
   clampChannels,
   resolveSourceIds,
+  validRelayPort,
   safeSpeakerColor,
   SPEAKER_COLORS,
   speakerTags,
@@ -789,13 +790,16 @@ function setSeg(id: string, value: string): void {
   }
 }
 
-async function saveAndApply(patch: Partial<AppConfig>, opts: { restart?: boolean } = {}): Promise<void> {
+/** whether the save actually landed - callers used to assume it always did */
+async function saveAndApply(patch: Partial<AppConfig>, opts: { restart?: boolean } = {}): Promise<boolean> {
   try {
     config = await cr.setConfig(patch);
     syncControlsFromConfig();
     if (opts.restart) await restartIfLive();
+    return true;
   } catch (err) {
-    log(`config save failed: ${String(err)}`, "err");
+    log(`config save failed: ${String((err as Error)?.message || err)}`, "err");
+    return false;
   }
 }
 
@@ -1321,13 +1325,22 @@ function renderKeyStatuses(): void {
 }
 
 async function saveSettings(): Promise<void> {
+  // before the patch is built, not after: applyConfig writes synchronously and
+  // only then tries to restart, so an unbindable port persists itself on the
+  // way to failing
+  const port = validRelayPort(inp("relayPort").value);
+  if (port === undefined) {
+    log(`local port must be a number between 1024 and 65535 - "${inp("relayPort").value}" is not`, "err");
+    inp("relayPort").focus();
+    return;
+  }
   const patch: Partial<AppConfig> = {
     deepgramApiKey: inp("deepgramApiKey").value.trim() || undefined,
     geminiApiKey: inp("geminiApiKey").value.trim() || undefined,
     relayUrl: inp("relayUrl").value.trim() || undefined,
     publisherToken: inp("publisherToken").value.trim() || undefined,
     publicBaseUrl: inp("publicBaseUrl").value.trim() || undefined,
-    relayPort: Number(inp("relayPort").value) || 8787,
+    relayPort: port,
     updateFeedUrl: inp("updateFeedUrl").value.trim() || undefined,
     linkMode: (($("linkModeSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as AppConfig["linkMode"]) || config.linkMode,
   };
@@ -1338,7 +1351,11 @@ async function saveSettings(): Promise<void> {
   const relayChanged = ["deepgramApiKey", "geminiApiKey", "relayUrl", "publisherToken", "relayPort"].some(
     (k) => (patch as Record<string, unknown>)[k] !== undefined && (patch as Record<string, unknown>)[k] !== (config as unknown as Record<string, unknown>)[k],
   );
-  await saveAndApply(patch, { restart: relayChanged });
+  // Only on success. This used to run unconditionally, so a relay that could
+  // not bind the new port reported "saved", closed the panel, and left every
+  // START failing with "local relay not ready" - with the bad port persisted,
+  // so a relaunch did it again.
+  if (!(await saveAndApply(patch, { restart: relayChanged }))) return;
   log("settings saved", "ok");
   setView("stage");
 }

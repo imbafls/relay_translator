@@ -6,6 +6,8 @@ import {
   safeSpeakerColor,
   speakerTags,
   SPEAKER_COLORS,
+  validRelayPort,
+  relayRollbackPatch,
 } from "../src/index";
 import type { AppConfig } from "../src/index";
 
@@ -166,5 +168,76 @@ describe("the colour a speaker's tag is painted in", () => {
     expect(SPEAKER_COLORS).toHaveLength(MAX_CAPTURE_CHANNELS);
     expect(new Set(SPEAKER_COLORS).size).toBe(MAX_CAPTURE_CHANNELS);
     for (const c of SPEAKER_COLORS) expect(safeSpeakerColor(c)).toBe(c);
+  });
+});
+
+describe("the port the embedded relay is asked to bind", () => {
+  /**
+   * Audit finding 6, the part that starts the incident. `saveKeys` read the
+   * port as `Number(input.value) || 8787`, and the input's `min`/`max` are
+   * inert - there is no `<form>` and nothing calls `checkValidity()`. So `3000`
+   * (a port another dev server owns), `0`, `70000` and `-1` were all accepted,
+   * persisted, and only then handed to `server.listen`.
+   */
+  it("takes a port a user could plausibly want", () => {
+    for (const p of [8787, 1024, 65535, 3000]) expect(validRelayPort(p)).toBe(p);
+  });
+
+  it("takes it as a string, which is what an input gives", () => {
+    expect(validRelayPort("8787")).toBe(8787);
+  });
+
+  it("refuses one that cannot be bound, instead of finding out at listen()", () => {
+    for (const p of [0, -1, 70000, 65536, 1023, 1.5, NaN, "", "abc", null, undefined, {}]) {
+      expect(validRelayPort(p), `accepted ${JSON.stringify(p)}`).toBeUndefined();
+    }
+  });
+
+  it("refuses the privileged range, which needs rights the app does not have", () => {
+    for (const p of [80, 443, 1, 1023]) expect(validRelayPort(p)).toBeUndefined();
+  });
+});
+
+describe("putting relay settings back after a failed restart", () => {
+  /**
+   * Audit finding 6, the part that makes it permanent. `applyConfig` persisted
+   * the patch with a synchronous write BEFORE attempting the restart, and the
+   * restart closed the working relay and set it to null before it knew the
+   * replacement could bind. There was no rollback, so a port that could not be
+   * bound was now the saved port: every START failed with "local relay not
+   * ready", and a relaunch re-read the same bad port and failed the same way.
+   */
+  it("restores exactly the fields that decide the relay", () => {
+    const before = cfg({ relayPort: 8787, relayUrl: "wss://a", publisherToken: "old", stt: "deepgram-nova-3" });
+    const after = cfg({ relayPort: 3000, relayUrl: "wss://b", publisherToken: "new", stt: "local-zipformer-en-20m" });
+    const patch = relayRollbackPatch(before, after);
+
+    expect(patch.relayPort).toBe(8787);
+    expect(patch.relayUrl).toBe("wss://a");
+    expect(patch.publisherToken).toBe("old");
+  });
+
+  it("leaves everything else alone, so a rollback cannot undo an unrelated change", () => {
+    // the same save can carry a language change and a port change; only the
+    // port failed, and reverting the language with it would be its own bug
+    const before = cfg({ relayPort: 8787, stt: "deepgram-nova-3", profanityFilter: true });
+    const after = cfg({ relayPort: 3000, stt: "local-zipformer-en-20m", profanityFilter: false });
+    const patch = relayRollbackPatch(before, after);
+
+    expect(patch.stt).toBeUndefined();
+    expect(patch.profanityFilter).toBeUndefined();
+  });
+
+  it("is empty when nothing relay-shaped moved, so no needless write happens", () => {
+    const same = cfg({ relayPort: 8787, relayUrl: "wss://a" });
+    expect(Object.keys(relayRollbackPatch(same, cfg({ relayPort: 8787, relayUrl: "wss://a" })))).toEqual([]);
+  });
+
+  it("restores a field that was cleared, not just one that changed value", () => {
+    const before = cfg({ relayUrl: "wss://a" });
+    const after = cfg({ relayUrl: undefined });
+    // "" rather than undefined: ConfigStore.merge skips undefined, so undefined
+    // would leave the bad value in place - the same trap saveSettings works round
+    expect(relayRollbackPatch(before, after).relayUrl).toBe("wss://a");
   });
 });
