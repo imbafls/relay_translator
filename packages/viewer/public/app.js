@@ -9,6 +9,10 @@
   const obs = params.get("obs") === "1";
   const settingsInObs = params.get("settings") === "1";
   if (obs) document.body.classList.add("obs");
+  // ?settings=1 keeps the HUD on screen instead of revealing it on hover;
+  // ?bar=0 drops the amber marker beside the caption
+  if (obs && settingsInObs) document.body.classList.add("settings-pinned");
+  if (obs && params.get("bar") === "0") document.body.classList.add("no-bar");
 
   const $ = (id) => document.getElementById(id);
   const linesEl = $("lines");
@@ -155,7 +159,8 @@
     $("setBg").addEventListener("input", () => update({ bg: $("setBg").value }));
     $("resetStyle").addEventListener("click", () => update({ ...DEFAULT_STYLE }));
     syncDisplayUI();
-    if (obs && !settingsInObs) $("openDisplay").hidden = true;
+    // the button is no longer hidden in obs mode - the HUD it lives in is
+    // invisible until hovered, which a broadcast never does
   }
 
   function renderPreview() {

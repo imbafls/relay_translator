@@ -262,7 +262,25 @@ input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; background: v
 /* ------------------------------------------------------- OBS overlay (?obs=1) */
 body.obs { background: transparent; }
 body.obs.obs-black { background: transparent; }
-body.obs .hud { display: none; }
+/* The overlay used to hide the HUD outright, which took the display-settings
+   button with it - so the only way to change size, colour or line count in OBS
+   was an undocumented ?settings=1 that nothing in the app mentioned.
+   A browser source only receives hover while its Interact window is open, so a
+   hover-revealed HUD stays out of the broadcast and is one mouse-move away.
+   position:fixed keeps it out of flow, exactly as display:none did, so the
+   captions do not move. */
+body.obs .hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+body.obs .hud:hover,
+body.obs .hud:focus-within,
+body.obs.settings-pinned .hud { opacity: 1; }
 body.obs .lines {
   padding: 0 max(24px, 6.25vw) max(24px, 7.4vh);
   justify-content: flex-end;
@@ -279,6 +297,11 @@ body.obs .row.latest {
 }
 body.obs.center .row.latest { margin: 0 auto; }
 body.obs .row.latest::before { content: ""; background: var(--accent); display: block; }
+/* ?bar=0 drops the amber marker. Removing only the ::before would leave its
+   8px column and the 28px gap behind, indenting every caption by 36px, so the
+   grid has to collapse with it. */
+body.obs.no-bar .row.latest { grid-template-columns: 1fr; gap: 0; }
+body.obs.no-bar .row.latest::before { display: none; }
 body.obs .row.latest .ts { display: none; }
 /* 34px / 46px at the default 18px base, scaling with the viewer's size setting */
 body.obs .row.latest .src { color: var(--ink-2); font-size: calc(var(--size) * 1.889); line-height: 1.25; font-weight: 400; }
