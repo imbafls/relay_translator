@@ -120,7 +120,7 @@ languages, neither room's captions reach the other, one room's secret cannot
 open another, and each room counts only its own viewers.
 
 Both passed against the live deployment on 2026-09-06 (14/14 and 9/9):
-https://callout-relay-hosted.omertaji.workers.dev
+https://callout-relay-hosted.calloutrelay.workers.dev
 
 ### Two things only deploying could catch
 
@@ -155,7 +155,12 @@ inviting anyone.
   without their secrets and idle ones cost nothing, but a rate limit belongs
   here before the endpoint is public.
 - Idle rooms are never reaped. A room's record is tiny, but there is no TTL.
-- **An unexplained viewer socket.** The room the desktop app is attached to
+- **An unexplained viewer socket, seen once.** The first room the desktop app
+  attached to reported one viewer with nothing watching; a room claimed after
+  the subdomain change reported zero from the same app, so it was that object
+  rather than the service. Left here because it was never explained.
+
+  Original note: The room the desktop app is attached to
   reports one viewer with nothing watching. It is not the app (which holds a
   single Cloudflare connection, the uplink), not a browser tab, and not a tag
   bug - a fresh room with only an uplink correctly reports zero, and captions
@@ -163,8 +168,10 @@ inviting anyone.
   on top of it (1 -> 2). Cosmetic today, since the number is only shown in the
   app's readout, but it is unaccounted for and should be chased before anyone
   relies on the count.
-- **The URL carries the account name.** `<worker>.<account-subdomain>.workers.dev`
-  - the subdomain is account-wide and changeable only in the dashboard, under
-  Workers & Pages, not through wrangler or the API. A custom domain would need
-  the zone on Cloudflare; `supr.systems` is on Hostinger nameservers and served
-  by Vercel, so that is a migration rather than a setting.
+- **A custom domain is still not set up.** The service answers on
+  `callout-relay-hosted.calloutrelay.workers.dev`. Putting it on
+  `relay.supr.systems` needs that zone moved to Cloudflare nameservers - Workers
+  custom domains require the zone on Cloudflare, and a CNAME from another DNS
+  host does not work. supr.systems is currently on Hostinger nameservers with
+  the apex served by Vercel, so this is a DNS migration with a live site
+  attached, not a setting.
