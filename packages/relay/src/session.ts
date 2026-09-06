@@ -52,6 +52,19 @@ export interface SessionConfig {
  */
 const TRANSLATE_ERROR_EVERY_MS = 30_000;
 
+/**
+ * How long to wait before each attempt to reopen a speech stream that closed on
+ * its own. There was no reconnect anywhere in this package - only gemini.ts had
+ * a retry ladder - so a socket dropped by a blip, an idle timeout or a moment
+ * of bad wifi ended captions for the entire session, and the only way back was
+ * for the streamer to notice and restart.
+ *
+ * Starts fast because this is a live tool and a caption missed is gone, then
+ * backs off so a genuinely dead engine is not hammered. Running out of the list
+ * is what "gave up" means.
+ */
+const STT_REOPEN_DELAYS_MS = [300, 1_000, 3_000, 8_000];
+
 const GAP_MS = 500;
 
 export interface GeminiStats {
@@ -83,6 +96,13 @@ export interface SessionDeps {
    * without a seam the only way to reach the close path was to dial the real
    * service from a test and hope it hung up.
    */
+  /**
+   * How long to wait before each attempt to reopen a closed speech stream.
+   * Defaults to STT_REOPEN_DELAYS_MS. An embedder can tune it; the tests use a
+   * short ladder so the give-up path can be reached without a twelve-second
+   * test, which is the only honest way to cover the end of it.
+   */
+  sttReopenDelaysMs?: readonly number[];
   makeStt?(events: SttEvents): SttStream;
   /** where local models live + the worker script; absent = local STT unavailable */
   localStt?: LocalSttOptions;
@@ -133,6 +153,11 @@ export class PublisherSession {
    * instead of latched.
    */
   private lastTranslateErrorAt = 0;
+  /** how many times the speech stream has been reopened since it last worked */
+  private sttReopens = 0;
+  private reopenTimer: ReturnType<typeof setTimeout> | null = null;
+  /** rebuilt on every open, so a reconnect uses the same handlers */
+  private sttEvents: SttEvents | null = null;
   private closing = false;
   /** wall clock of the first audio byte (STT word timings are relative to it) */
   private streamWallStart = 0;
@@ -231,6 +256,9 @@ export class PublisherSession {
 
     const events = {
       onOpen: () => {
+        // a stream that opened is a stream that works: the ladder starts again
+        // from the top next time, rather than a session slowly using it up
+        this.sttReopens = 0;
         this.deps.log(
           "info",
           `stt open (${this.cfg.stt}, ${source}${this.cfg.channels > 1 ? `, ${this.cfg.channels} channels` : ""})`,
@@ -310,19 +338,44 @@ export class PublisherSession {
         this.deps.onSttError?.(message);
       },
       onClose: () => {
-        if (!this.closing) {
-          // onError reached the app and onClose did not, so the failure that
-          // matters most - the socket simply going away, on a quota or an idle
-          // timeout - was the one nobody was told about. The desktop stayed ON
-          // AIR with the clock running and every chunk quietly dropped.
-          this.deps.log("warn", "stt closed unexpectedly");
-          this.deps.toViewers({ type: "status", live: false, message: "speech pipeline lost" });
-          this.deps.setLive(false);
-          this.deps.onSttError?.("speech pipeline closed - captions have stopped");
+        if (this.closing) return;
+        // onError reached the app and onClose did not, so the failure that
+        // matters most - the socket simply going away, on a quota or an idle
+        // timeout - was the one nobody was told about. The desktop stayed ON
+        // AIR with the clock running and every chunk quietly dropped.
+        this.deps.log("warn", "stt closed unexpectedly");
+        this.deps.toViewers({ type: "status", live: false, message: "speech pipeline lost" });
+        this.deps.setLive(false);
+
+        const ladder = this.deps.sttReopenDelaysMs ?? STT_REOPEN_DELAYS_MS;
+        const delay = ladder[this.sttReopens];
+        if (delay === undefined) {
+          this.deps.onSttError?.(
+            `speech pipeline closed and gave up after ${ladder.length} attempts - stop and start to try again`,
+          );
+          return;
         }
+        this.sttReopens += 1;
+        this.deps.onSttError?.(
+          `speech pipeline closed - reconnecting (attempt ${this.sttReopens} of ${ladder.length})`,
+        );
+        this.reopenTimer = setTimeout(() => {
+          this.reopenTimer = null;
+          if (this.closing || !this.sttEvents) return;
+          this.openStt(this.sttEvents, source);
+        }, delay);
       },
     };
+    this.sttEvents = events;
 
+    this.openStt(events, source);
+  }
+
+  /**
+   * Build the speech stream. Called from start(), and again by the reconnect
+   * ladder - which is why it takes the events rather than closing over them.
+   */
+  private openStt(events: SttEvents, source: string): void {
     const channels = clampChannels(this.cfg.channels);
     if (this.deps.makeStt) {
       this.stt = this.deps.makeStt(events);
@@ -335,7 +388,7 @@ export class PublisherSession {
     } else if (this.local) {
       if (!this.deps.localStt) {
         this.deps.log("error", "local STT requested but this relay has no local model support");
-        setImmediate(() => events.onClose());
+        setImmediate(() => events.onClose?.());
         this.stt = { sendAudio: () => false, close() {} };
       } else {
         this.stt = createLocalSttStream(
@@ -384,6 +437,11 @@ export class PublisherSession {
   stop(): void {
     if (this.closing) return;
     this.closing = true;
+    // a reopen armed by the ladder would otherwise fire into a stopped session
+    if (this.reopenTimer) {
+      clearTimeout(this.reopenTimer);
+      this.reopenTimer = null;
+    }
     try {
       this.stt?.close();
     } catch {

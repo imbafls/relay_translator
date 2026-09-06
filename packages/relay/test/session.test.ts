@@ -485,3 +485,119 @@ describe("a translation that keeps failing", () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe("a speech socket that comes back", () => {
+  /**
+   * The rest of audit finding 11. Surfacing the death was the first half; there
+   * was still no reconnect anywhere in `packages/relay` - only `gemini.ts` has
+   * a retry ladder. So a Deepgram socket dropped by a blip, an idle timeout or
+   * a brief network fault ended captions for the whole session, and the only
+   * way back was for the streamer to notice and restart.
+   */
+  function flaky(opts: { failReopens?: number } = {}) {
+    const viewers: ServerToViewer[] = [];
+    const errors: string[] = [];
+    const built: { kill: () => void }[] = [];
+    let toFail = opts.failReopens ?? 0;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents) => {
+          let open = true;
+          const kill = (): void => {
+            if (!open) return;
+            open = false;
+            events.onClose?.();
+          };
+          built.push({ kill });
+          // the FIRST stream always opens - the session under test is one that
+          // was working and then lost its socket. Only reopens are made to fail.
+          if (built.length > 1 && toFail > 0) {
+            toFail -= 1;
+            setImmediate(kill);
+          } else {
+            setImmediate(() => events.onOpen?.());
+          }
+          return { sendAudio: () => open, close: () => { open = false; } };
+        },
+        // a short ladder: the point is the shape - retry, back off, give up -
+        // and the real one takes twelve seconds to reach its end
+        sttReopenDelaysMs: [20, 40, 60],
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        onSttError: (message: string) => errors.push(message),
+        log: () => {},
+      },
+    );
+    return { session, viewers, errors, built };
+  }
+
+  const liveAgain = (viewers: ServerToViewer[]): number =>
+    viewers.filter((m) => m.type === "status" && m.live === true).length;
+
+  it("reopens the stream instead of ending the session", async () => {
+    const f = flaky();
+    f.session.start();
+    await tick();
+    expect(f.built).toHaveLength(1);
+
+    f.built[0].kill();
+    await tick(120);
+
+    expect(f.built.length, "the stream was never reopened").toBeGreaterThan(1);
+    expect(liveAgain(f.viewers), "viewers were never told it was back").toBeGreaterThan(1);
+    f.session.stop();
+  });
+
+  it("keeps trying when the first reopen also fails", async () => {
+    const f = flaky({ failReopens: 1 });
+    f.session.start();
+    await tick();
+    f.built[0].kill();
+    await tick(200);
+
+    expect(f.built.length, "one failed reopen ended it").toBeGreaterThan(2);
+    f.session.stop();
+  });
+
+  it("gives up eventually and says so, rather than retrying for ever", async () => {
+    const f = flaky({ failReopens: 50 });
+    f.session.start();
+    await tick();
+    f.built[0].kill();
+    await tick(400);
+
+    // it must have RETRIED and then stopped - asserting only that an error was
+    // reported passes against code that never retries at all, because the
+    // first close already reports one
+    expect(f.built.length, "it never retried, so there was nothing to give up on").toBeGreaterThan(2);
+    expect(f.built.length, "it retried without any ceiling").toBeLessThan(12);
+    expect(f.errors.some((e) => /gave up/i.test(e)), `errors were: ${f.errors.join(" | ")}`).toBe(true);
+    f.session.stop();
+  });
+
+  it("does not reopen when a stop lands while a reconnect is armed", async () => {
+    // Stopping a HEALTHY session proves nothing: close() does not fire
+    // onClose - createDeepgramStream sets closedByUs first - so no reopen is
+    // ever armed and the assertion passes against any implementation. The race
+    // that matters is a socket that dropped, a reopen scheduled, and the user
+    // pressing STOP before it fires.
+    const f = flaky();
+    f.session.start();
+    await tick();
+    f.built[0].kill();
+    const before = f.built.length;
+    f.session.stop();
+    await tick(200);
+
+    expect(f.built.length, "a reopen armed before STOP fired into a stopped session").toBe(before);
+  });
+});

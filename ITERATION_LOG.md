@@ -2037,3 +2037,44 @@ Two false positives had to be fixed before it was worth anything:
 from 15 tests to 7 with every `CLAUDE.md` block gone, so the widening is
 coverage rather than decoration; and putting a "Blocked on: the same SSH
 credentials" line back into the backlog turns the VPS check red.
+
+### Turn 58 - Resilience & state (the rest of finding 11: a socket that never comes back)
+
+Turn 47 made a dead speech pipeline stop lying about itself. It still stayed
+dead: there was no reconnect anywhere in `packages/relay` - only `gemini.ts` had
+a retry ladder. A Deepgram socket dropped by a blip, an idle timeout or ten
+seconds of bad wifi ended captions for the whole session, and the only way back
+was for the streamer to notice and restart.
+
+**A ladder in the session, not in the Deepgram client.** It sits above the
+engine, so it covers the local worker too, and it goes through the `makeStt`
+seam that already exists - which is what makes it testable at all. `300ms, 1s,
+3s, 8s`, then it gives up and says so. Fast first, because this is a live tool
+and a caption missed is gone; backing off after, because a genuinely dead engine
+should not be hammered. A stream that opens resets the ladder, so a long session
+does not slowly use it up.
+
+Each attempt is reported through `onSttError` - "reconnecting (attempt 2 of 4)"
+- so the user watches it try rather than watching nothing.
+
+**Guards - four, three watched fail against their own reverts.** The reconnect
+removed; the ceiling removed (retry for ever); and a STOP landing while a
+reopen is armed.
+
+**Two of those tests were wrong first, in different ways.**
+
+The give-up test asserted only that *an error was reported* - which passes
+against code that never retries at all, because the first close already reports
+one. It now requires that it retried and then stopped.
+
+The stop test was worse: it stopped a **healthy** session, and `close()` does
+not fire `onClose` - `createDeepgramStream` sets `closedByUs` first - so no
+reopen was ever armed and the assertion held against any implementation at all.
+Removing *both* protections left it green. It now does what the real race does:
+drop the socket, let a reopen be scheduled, and press STOP before it fires.
+
+**A knob added deliberately.** `sttReopenDelaysMs` on `SessionDeps`, defaulting
+to the real ladder. The end of the ladder is twelve seconds away, and a
+twelve-second test in a fifteen-second suite is a test that gets deleted. The
+alternative was leaving the give-up path uncovered, which is the path that
+matters most.
