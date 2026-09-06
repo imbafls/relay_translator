@@ -25,6 +25,8 @@ interface Calls {
   /** provider + the exact string validated - a count alone cannot tell a
    *  re-check of the saved key from a second debounce of the typed one */
   validated: { provider: string; key: string }[];
+  /** text handed to the main process for the OS clipboard */
+  clipboard: string[];
 }
 
 let calls: Calls;
@@ -57,6 +59,9 @@ function bridge(config: AppConfig) {
     installUpdate: async () => false,
     onUpdate: () => {},
     openExternal: async () => {},
+    writeClipboard: async (text: string) => {
+      calls.clipboard.push(text);
+    },
     reportState: () => {},
     reportDevices: () => {},
     modelStatus: async () => [],
@@ -85,7 +90,7 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 }
 
 async function bootWith(config: Partial<AppConfig>): Promise<void> {
-  calls = { setConfig: [], validateKey: [], validated: [] };
+  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [] };
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
 
@@ -253,5 +258,42 @@ describe("a config naming a model that is gone", () => {
   it("leaves a config naming a model that still exists alone", async () => {
     await bootWith({ setupDone: true, stt: "deepgram-nova-3" });
     expect(calls.setConfig.some((p) => "stt" in p)).toBe(false);
+  });
+});
+
+describe("copying the viewer link", () => {
+  /**
+   * A real user's log had two consecutive "link copy failed" lines, and they
+   * said out loud that the button did not work. navigator.clipboard.writeText
+   * needs the "clipboard-sanitized-write" permission, and main.ts denies every
+   * permission except media - so the promise rejected with NotAllowedError and
+   * the bare catch turned it into that one useless line.
+   *
+   * Nothing in the renderer may reach for navigator.clipboard again: it is not
+   * available to this window, and reintroducing it silently breaks copying.
+   */
+  it("goes through the main process, not navigator.clipboard", () => {
+    const src = fs.readFileSync(path.join(rendererDir, "app.ts"), "utf8");
+    expect(src).toContain("cr.writeClipboard(");
+    // comments stripped: this file explains the denial in prose, and matching
+    // that would be matching the explanation rather than the code
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code, "navigator.clipboard is denied by the permission handler").not.toMatch(
+      /navigator\s*\.\s*clipboard/,
+    );
+  });
+
+  it("declares the channel on the preload bridge", () => {
+    const preload = fs.readFileSync(path.resolve(__dirname, "..", "src", "preload.ts"), "utf8");
+    expect(preload).toContain("writeClipboard");
+    expect(preload).toContain('ipcRenderer.invoke("clipboard:write"');
+  });
+
+  it("handles that channel in the main process", () => {
+    const main = fs.readFileSync(path.resolve(__dirname, "..", "src", "main.ts"), "utf8");
+    expect(main).toContain('ipcMain.handle("clipboard:write"');
+    expect(main, "Electron's clipboard module is what bypasses the permission").toMatch(
+      /clipboard\s*\.\s*writeText/,
+    );
   });
 });

@@ -9,6 +9,7 @@ import {
   ipcMain,
   powerSaveBlocker,
   shell,
+  clipboard,
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
@@ -451,6 +452,14 @@ function registerIpc(): void {
 
   ipcMain.handle("open-external", (_e, url: string) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+
+  // navigator.clipboard.writeText needs the "clipboard-sanitized-write"
+  // permission, and the handler above denies everything but media - so COPY
+  // LINK failed silently for every user. Electron's own clipboard writes to
+  // the OS directly: no permission, and no focused-document requirement.
+  ipcMain.handle("clipboard:write", (_e, text: string) => {
+    clipboard.writeText(String(text ?? ""));
   });
 
   ipcMain.handle("updates:check", async (): Promise<UpdateStatus | undefined> => {

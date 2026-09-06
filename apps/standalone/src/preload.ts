@@ -28,6 +28,7 @@ export interface RendererBridge {
   installUpdate(): Promise<boolean>;
   onUpdate(cb: (status: UpdateStatus) => void): void;
   openExternal(url: string): Promise<void>;
+  writeClipboard(text: string): Promise<void>;
   reportState(state: SessionState, error?: string): void;
   reportDevices(devices: AudioDeviceInfo[]): void;
   /** local STT models on disk + running downloads */
@@ -47,6 +48,7 @@ contextBridge.exposeInMainWorld("cr", {
   prepareSession: (opts: { rotate: boolean }) => ipcRenderer.invoke("runtime:prepare", opts),
   rotateLink: () => ipcRenderer.invoke("link:rotate"),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
+  writeClipboard: (text: string) => ipcRenderer.invoke("clipboard:write", text),
   reportState: (state: SessionState, error?: string) =>
     ipcRenderer.send("session:update", { state, error }),
   reportDevices: (devices: AudioDeviceInfo[]) => ipcRenderer.send("devices:update", devices),

@@ -931,11 +931,16 @@ function renderFooter(): void {
 }
 
 async function copyText(text: string, what: string): Promise<void> {
+  // through the main process, not navigator.clipboard: the renderer's
+  // permission handler denies everything but media, so writeText rejected
+  // with NotAllowedError and every copy failed
   try {
-    await navigator.clipboard.writeText(text);
+    await cr.writeClipboard(text);
     log(`${what} copied`, "ok");
-  } catch {
-    log(`${what} copy failed`, "err");
+  } catch (err) {
+    // the old catch swallowed the reason, which left "link copy failed" as
+    // the only trace of a permission denial
+    log(`${what} copy failed: ${String((err as Error)?.message || err)}`, "err");
   }
 }
 
