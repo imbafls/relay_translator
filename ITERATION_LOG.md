@@ -1430,3 +1430,57 @@ anything was believed.
 **Known gap, next.** `isOtherSpeaker()` is binary - `YOU` versus everyone else -
 so on the stage and in the viewer, CHAT and COACH are the same colour. Three
 speakers are tagged but only two are distinguishable at a glance.
+
+### Turn 45 - Client UI (a colour per speaker, chosen by the streamer)
+
+Turn 44 left three speakers tagged and only two of them distinguishable. The
+tag colour was one binary class - `YOU` against everyone else - in both the
+desktop console and the viewer, so `CHAT` and `COACH` came out identical. Asked
+for directly: make them editable.
+
+**The colour is the streamer's, not the viewer's.** Caption size, font and theme
+belong to the device watching; who is speaking does not. So it sits beside the
+name in SETTINGS, travels in the publisher hello, and reaches every viewer.
+`sourceColors` in the config, `channelColors` on the wire, `color` on each
+`SpeakerTag`. Defaults are distinct per slot so three speakers differ untouched.
+
+**It is untrusted input on its way into CSS.** On the embedded relay the
+publisher is this app; on a hosted one it is whoever holds a publish token. The
+relay drops anything that is not plainly `#rrggbb` rather than escaping it, and
+the viewer does the same again on the way into the DOM.
+
+**A test of mine that proved nothing.** The first viewer guard pushed
+`color: "red; background: url(javascript:alert(1))"` and asserted no
+`background` appeared. It passed against the reverted sanitiser too - because
+assigning to `.style.color` makes the CSSOM reject the whole value on its own.
+It was testing the DOM, not the code. The real protection is *assigning the
+property rather than building a `style` attribute*, so that is what is asserted
+now, and reverting to `setAttribute("style", ...)` turns it red. The sanitiser
+gets its own, honest guard: a non-hex value must leave the class fallback doing
+the work rather than half-applying something the publisher named.
+
+**The bug the browser found again.** Everything was right - the hello carried
+the colours, the relay broadcast them, viewers painted them - and the desktop
+console still showed grey tags. `relayClient.ts` rebuilds each message field by
+field, and `color` was simply not in the list. The callback type is
+`{...} & SpeakerTag`, so widening `SpeakerTag` looked sufficient; an object
+literal missing an optional field typechecks fine. Nothing in the suite could
+see it, because the only thing downstream of that function is the renderer.
+There is a guard now, against a real WebSocket server, asserting the whole tag
+comes through rather than naming one field.
+
+**Guards - seven, each watched fail against its own revert:** `safeSpeakerColor`
+accepting any string; the relay passing colours through unsanitised; the session
+omitting the colour; that omission seen end to end from a viewer socket; the
+viewer not painting; the viewer trusting any string; and the viewer building a
+`style` attribute instead of assigning the property.
+
+**Verified in a browser, end to end**: three sources picked, the third named
+COACH and its swatch set to `#ff5f9e`, then a live session. The desktop stage
+showed YOU amber, CHAT blue, COACH pink; the viewer page at
+`/watch/<token>` showed the same three. Read off the live DOM, not inferred.
+
+The mock relay had to be restarted twice during this run - a process started
+before a rebuild still had the old `clampChannels` and read three channels as
+mono, stripping every tag. Worth remembering: a stale relay looks exactly like a
+broken feature.

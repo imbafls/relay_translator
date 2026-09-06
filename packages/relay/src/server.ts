@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket, RawData } from "ws";
 import {
   DEFAULT_CONFIG,
   clampChannels,
+  safeSpeakerColor,
   PublisherToServer,
   ServerToPublisher,
   ServerToUplink,
@@ -153,6 +154,12 @@ function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConf
     channels: clampChannels(raw.channels),
     channelLabels: Array.isArray(raw.channelLabels)
       ? raw.channelLabels.map((l) => String(l).slice(0, 12))
+      : undefined,
+    // a colour ends up in a style attribute on every viewer, and the publisher
+    // is only as trustworthy as the token it holds: anything that is not
+    // plainly #rrggbb is dropped, never escaped and never guessed at
+    channelColors: Array.isArray(raw.channelColors)
+      ? raw.channelColors.map((c) => safeSpeakerColor(c) ?? "")
       : undefined,
   };
 }

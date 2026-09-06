@@ -27,6 +27,8 @@ import {
   changesSince,
   clampChannels,
   resolveSourceIds,
+  safeSpeakerColor,
+  SPEAKER_COLORS,
   speakerTags,
   MAX_CAPTURE_CHANNELS,
 } from "@callout-relay/shared";
@@ -207,10 +209,25 @@ function pickedSources(): string[] {
 function channelLabels(sources: string[]): string[] {
   return speakerTags(sources.map(sourceKind), config?.sourceLabels);
 }
+/** the tag colour per slot: what the user picked, else this slot's default */
+function channelColors(sources: string[]): string[] {
+  return sources.map((_, i) => safeSpeakerColor(config?.sourceColors?.[i]) || SPEAKER_COLORS[i] || SPEAKER_COLORS[0]);
+}
 
-/** every channel except the first reads as "the others" and gets its own colour */
-function isOtherSpeaker(speaker?: string): boolean {
-  return !!speaker && speaker !== "YOU" && speaker !== "A" && speaker !== "CH1";
+/**
+ * Paint a speaker tag.
+ *
+ * This used to be one binary class - "YOU" against everyone else - which was
+ * enough while there were two sources and wrong the moment there were three:
+ * CHAT and COACH came out the same colour, so the tag named them and the
+ * colour did not tell them apart. The colour now rides on the caption, chosen
+ * per slot by the streamer, and the class stays as the fallback for a relay
+ * that does not send one.
+ */
+function paintSpeaker(el: HTMLElement, seg: { speaker?: string; color?: string }): void {
+  const colour = safeSpeakerColor(seg.color);
+  el.style.color = colour || "";
+  el.classList.toggle("other", !colour && !!seg.speaker && seg.speaker !== "YOU" && seg.speaker !== "CH1");
 }
 
 /** the 01 SOURCE meta: the roles once there are two, the device kind when there is one */
@@ -387,9 +404,9 @@ function clearStage(): void {
   renderIdle();
 }
 
-type Seg = { id: number; source: string; target?: string; channel?: number; speaker?: string; latency?: { stt?: number; translate?: number } };
+type Seg = { id: number; source: string; target?: string; channel?: number; speaker?: string; color?: string; latency?: { stt?: number; translate?: number } };
 
-function onPartial(seg: { id: number; source: string; channel?: number; speaker?: string }): void {
+function onPartial(seg: { id: number; source: string; channel?: number; speaker?: string; color?: string }): void {
   if (!seg.source.trim() || rows.has(seg.id)) return;
   const ch = seg.channel ?? 0;
   let interim = interims.get(ch);
@@ -399,7 +416,7 @@ function onPartial(seg: { id: number; source: string; channel?: number; speaker?
   }
   interim.id = seg.id;
   interim.who.textContent = seg.speaker || "";
-  interim.who.classList.toggle("other", isOtherSpeaker(seg.speaker));
+  paintSpeaker(interim.who, seg);
   interim.srcText.textContent = seg.source;
   const cur = document.createElement("span");
   cur.className = "cursor";
@@ -427,7 +444,7 @@ function onSubtitle(seg: Seg): void {
   }
   row.final = true;
   row.who.textContent = seg.speaker || "";
-  row.who.classList.toggle("other", isOtherSpeaker(seg.speaker));
+  paintSpeaker(row.who, seg);
   row.srcText.textContent = seg.source;
   if (seg.target != null) {
     row.tgtText.textContent = seg.target;
@@ -573,6 +590,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       profanityFilter: config.profanityFilter !== false,
       channels,
       channelLabels: channels > 1 ? channelLabels(sources) : undefined,
+      channelColors: channels > 1 ? channelColors(sources) : undefined,
     });
 
     level = 0;
@@ -1010,6 +1028,7 @@ function renderCaptionSettings(): void {
 function renderSourceNames(live: boolean): void {
   const ids = activeSources();
   const tags = channelLabels(ids);
+  const colours = channelColors(ids);
   $("sourceCount").textContent = ids.length > 1 ? `${ids.length} SOURCES` : "ONE SOURCE - NOT TAGGED";
   for (let i = 0; i < MAX_CAPTURE_CHANNELS; i++) {
     const input = inp(`sourceName${i + 1}`);
@@ -1020,6 +1039,13 @@ function renderSourceNames(live: boolean): void {
     if (document.activeElement !== input) input.value = config?.sourceLabels?.[i] || "";
     input.placeholder = tags[i] || "no tag";
     input.disabled = live;
+
+    const colour = colours[i] || SPEAKER_COLORS[i] || SPEAKER_COLORS[0];
+    const picker = inp(`sourceColor${i + 1}`);
+    picker.value = colour;
+    picker.disabled = live;
+    $(`sourceSwatch${i + 1}`).style.background = colour;
+    input.style.color = ids.length > 1 ? colour : "";
   }
 }
 
@@ -1962,6 +1988,12 @@ function bind(): void {
     input.onchange = () => {
       const labels = [0, 1, 2].map((slot) => inp(`sourceName${slot + 1}`).value.trim());
       void saveAndApply({ sourceLabels: labels }, { restart: true });
+    };
+    // "change" not "input": a colour picker fires input on every drag of the
+    // hue slider, and each one would restart the publisher
+    inp(`sourceColor${i + 1}`).onchange = () => {
+      const colours = [0, 1, 2].map((slot) => safeSpeakerColor(inp(`sourceColor${slot + 1}`).value) || "");
+      void saveAndApply({ sourceColors: colours }, { restart: true });
     };
   }
   $("openCaptionView").onclick = () => {

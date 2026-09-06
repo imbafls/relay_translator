@@ -198,3 +198,77 @@ describe("latency across a gap in the audio", () => {
     session.stop();
   });
 });
+
+describe("the colour a speaker's tag carries", () => {
+  /**
+   * With three sources the tag is the only thing telling speakers apart, and
+   * the viewer coloured them with one binary class - "YOU" against everyone
+   * else - so CHAT and COACH came out identical. The colour travels per
+   * channel now, chosen by the streamer.
+   */
+  function coloured(colors?: string[], labels = ["YOU", "CHAT"]) {
+    const viewers: ServerToViewer[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 2,
+        channelLabels: labels,
+        channelColors: colors,
+      },
+      { mockStt: true, toViewers: (msg) => viewers.push(msg), setLive: () => {}, log: () => {} },
+    );
+    return { session, viewers };
+  }
+  const tags = (viewers: ServerToViewer[]) =>
+    viewers.filter((m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle");
+
+  it("puts each channel's colour on its captions", async () => {
+    const { session, viewers } = coloured(["#e0a43a", "#7fb6d9"]);
+    session.start();
+    await tick();
+    // the mock emits at most one line per call, alternating channels, so two
+    // calls are what it takes to hear from both
+    const twoSeconds = Buffer.alloc(SAMPLE_RATE * 2 * 2 * 2, 1);
+    session.audio(twoSeconds);
+    session.audio(twoSeconds);
+    await tick(20);
+    session.stop();
+
+    const seen = new Map<number, string | undefined>();
+    for (const t of tags(viewers)) seen.set(t.channel ?? 0, t.color);
+    expect(seen.get(0)).toBe("#e0a43a");
+    expect(seen.get(1)).toBe("#7fb6d9");
+  });
+
+  it("leaves the colour off when the publisher named none, so the viewer keeps its own", async () => {
+    const { session, viewers } = coloured(undefined);
+    session.start();
+    await tick();
+    session.audio(Buffer.alloc(SAMPLE_RATE * 2 * 2 * 2, 1));
+    await tick(20);
+    session.stop();
+    expect(tags(viewers).length).toBeGreaterThan(0);
+    for (const t of tags(viewers)) expect(t.color).toBeUndefined();
+  });
+
+  it("still tags the channel and speaker when only some slots have a colour", async () => {
+    const { session, viewers } = coloured(["#e0a43a"]);
+    session.start();
+    await tick();
+    const twoSeconds = Buffer.alloc(SAMPLE_RATE * 2 * 2 * 2, 1);
+    session.audio(twoSeconds);
+    session.audio(twoSeconds);
+    await tick(20);
+    session.stop();
+    const byChannel = new Map<number, Extract<ServerToViewer, { type: "subtitle" }>>();
+    for (const t of tags(viewers)) byChannel.set(t.channel ?? 0, t);
+    expect(byChannel.get(0)?.color).toBe("#e0a43a");
+    expect(byChannel.get(1)?.color).toBeUndefined();
+    expect(byChannel.get(1)?.speaker).toBe("CHAT");
+  });
+});

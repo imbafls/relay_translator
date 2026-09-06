@@ -216,7 +216,7 @@
     return `${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
-  function makeRowEl(ts, src, tgt, speaker) {
+  function makeRowEl(ts, src, tgt, speaker, color) {
     const row = document.createElement("div");
     row.className = "row";
     const t = document.createElement("span");
@@ -225,7 +225,7 @@
     const body = document.createElement("div");
     const s = document.createElement("div");
     s.className = "src";
-    setSrc(s, src, speaker);
+    setSrc(s, src, speaker, color);
     const g = document.createElement("div");
     g.className = "tgt" + (tgt ? "" : " pending");
     g.textContent = tgt || "…";
@@ -234,13 +234,29 @@
     return row;
   }
 
+  /**
+   * A speaker colour, or "".
+   *
+   * The relay sanitises this, but the relay is only as trustworthy as whoever
+   * holds its publish token, and this is the page putting the value into a
+   * style. Anything that is not plainly #rrggbb is dropped rather than escaped.
+   */
+  function safeColor(value) {
+    return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value.trim()) ? value.trim().toLowerCase() : "";
+  }
+
   /** source line = optional speaker tag + text (kept as two spans so the cursor can follow) */
-  function setSrc(el, text, speaker) {
+  function setSrc(el, text, speaker, color) {
     el.textContent = "";
     if (speaker) {
       const who = document.createElement("span");
-      // every channel but the first is "the others" and gets its own colour
-      who.className = speaker !== "YOU" && speaker !== "A" && speaker !== "CH1" ? "who other" : "who";
+      // the class was the whole story once: YOU against everyone else. That is
+      // exactly two colours, so a third speaker was indistinguishable from the
+      // second. The relay names a colour per channel now; the class stays as
+      // the fallback for a relay that does not.
+      const colour = safeColor(color);
+      who.className = !colour && speaker !== "YOU" && speaker !== "A" && speaker !== "CH1" ? "who other" : "who";
+      if (colour) who.style.color = colour;
       who.textContent = speaker;
       el.appendChild(who);
     }
@@ -295,7 +311,7 @@
     const ch = msg.channel || 0;
     let interim = interims.get(ch);
     if (!interim) {
-      interim = makeRowEl(stamp(), "", "", msg.speaker);
+      interim = makeRowEl(stamp(), "", "", msg.speaker, msg.color);
       interim.classList.add("interim");
       interim.querySelector(".tgt").remove();
       linesEl.appendChild(interim);
@@ -303,7 +319,7 @@
     }
     interim.dataset.id = msg.id;
     const src = interim.querySelector(".src");
-    setSrc(src, msg.source, msg.speaker);
+    setSrc(src, msg.source, msg.speaker, msg.color);
     const c = document.createElement("span");
     c.className = "cursor";
     src.appendChild(c);
@@ -321,11 +337,11 @@
         interim.remove();
         interims.delete(ch);
       }
-      el = makeRowEl(stamp(), msg.source, msg.target, msg.speaker);
+      el = makeRowEl(stamp(), msg.source, msg.target, msg.speaker, msg.color);
       rows.set(msg.id, el);
       linesEl.appendChild(el);
     }
-    setSrc(el.querySelector(".src"), msg.source, msg.speaker);
+    setSrc(el.querySelector(".src"), msg.source, msg.speaker, msg.color);
     if (msg.target != null) {
       const g = el.querySelector(".tgt");
       g.textContent = msg.target;

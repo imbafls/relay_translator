@@ -35,6 +35,8 @@ export interface SessionConfig {
   channels: number;
   /** speaker tag per channel (only sent when channels > 1) */
   channelLabels?: string[];
+  /** `#rrggbb` per channel, already sanitised by the hello parser */
+  channelColors?: string[];
 }
 
 /**
@@ -137,9 +139,16 @@ export class PublisherSession {
     return this.segId;
   }
 
-  private tag(channel: number): { channel?: number; speaker?: string } {
+  private tag(channel: number): { channel?: number; speaker?: string; color?: string } {
     if (this.cfg.channels <= 1) return {};
-    return { channel, speaker: this.cfg.channelLabels?.[channel] || `CH${channel + 1}` };
+    const color = this.cfg.channelColors?.[channel];
+    return {
+      channel,
+      speaker: this.cfg.channelLabels?.[channel] || `CH${channel + 1}`,
+      // absent rather than a default: the viewer has its own, and a colour
+      // this end could not name is not one this end should invent
+      ...(color ? { color } : {}),
+    };
   }
 
   /**

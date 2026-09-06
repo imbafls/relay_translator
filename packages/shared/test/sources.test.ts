@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, MAX_CAPTURE_CHANNELS, resolveSourceIds, speakerTags } from "../src/index";
+import {
+  DEFAULT_CONFIG,
+  MAX_CAPTURE_CHANNELS,
+  resolveSourceIds,
+  safeSpeakerColor,
+  speakerTags,
+  SPEAKER_COLORS,
+} from "../src/index";
 import type { AppConfig } from "../src/index";
 
 /**
@@ -117,5 +124,47 @@ describe("what each source is called on a caption", () => {
 
   it("ignores a label list that is not a list of strings", () => {
     expect(speakerTags(["mic", "system"], [7 as unknown as string, null as unknown as string])).toEqual(["YOU", "CHAT"]);
+  });
+});
+
+describe("the colour a speaker's tag is painted in", () => {
+  /**
+   * The colour reaches the viewer from the publisher and ends up in a style
+   * attribute. On the embedded relay the publisher is this app; on a hosted one
+   * it is whoever holds a publish token. So it is untrusted input on its way
+   * into CSS, and anything that is not plainly a hex colour is dropped rather
+   * than escaped - there is no reason to accept `red`, `var(--x)` or a URL, and
+   * every reason not to guess.
+   */
+  it("takes a six-digit hex colour", () => {
+    expect(safeSpeakerColor("#7fb6d9")).toBe("#7fb6d9");
+    expect(safeSpeakerColor("#FFFFFF")).toBe("#ffffff");
+  });
+
+  it("refuses anything that is not one, rather than trying to clean it", () => {
+    for (const bad of [
+      "red",
+      "#fff",
+      "#7fb6d9;",
+      "var(--accent)",
+      "url(javascript:alert(1))",
+      "#7fb6d9) ; background : url(x)",
+      "rgb(1,2,3)",
+      "",
+      "   ",
+      null,
+      undefined,
+      42,
+      {},
+      ["#7fb6d9"],
+    ]) {
+      expect(safeSpeakerColor(bad), `accepted ${JSON.stringify(bad)}`).toBeUndefined();
+    }
+  });
+
+  it("offers a distinct default per slot, so three speakers differ untouched", () => {
+    expect(SPEAKER_COLORS).toHaveLength(MAX_CAPTURE_CHANNELS);
+    expect(new Set(SPEAKER_COLORS).size).toBe(MAX_CAPTURE_CHANNELS);
+    for (const c of SPEAKER_COLORS) expect(safeSpeakerColor(c)).toBe(c);
   });
 });

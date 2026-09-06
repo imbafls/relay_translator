@@ -93,6 +93,7 @@ export class RelayPublisherClient {
         profanityFilter: this.hello.profanityFilter,
         channels: this.hello.channels,
         channelLabels: this.hello.channelLabels,
+        channelColors: this.hello.channelColors,
       });
     };
 
@@ -109,7 +110,7 @@ export class RelayPublisherClient {
         this.hooks.onReady?.();
         this.startPing();
       } else if (msg.type === "partial") {
-        this.hooks.onPartial?.({ id: msg.id, source: msg.source, channel: msg.channel, speaker: msg.speaker });
+        this.hooks.onPartial?.({ id: msg.id, source: msg.source, channel: msg.channel, speaker: msg.speaker, color: msg.color });
       } else if (msg.type === "subtitle") {
         this.hooks.onSubtitle?.({
           id: msg.id,
@@ -118,6 +119,9 @@ export class RelayPublisherClient {
           latency: msg.latency,
           channel: msg.channel,
           speaker: msg.speaker,
+          // rebuilt field by field, so anything new on SpeakerTag has to be
+          // named here too - the type alone will not carry it
+          color: msg.color,
         });
       } else if (msg.type === "error") {
         this.hooks.onError?.(msg.message);

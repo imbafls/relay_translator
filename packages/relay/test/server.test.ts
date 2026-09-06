@@ -132,3 +132,59 @@ describe("a publisher that is past the token but sends a bad hello", () => {
     viewer.close();
   });
 });
+
+describe("the speaker colours a publisher announces", () => {
+  /**
+   * The colour ends up in a style attribute on every viewer. The publisher is
+   * this app on the embedded relay, but on a hosted one it is whoever holds a
+   * publish token - so it is untrusted input on its way into CSS, and the relay
+   * is the last place that can stop it reaching a page that trusts the relay.
+   *
+   * The viewer sanitises independently as well; this is the half that keeps a
+   * bad value off the wire in the first place.
+   */
+  async function firstSubtitle(channelColors: unknown): Promise<Record<string, unknown> | null> {
+    const viewer = await open(`ws://127.0.0.1:${handle.port}/ws/viewer?token=${handle.state.viewerToken}`);
+    const pub = await open(publisherUrl());
+    pub.send(
+      JSON.stringify({
+        type: "hello",
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        channels: 2,
+        channelLabels: ["YOU", "CHAT"],
+        channelColors,
+      }),
+    );
+    await waitFor(viewer, "hello", 4000);
+    // the mock emits one line per 2 s of audio, and at most one per send
+    pub.send(Buffer.alloc(16000 * 2 * 2 * 2, 1));
+    const msg = await waitFor(viewer, "subtitle", 4000);
+    pub.close();
+    viewer.close();
+    return msg;
+  }
+
+  it("carries a real one through to viewers", async () => {
+    const msg = await firstSubtitle(["#e0a43a", "#7fb6d9"]);
+    expect(msg, "no subtitle reached the viewer at all").not.toBeNull();
+    expect(msg?.color).toBe("#e0a43a");
+  });
+
+  it("drops one that is not a colour instead of passing it on", async () => {
+    const msg = await firstSubtitle(["red; background: url(javascript:alert(1))", "#7fb6d9"]);
+    expect(msg, "no subtitle reached the viewer at all").not.toBeNull();
+    expect(msg?.color, "a publisher's CSS reached the viewer").toBeUndefined();
+    // and the rest of the tag still works, so a bad colour is not a bad session
+    expect(msg?.speaker).toBe("YOU");
+  });
+
+  it("survives channelColors that is not a list", async () => {
+    const msg = await firstSubtitle("#e0a43a");
+    expect(msg?.speaker).toBe("YOU");
+    expect(msg?.color).toBeUndefined();
+    expect(await stillUp()).toBe(true);
+  });
+});

@@ -189,3 +189,59 @@ describe("being told to stop", () => {
     expect(c.state).toBe("error");
   });
 });
+
+describe("what the publisher client hands back to the app", () => {
+  /**
+   * The callback types say `& SpeakerTag`, so widening SpeakerTag looked like
+   * it was enough. It was not: this client rebuilds each message field by
+   * field, so a new field on the type is simply not copied. `color` was added
+   * to SpeakerTag, the relay sent it, viewers painted it - and the desktop
+   * console did not, because the field never left this function.
+   *
+   * Typecheck cannot catch it (an object literal missing an optional field is
+   * valid) and no other test could see it, so this asserts the whole tag comes
+   * through rather than naming one field.
+   */
+  async function firstSubtitle(sent: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const got: Record<string, unknown>[] = [];
+    const c = new RelayPublisherClient(`ws://127.0.0.1:${port}`, {
+      onSubtitle: (seg) => got.push(seg as unknown as Record<string, unknown>),
+    });
+    try {
+      c.connect({
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        latencyVisible: true,
+      });
+      await until(() => live().length === 1, "the publisher connection");
+      live()[0].send(JSON.stringify(sent));
+      await until(() => got.length === 1, "the subtitle coming back");
+      return got[0];
+    } finally {
+      c.disconnect();
+    }
+  }
+
+  it("carries the whole speaker tag, colour included", async () => {
+    const seg = await firstSubtitle({
+      type: "subtitle",
+      id: 7,
+      source: "enemy mid",
+      final: true,
+      channel: 2,
+      speaker: "COACH",
+      color: "#ff5f9e",
+    });
+    expect(seg.channel).toBe(2);
+    expect(seg.speaker).toBe("COACH");
+    expect(seg.color, "the colour was dropped on the way to the console").toBe("#ff5f9e");
+  });
+
+  it("leaves the tag off entirely when the relay sent none", async () => {
+    const seg = await firstSubtitle({ type: "subtitle", id: 1, source: "solo", final: true });
+    expect(seg.speaker).toBeUndefined();
+    expect(seg.color).toBeUndefined();
+  });
+});

@@ -154,6 +154,64 @@ describe("captions arriving", () => {
     expect(who).toEqual(["YOU", "CHAT"]);
   });
 
+  it("gives each speaker the colour the relay named, so three can be told apart", () => {
+    // the tag used to carry one binary class - YOU against everyone else - so
+    // a third speaker was the same colour as the second, and the tag was the
+    // only thing distinguishing them
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "a", final: true, channel: 0, speaker: "YOU", color: "#e0a43a" });
+    push({ type: "subtitle", id: 2, source: "b", final: true, channel: 1, speaker: "CHAT", color: "#7fb6d9" });
+    push({ type: "subtitle", id: 3, source: "c", final: true, channel: 2, speaker: "COACH", color: "#9ad17f" });
+
+    const colours = Array.from(document.querySelectorAll<HTMLElement>("#lines .row .who")).map((n) => n.style.color);
+    expect(colours).toHaveLength(3);
+    expect(new Set(colours).size, `two speakers share a colour: ${colours.join(" / ")}`).toBe(3);
+  });
+
+  it("falls back to its own colours when the relay names none", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "a", final: true, channel: 0, speaker: "YOU" });
+    push({ type: "subtitle", id: 2, source: "b", final: true, channel: 1, speaker: "CHAT" });
+
+    const tags = Array.from(document.querySelectorAll<HTMLElement>("#lines .row .who"));
+    for (const t of tags) expect(t.style.color).toBe("");
+    expect(tags[0].className).toBe("who");
+    expect(tags[1].className).toContain("other");
+  });
+
+  it("sets the colour as a property, so a value smuggling more CSS cannot bring it along", () => {
+    // the relay sanitises, but this page is the thing rendering it and a relay
+    // is only as trustworthy as whoever holds its publish token. Assigning to
+    // .style.color makes the CSSOM reject the whole value; building a style
+    // ATTRIBUTE out of it would apply every declaration in the string.
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({
+      type: "subtitle",
+      id: 1,
+      source: "a",
+      final: true,
+      channel: 0,
+      speaker: "YOU",
+      color: "#7fb6d9; background: url(javascript:alert(1))",
+    });
+
+    const who = document.querySelector<HTMLElement>("#lines .row .who");
+    expect(who?.style.background, "the publisher set a property it does not own").toBe("");
+    expect(who?.getAttribute("style") || "").not.toContain("background");
+  });
+
+  it("falls back to its own class colours when the value is not a hex colour", () => {
+    // not a security boundary - .style.color rejects nonsense on its own - but
+    // it keeps the fallback coherent: a value that is not a colour must leave
+    // the class doing the work, not half-apply something the publisher named
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "b", final: true, channel: 1, speaker: "CHAT", color: "red" });
+
+    const who = document.querySelector<HTMLElement>("#lines .row .who");
+    expect(who?.style.color).toBe("");
+    expect(who?.className, "a non-hex colour stole the class fallback").toContain("other");
+  });
+
   it("does not render caption text as markup", () => {
     // transcripts are attacker-influenced in the sense that anyone speaking
     // into the mic chooses them, and this page is served publicly

@@ -27,6 +27,8 @@ export interface AppConfig {
    * resolveSourceIds(), which folds in the legacy pair below.
    */
   sources?: string[];
+  /** `#rrggbb` per slot, parallel to `sources`; blank uses SPEAKER_COLORS */
+  sourceColors?: string[];
   /**
    * Speaker tag per slot, parallel to `sources`. A blank entry means "work it
    * out from the slot" - which is what every install had before names existed,
@@ -222,6 +224,29 @@ export function resolveSourceIds(cfg: Partial<AppConfig> | null | undefined): st
   // a list present but unusable still falls back to the pair before giving up
   if (!ids.length && listed) return resolveSourceIds({ ...cfg, sources: undefined });
   return ids.length ? ids : [DEFAULT_SOURCE];
+}
+
+/**
+ * Default tag colour per slot. Distinct on purpose: with three speakers the
+ * tag is the only thing telling them apart, and two of them sharing a colour
+ * is the same as not having one.
+ */
+export const SPEAKER_COLORS: readonly string[] = ["#e0a43a", "#7fb6d9", "#9ad17f"];
+
+/**
+ * A speaker colour, or undefined.
+ *
+ * This arrives from the publisher and ends up in a style attribute on the
+ * viewer. On the embedded relay the publisher is the desktop app; on a hosted
+ * one it is whoever holds a publish token. So it is untrusted input on its way
+ * into CSS. Anything that is not plainly `#rrggbb` is dropped rather than
+ * escaped - there is no reason to accept `red`, `var(--x)` or a URL, and every
+ * reason not to try to clean up something that looks like one.
+ */
+export function safeSpeakerColor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(v) ? v : undefined;
 }
 
 /** what a device enumerates as; a virtual chat mix is indistinguishable from a headset */
@@ -784,6 +809,8 @@ export interface SpeakerTag {
   channel?: number;
   /** short label shown before the line, e.g. "YOU" / "CHAT" */
   speaker?: string;
+  /** `#rrggbb` the tag is painted in; absent means the viewer's own default */
+  color?: string;
 }
 
 export type ServerToViewer =
@@ -824,6 +851,8 @@ export type PublisherToServer =
       channels?: 1 | 2 | 3;
       /** speaker tag per channel, e.g. ["YOU", "CHAT"] */
       channelLabels?: string[];
+      /** `#rrggbb` per channel, parallel to channelLabels */
+      channelColors?: string[];
     }
   | { type: "ping" };
 
