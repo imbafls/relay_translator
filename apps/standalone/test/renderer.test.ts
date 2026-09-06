@@ -22,6 +22,9 @@ const html = fs.readFileSync(path.join(rendererDir, "index.html"), "utf8");
 interface Calls {
   setConfig: Partial<AppConfig>[];
   validateKey: string[];
+  /** provider + the exact string validated - a count alone cannot tell a
+   *  re-check of the saved key from a second debounce of the typed one */
+  validated: { provider: string; key: string }[];
 }
 
 let calls: Calls;
@@ -45,8 +48,9 @@ function bridge(config: AppConfig) {
     },
     prepareSession: async () => ({ viewerUrl: "", localViewerUrl: "", relayUrl: "" }),
     rotateLink: async () => undefined,
-    validateKey: async (provider: "deepgram" | "gemini") => {
+    validateKey: async (provider: "deepgram" | "gemini", key: string) => {
       calls.validateKey.push(provider);
+      calls.validated.push({ provider, key });
       return { valid: true };
     },
     checkForUpdate: async () => undefined,
@@ -81,7 +85,7 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 }
 
 async function bootWith(config: Partial<AppConfig>): Promise<void> {
-  calls = { setConfig: [], validateKey: [] };
+  calls = { setConfig: [], validateKey: [], validated: [] };
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
 
@@ -163,6 +167,49 @@ describe("setup reopening on keys that are already saved", () => {
   it("re-checks a saved Deepgram key too", async () => {
     await bootWith({ setupDone: false, deepgramApiKey: "dg-saved-earlier" });
     await waitFor(() => calls.validateKey.includes("deepgram"), "the deepgram re-check");
+  });
+
+  /**
+   * The one a real user hit: they pasted a new Deepgram key into KEYS, clicked
+   * RUN SETUP AGAIN without saving, and setup came up showing the OLD key as
+   * VALID. Continuing wrote the dead key back, so the pasted one vanished and
+   * they had to paste it again - which is exactly what they reported.
+   *
+   * The cause was a verdict cache keyed by provider rather than by the string
+   * it was earned for, so the verdict for the newly typed key was read back
+   * against the old saved one and used to suppress the re-check.
+   */
+  it("re-checks the saved key rather than trusting a verdict for a different string", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved-earlier" });
+    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    await settle();
+
+    // type a different key, and let it earn a verdict of its own
+    const field = document.getElementById("deepgramApiKey") as HTMLInputElement;
+    field.value = "dg-freshly-pasted";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(
+      () => calls.validated.some((v) => v.key === "dg-freshly-pasted"),
+      "the check for the typed key",
+    );
+
+    // reopen setup without saving: the field refills from the saved config, so
+    // the cached verdict belongs to a string that is no longer in play
+    // boot may already have validated the saved key, so only entries recorded
+    // AFTER this click count - otherwise the assertion is satisfied by history
+    const before = calls.validated.length;
+    (document.getElementById("keysSetup") as HTMLButtonElement).click();
+    // the saved key itself must be re-validated. Counting calls is not enough:
+    // a second debounce of the typed key would satisfy a count and prove
+    // nothing, which is how the first version of this test passed against the
+    // very bug it was written for.
+    await waitFor(
+      () =>
+        calls.validated
+          .slice(before)
+          .some((v) => v.provider === "deepgram" && v.key === "dg-saved-earlier"),
+      "the saved key to be re-checked instead of reusing the other key's verdict",
+    );
   });
 
   it("does not check a key that was never saved", async () => {

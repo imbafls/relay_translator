@@ -52,7 +52,27 @@ let view: View = "stage";
 let syncing = false;
 /** which link the footer shows when output = both */
 let linkChoice: "phone" | "obs" = "phone";
-const keyCheck: { deepgram?: KeyValidation | "checking"; gemini?: KeyValidation | "checking" } = {};
+/**
+ * Validation verdicts, keyed by the string they were earned for.
+ *
+ * Caching by provider alone silently discarded a pasted key: reopening setup
+ * refilled the field from the SAVED config, found a verdict left behind by the
+ * string the user had just typed over, showed the old key as VALID, and wrote
+ * it back on CONTINUE. `verdictFor` makes a verdict for a different string
+ * count as no verdict at all, which is what re-runs the check.
+ */
+const keyCheck: {
+  deepgram?: { key: string; result: KeyValidation | "checking" };
+  gemini?: { key: string; result: KeyValidation | "checking" };
+} = {};
+
+function verdictFor(
+  provider: "deepgram" | "gemini",
+  key: string | undefined,
+): KeyValidation | "checking" | undefined {
+  const cached = keyCheck[provider];
+  return cached && key && cached.key === key ? cached.result : undefined;
+}
 let update: UpdateStatus | null = null;
 /** local STT models on disk / downloading (from the main process) */
 let localModels: LocalModelStatus[] = [];
@@ -718,18 +738,23 @@ async function checkKey(provider: "deepgram" | "gemini", key: string): Promise<K
     delete keyCheck[provider];
     return { valid: false, detail: "empty" };
   }
-  keyCheck[provider] = "checking";
+  keyCheck[provider] = { key, result: "checking" };
   renderChain();
   const res = await cr.validateKey(provider, key);
-  keyCheck[provider] = res;
+  // the field can have moved on while this was in flight; the onboarding
+  // checks already guard for that, and this one has to as well or a slow
+  // verdict lands on top of a newer key
+  if (keyCheck[provider]?.key !== key) return res;
+  keyCheck[provider] = { key, result: res };
   renderChain();
   if (view === "keys") renderKeyStatuses();
   return res;
 }
 
 function keyStateLabel(provider: "deepgram" | "gemini"): { text: string; cls: string } {
-  const present = provider === "deepgram" ? !!config.deepgramApiKey : !!config.geminiApiKey;
-  const chk = keyCheck[provider];
+  const saved = provider === "deepgram" ? config.deepgramApiKey : config.geminiApiKey;
+  const present = !!saved;
+  const chk = verdictFor(provider, saved);
   if (!present) return { text: "KEY NEEDED", cls: "warn" };
   if (chk === "checking") return { text: "CHECKING…", cls: "" };
   if (chk && !chk.valid) return { text: chk.detail === "no connection" || chk.detail === "timed out" ? "KEY ?" : "KEY INVALID", cls: "warn" };
@@ -1121,8 +1146,8 @@ function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | 
 }
 
 function renderKeyStatuses(): void {
-  fieldStatus("dgStatus", inp("deepgramApiKey").value.trim(), keyCheck.deepgram, true);
-  fieldStatus("gmStatus", inp("geminiApiKey").value.trim(), keyCheck.gemini, false);
+  fieldStatus("dgStatus", inp("deepgramApiKey").value.trim(), verdictFor("deepgram", inp("deepgramApiKey").value.trim()), true);
+  fieldStatus("gmStatus", inp("geminiApiKey").value.trim(), verdictFor("gemini", inp("geminiApiKey").value.trim()), false);
   const relay = inp("relayUrl").value.trim();
   const rs = $("relayStatus");
   rs.className = "field-status";
@@ -1241,8 +1266,8 @@ function openSetup(): void {
   obTierPicked = false;
   inp("obDeepgramKey").value = config.deepgramApiKey || "";
   inp("obGeminiKey").value = config.geminiApiKey || "";
-  obDeepgram = config.deepgramApiKey && keyCheck.deepgram !== "checking" ? keyCheck.deepgram : undefined;
-  obGemini = config.geminiApiKey && keyCheck.gemini !== "checking" ? keyCheck.gemini : undefined;
+  obDeepgram = verdictFor("deepgram", config.deepgramApiKey) === "checking" ? undefined : verdictFor("deepgram", config.deepgramApiKey);
+  obGemini = verdictFor("gemini", config.geminiApiKey) === "checking" ? undefined : verdictFor("gemini", config.geminiApiKey);
   if (config.deepgramApiKey && !obDeepgram) obCheckDeepgram();
   // the same repair for Gemini: without it a saved key that has never been
   // checked this run leaves step 2 showing EMPTY with CONTINUE dead, and the
@@ -1568,7 +1593,7 @@ const obCheckDeepgram = debounce(async () => {
   const res = await cr.validateKey("deepgram", key);
   if (inp("obDeepgramKey").value.trim() !== key) return;
   obDeepgram = res;
-  keyCheck.deepgram = res;
+  keyCheck.deepgram = { key, result: res };
   renderOnboarding();
 }, 500);
 
@@ -1584,7 +1609,7 @@ const obCheckGemini = debounce(async () => {
   const res = await cr.validateKey("gemini", key);
   if (inp("obGeminiKey").value.trim() !== key) return;
   obGemini = res;
-  keyCheck.gemini = res;
+  keyCheck.gemini = { key, result: res };
   renderObKeyStatus();
 }, 500);
 
