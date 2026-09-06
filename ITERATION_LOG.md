@@ -1675,3 +1675,25 @@ test is the shipped one.
 live room is still unmeasured, and it cannot be measured by writing code - it
 needs a real stream held open for an hour and a look at the Workers dashboard.
 Left as it was, with the reason written down rather than quietly dropped.
+
+**Deployed, and then measured** (same turn, after the commit above). The binding
+came up as `env.CLAIM_LIMIT (5 requests/60s)`, and both verification scripts were
+re-run against `relay.supr.systems`: `verify-deploy` 14/14, `verify-isolation`
+9/9. The relay reported `live:false, viewers:0` first, so nothing was cut off.
+
+Then the limit itself was checked, and the first seven claims all returned 200.
+That is not the limit failing - Cloudflare documents this API as "permissive,
+eventually consistent, and intentionally designed to not be used as an accurate
+accounting system", with counters cached per location and reconciled
+asynchronously. Under sustained pressure it does engage: **the 25th sequential
+claim was the first 429.**
+
+Worth writing down exactly, because "5 requests/60s" in the deploy output reads
+like a promise it does not make. It caps sustained abuse and will not stop a
+burst - which is a fair trade for rooms that are worthless without their secrets
+and free when idle, and a bad thing to misremember later. An exact limit would
+need a Durable Object counter on the claim path: an invocation per claim, to
+protect something that costs nothing.
+
+The ~24 rooms that measurement minted joined the un-reaped pile the README
+already lists.

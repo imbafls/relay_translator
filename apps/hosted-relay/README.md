@@ -170,6 +170,21 @@ inviting anyone.
   WebSocket is accepted, not requests, and that has never been checked against a
   real stream. `LocalServer/SUPR-SYSTEMS-PROBES.md` puts a weekly look on the
   list.
-- **`POST /claim` has no rate limit.** Anyone can mint rooms. They are worthless
-  without their secrets and idle ones cost nothing, but this belongs here before
-  the endpoint is advertised.
+- **`POST /claim` is rate limited, but loosely - know what that buys.** A
+  `[[ratelimits]]` binding, 5 per 60s keyed on `CF-Connecting-IP`, checked
+  before any room id is minted so a refused claim wakes no Durable Object.
+
+  **Measured against the deployed service on 2026-09-06: the 25th sequential
+  claim was the first to be refused.** That is the documented behaviour, not a
+  misconfiguration - Cloudflare describes this API as "permissive, eventually
+  consistent, and intentionally designed to not be used as an accurate
+  accounting system", with counters cached per location and reconciled
+  asynchronously. It is also per Cloudflare location, not global.
+
+  So it caps sustained abuse and does **not** stop a burst. That is a
+  reasonable trade for rooms that are worthless without their secrets and cost
+  nothing idle; it is not a reasonable thing to assume means "five a minute".
+  An exact limit would need a Durable Object counter on the claim path, which
+  costs an invocation per claim to protect something nearly free.
+
+  Those ~24 rooms from the measurement joined the un-reaped pile above.
