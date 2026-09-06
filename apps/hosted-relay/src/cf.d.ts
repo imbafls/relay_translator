@@ -49,3 +49,12 @@ interface WebSocket {
 interface ResponseInit {
   webSocket?: WebSocket;
 }
+
+/**
+ * The Workers rate-limiting binding (GA since 2025-09). Configured in
+ * wrangler.toml under [[ratelimits]]; `limit()` counts one hit against `key`
+ * and answers whether it is still under the configured ceiling.
+ */
+interface RateLimit {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}

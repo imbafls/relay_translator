@@ -1633,3 +1633,45 @@ could be pulled on its own:
   session`, status ERROR, `every audio source disconnected` on the stage.
 
 Before this, every one of those was silent.
+
+### Turn 49 - Message orchestration (a mint endpoint with no limit)
+
+One of the two gates on handing the hosted relay's URL to anyone else.
+
+`POST /claim` mints a room for whoever asks. The rooms are worthless without
+their secrets and an idle one costs nothing, which is why this was survivable
+while the URL was unadvertised - and exactly why it had to close before it was
+not.
+
+**The limit is the platform's, not the Worker's.** `src/index.ts` holds no state
+by design, and that rule is load-bearing: the single-tenant relay's bugs at
+tenant scale are all module-scope singletons. A counter up there would also be
+per-isolate and per-colo, which is to say not a limit at all. So it is a
+`[[ratelimits]]` binding - five a minute per address. A streamer claims one room
+ever and the app claims one on first run, so five leaves room for a retry and a
+second machine and no room for a script.
+
+**Checked before the room id is minted**, and before any Durable Object is
+addressed. A refused claim has to cost nothing, and an object that runs is an
+object that bills. There is a test for exactly that, because doing the check one
+line later would look identical and quietly bill for every rejection.
+
+**Keyed on `CF-Connecting-IP` and nothing else.** Cloudflare writes that header
+on every request and overwrites whatever the caller sent; `X-Forwarded-For` is
+just a string the client typed. Keying on the second would hand every caller
+their own private bucket and the limit would count to one forever. Where there
+is no address at all - `wrangler dev`, a test - everyone shares one bucket,
+because a unique key per request is not a limit either.
+
+The binding is optional in `Env`, so the service still runs locally with nothing
+bound. That is also the honest description of production until this is deployed.
+
+**Guards - three, each watched fail against its own revert:** the check removed,
+the check moved after the room is created, and the forwarded-for header trusted.
+They drive the real `fetch` with the binding stood in for, so the decision under
+test is the shipped one.
+
+**Not done here:** the other gate. Billed Durable Object duration for an hour of
+live room is still unmeasured, and it cannot be measured by writing code - it
+needs a real stream held open for an hour and a look at the Workers dashboard.
+Left as it was, with the reason written down rather than quietly dropped.

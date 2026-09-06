@@ -46,3 +46,22 @@ class_name = "Room"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+# POST /claim mints a room for anybody who asks. The rooms are worthless
+# without their secrets and idle ones cost nothing, but an unthrottled mint
+# endpoint is not something to discover after handing the URL out.
+#
+# The limit lives here rather than in the Worker because src/index.ts holds no
+# state, deliberately - a counter up there would be per-isolate and per-colo,
+# which is to say not a limit. `period` may only be 10 or 60.
+#
+# Five a minute per address: a streamer claims one room, ever, and the desktop
+# app claims one on first run. Five leaves room for a retry and a second
+# machine without leaving room for a script.
+[[ratelimits]]
+name = "CLAIM_LIMIT"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 5
+  period = 60

@@ -22,6 +22,30 @@ interface Env {
   ROOM: DurableObjectNamespace;
   /** the shipped viewer page and its fonts, from packages/viewer/public */
   ASSETS: { fetch(req: Request): Promise<Response> };
+  /**
+   * Rate limit on POST /claim. Optional so `wrangler dev` and the tests run
+   * without one; absent means unlimited, which is what production was.
+   */
+  CLAIM_LIMIT?: RateLimit;
+}
+
+/** everyone Cloudflare could not name shares one bucket */
+const ANON_CLAIMER = "anon";
+
+/**
+ * Which bucket a claim counts against.
+ *
+ * `CF-Connecting-IP` only, never `X-Forwarded-For`. Cloudflare writes the first
+ * one on every request and overwrites whatever the caller sent; the second is
+ * simply a header the client typed, so keying on it would hand every caller
+ * their own private bucket and the limit would count to one forever.
+ *
+ * With no address at all - `wrangler dev`, a test - everything shares
+ * ANON_CLAIMER. A unique key per request would be no limit at all, so sharing
+ * one is the safe reading.
+ */
+export function claimRateKey(request: Request): string {
+  return request.headers.get("CF-Connecting-IP")?.trim() || ANON_CLAIMER;
 }
 
 export default {
@@ -43,6 +67,13 @@ export default {
         return env.ASSETS.fetch(assetRequest(url, route.rel));
 
       case "claim": {
+        // Checked BEFORE the room id is minted and before any Durable Object is
+        // addressed: a refused claim has to cost nothing, and an object that
+        // runs is an object that bills.
+        const allowed = env.CLAIM_LIMIT ? (await env.CLAIM_LIMIT.limit({ key: claimRateKey(request) })).success : true;
+        if (!allowed) {
+          return json({ error: "too many rooms claimed from here - try again in a minute" }, 429);
+        }
         // no account system: a room is claimed anonymously and is worthless
         // without its secrets. The id is generated here so the caller cannot
         // choose one and squat on somebody else's.
