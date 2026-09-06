@@ -5,6 +5,24 @@ compatibility_date = "2026-09-01"
 # Omertaji@gmail.com. Pinned so a deploy never has to guess between accounts.
 account_id = "c9b5a04c1a901e52c8d99c576ee55f90"
 
+# The relay answers on its own name. supr.systems moved to Cloudflare DNS on
+# 2026-09-06 for exactly this - a Worker custom domain needs the zone on
+# Cloudflare, and a CNAME from another DNS host does not work.
+#
+# Cloudflare creates the DNS record itself, which is why the old
+# relay -> 187.124.87.202 A record (the retired VPS) was deliberately not
+# recreated during the migration: a custom domain cannot attach to a hostname
+# that already has a conflicting record.
+#
+# workers_dev stays on. It is the fallback if anything about the custom domain
+# goes wrong, and the desktop app can be moved across deliberately rather than
+# being cut over by a deploy.
+workers_dev = true
+
+routes = [
+  { pattern = "relay.supr.systems", custom_domain = true }
+]
+
 # The viewer page is the one the desktop app already ships. Serving it from the
 # asset binding keeps it edge-cached and free, and keeps the page same-origin
 # with its WebSocket - app.js builds the socket URL from location.host.

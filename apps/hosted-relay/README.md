@@ -8,9 +8,10 @@ phone viewers without running a server. One Durable Object per streamer.
 `packages/relay` is single-tenant by construction. It holds one publisher
 (`server.ts:207`), one flat viewer map and one global `currentLanguages`, and a
 second streamer connecting evicts the first (`server.ts:556`, "publisher
-replaced by new connection"). So `relay.supr.systems` serves exactly one person
-at a time and cannot be offered to users at all — not for want of credentials,
-but because the program cannot do it.
+replaced by new connection"). The VPS that used to run it served exactly one
+person at a time and could not be offered to users at all — not for want of
+credentials, but because the program cannot do it. That VPS is retired, and
+`relay.supr.systems` now points here instead.
 
 Those three globals are what a Durable Object gives you per-room for free. The
 room's logic is the old server's live half; isolation stops being something to
@@ -120,7 +121,7 @@ languages, neither room's captions reach the other, one room's secret cannot
 open another, and each room counts only its own viewers.
 
 Both passed against the live deployment on 2026-09-06 (14/14 and 9/9):
-https://callout-relay-hosted.calloutrelay.workers.dev
+https://relay.supr.systems
 
 ### Two things only deploying could catch
 
@@ -151,9 +152,6 @@ inviting anyone.
 
 ## Still open
 
-- No abuse control on `POST /claim`. Anyone can mint rooms. Rooms are worthless
-  without their secrets and idle ones cost nothing, but a rate limit belongs
-  here before the endpoint is public.
 - Idle rooms are never reaped. A room's record is tiny, but there is no TTL.
 - **An unexplained viewer socket, seen once.** The first room the desktop app
   attached to reported one viewer with nothing watching; a room claimed after
@@ -168,10 +166,10 @@ inviting anyone.
   on top of it (1 -> 2). Cosmetic today, since the number is only shown in the
   app's readout, but it is unaccounted for and should be chased before anyone
   relies on the count.
-- **A custom domain is still not set up.** The service answers on
-  `callout-relay-hosted.calloutrelay.workers.dev`. Putting it on
-  `relay.supr.systems` needs that zone moved to Cloudflare nameservers - Workers
-  custom domains require the zone on Cloudflare, and a CNAME from another DNS
-  host does not work. supr.systems is currently on Hostinger nameservers with
-  the apex served by Vercel, so this is a DNS migration with a live site
-  attached, not a setting.
+- **Cost is unmeasured.** Durable Objects bill wall-clock duration while a
+  WebSocket is accepted, not requests, and that has never been checked against a
+  real stream. `LocalServer/SUPR-SYSTEMS-PROBES.md` puts a weekly look on the
+  list.
+- **`POST /claim` has no rate limit.** Anyone can mint rooms. They are worthless
+  without their secrets and idle ones cost nothing, but this belongs here before
+  the endpoint is advertised.
