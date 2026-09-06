@@ -8,6 +8,7 @@ import {
   SPEAKER_COLORS,
   validRelayPort,
   relayRollbackPatch,
+  viewerLinkFor,
 } from "../src/index";
 import type { AppConfig } from "../src/index";
 
@@ -239,5 +240,52 @@ describe("putting relay settings back after a failed restart", () => {
     // "" rather than undefined: ConfigStore.merge skips undefined, so undefined
     // would leave the bad value in place - the same trap saveSettings works round
     expect(relayRollbackPatch(before, after).relayUrl).toBe("wss://a");
+  });
+});
+
+describe("which viewer link is handed out", () => {
+  /**
+   * Audit finding 20. `localViewerUrl()` hardcoded the OBS flavour and
+   * `viewerUrl()`'s fallback returned it unchanged. The desktop footer strips
+   * the suffix itself; the tray and the Stream Deck property inspector do not.
+   *
+   * On a fresh install - `output: "phone"`, no relayUrl - the phone link is
+   * undefined, so the fallback handed out
+   * `http://192.168.x.x:8787/watch/T?obs=1`. The recipient opened the overlay
+   * variant on a phone: transparent body, white text, no HUD, every history row
+   * hidden, no display settings. One line at a time on the browser's own
+   * background, and nothing to say why.
+   */
+  const OBS = "http://192.168.1.5:8787/watch/T?obs=1";
+  const PLAIN = "http://192.168.1.5:8787/watch/T";
+  const REMOTE = "https://relay.example/watch/T";
+
+  it("gives the plain page when the output is the phone, even with no remote relay", () => {
+    // this is the fresh-install case, and the one that was broken
+    expect(viewerLinkFor({ output: "phone", obsUrl: OBS, plainUrl: PLAIN })).toBe(PLAIN);
+  });
+
+  it("prefers the internet link when there is one", () => {
+    expect(viewerLinkFor({ output: "phone", obsUrl: OBS, plainUrl: PLAIN, remoteUrl: REMOTE })).toBe(REMOTE);
+  });
+
+  it("gives the overlay flavour when the output is OBS, which is the whole point of it", () => {
+    expect(viewerLinkFor({ output: "obs", obsUrl: OBS, plainUrl: PLAIN, remoteUrl: REMOTE })).toBe(OBS);
+  });
+
+  it("treats both as a phone link, because that is the one people are sent", () => {
+    expect(viewerLinkFor({ output: "both", obsUrl: OBS, plainUrl: PLAIN, remoteUrl: REMOTE })).toBe(REMOTE);
+    expect(viewerLinkFor({ output: "both", obsUrl: OBS, plainUrl: PLAIN })).toBe(PLAIN);
+  });
+
+  it("has nothing to give before the relay is up", () => {
+    expect(viewerLinkFor({ output: "phone" })).toBeUndefined();
+    expect(viewerLinkFor({ output: "obs" })).toBeUndefined();
+  });
+
+  it("never falls back to the overlay flavour for a phone", () => {
+    // the specific regression: with no plain link available it must give
+    // nothing rather than the transparent one-line overlay
+    expect(viewerLinkFor({ output: "phone", obsUrl: OBS })).toBeUndefined();
   });
 });

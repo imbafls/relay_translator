@@ -198,6 +198,33 @@ export function isLocalStt(id: string): boolean {
 export const MAX_CAPTURE_CHANNELS = 3;
 
 /**
+ * The viewer link to hand out, given what is available.
+ *
+ * `localViewerUrl()` hardcoded the OBS flavour and the fallback returned it
+ * unchanged. The desktop footer strips `?obs=1` itself; the tray and the Stream
+ * Deck property inspector do not - so on a fresh install (`output: "phone"`, no
+ * relay URL) both handed out the overlay variant. The recipient opened it on a
+ * phone and got a transparent body, white text, no HUD, every history row
+ * hidden and no display settings: one line at a time on the browser's own
+ * background, with nothing to say why.
+ *
+ * The overlay flavour is only ever right when the output IS the overlay. It is
+ * never a fallback - undefined is better than a link that renders wrong.
+ */
+export function viewerLinkFor(opts: {
+  output: OutputTarget;
+  /** local relay, `?obs=1` */
+  obsUrl?: string;
+  /** local relay, no suffix */
+  plainUrl?: string;
+  /** through a remote relay, reachable off the LAN */
+  remoteUrl?: string;
+}): string | undefined {
+  if (opts.output === "obs") return opts.obsUrl;
+  return opts.remoteUrl || opts.plainUrl;
+}
+
+/**
  * The config fields that decide what the embedded relay and the uplink are.
  * Changing any of them means the relay has to be rebuilt.
  */

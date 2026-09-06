@@ -30,6 +30,7 @@ import {
   controlConfigPatch,
   RELAY_CONFIG_KEYS,
   relayRollbackPatch,
+  viewerLinkFor,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
 import { ModelStore } from "./models";
@@ -120,10 +121,16 @@ function httpOriginOfRelayUrl(relayUrl: string): string | null {
   return `${scheme}://${m[2]}`;
 }
 
-/** OBS / LAN viewer link - always the local embedded relay */
-function localViewerUrl(): string | undefined {
+/**
+ * LAN viewer link from the local embedded relay.
+ *
+ * The `obs` flavour carries `?obs=1` and renders as a transparent single-line
+ * overlay. It used to be the only thing this returned, which is how the tray
+ * and the Stream Deck ended up handing it to people's phones.
+ */
+function localViewerUrl(obs = true): string | undefined {
   if (!relay) return undefined;
-  return relay.viewerUrl(relay.state.viewerToken, true);
+  return relay.viewerUrl(relay.state.viewerToken, obs);
 }
 
 /** internet viewer link - remote relay, if configured */
@@ -138,8 +145,12 @@ function phoneUrl(): string | undefined {
 
 /** the link shown front-and-center (tray, Stream Deck): follows the OUTPUT choice */
 function viewerUrl(): string | undefined {
-  if (config().output === "obs") return localViewerUrl();
-  return phoneUrl() || localViewerUrl();
+  return viewerLinkFor({
+    output: config().output,
+    obsUrl: localViewerUrl(true),
+    plainUrl: localViewerUrl(false),
+    remoteUrl: phoneUrl(),
+  });
 }
 
 function publisherWsUrl(): string | undefined {

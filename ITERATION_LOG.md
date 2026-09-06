@@ -1935,3 +1935,34 @@ a number between 1024 and 65535 - "70000" is not`, the panel stays open, and
 focus lands on the offending field. `8787` and SAVE: `settings saved`, panel
 closes. Before this, the first of those wrote the bad port and closed the panel
 saying it had worked.
+
+### Turn 55 - Message orchestration (audit finding 20: the wrong link handed to a friend)
+
+Small, and it matters more now that the point of the last few turns is being
+able to share a link.
+
+`localViewerUrl()` hardcoded the OBS flavour - `relay.viewerUrl(token, true)` -
+and `viewerUrl()`'s fallback returned it unchanged. The desktop footer strips
+`?obs=1` itself; the tray and the Stream Deck property inspector do not.
+
+So on a **fresh install** - `output: "phone"`, no relay URL, which is the
+documented default - the phone link is undefined and the fallback handed out
+`http://192.168.x.x:8787/watch/T?obs=1`. The recipient opened the overlay
+variant on a phone: transparent body, white text, no HUD, every history row
+hidden, no display settings. One line at a time on the browser's own
+background, and nothing anywhere to say why.
+
+`viewerLinkFor()` in `shared` decides it now, and the rule it encodes is that
+**the overlay flavour is never a fallback**. It is right only when the output IS
+the overlay; where there is no plain link, undefined is better than a link that
+renders wrong. `localViewerUrl(obs)` takes the flavour as an argument.
+
+**Guard watched fail**: reverting the fallback to `obsUrl` turns three of the
+six red, including the fresh-install case, on
+`expected 'http://192.168.1.5:8787/watch/T?obs=1' to be 'http://192.168.1.5:8787/watch/T'`.
+
+**Not verified in a browser.** The consumers are the tray menu and the Stream
+Deck property inspector, neither of which the renderer harness can reach - the
+Stream Deck also needs hardware, which is why audit finding 3 is blocked. What
+was checked in a browser earlier this session is the other half: the plain
+`/watch/<token>` does render the phone page, and `?obs=1` the overlay.
