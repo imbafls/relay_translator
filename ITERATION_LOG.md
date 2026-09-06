@@ -2170,3 +2170,39 @@ the old guard vacuous.
 
 This unblocks B6: the next real model-download failure will name which half
 broke.
+
+### Turn 61 - v0.5.5
+
+Asked for directly. Thirty-two commits of user-visible work had been sitting in
+`master` with nothing on anyone's machine.
+
+**Written before bumped.** `versions.test.ts` requires a changelog entry
+matching the app version, so the entry comes first or the gate fails on the
+release commit itself. Fourteen lines, written for the person streaming rather
+than for the repo - they did not choose to update, it happened on restart, so
+the panel has to justify the interruption in a few seconds.
+
+The changelog's own tests already enforce what matters here: no emoji, and no
+mention of any AI tooling. That is a standing instruction and it holds for the
+tag message and the published notes too, which is why the release commit carries
+no `Co-Authored-By` trailer - matching v0.5.4, which was the first release under
+that rule.
+
+**One source for both.** `scripts/release-notes.mjs` renders the same changelog
+into the tag message and the GitHub release body, so the panel a user sees after
+updating and the notes they read on the releases page cannot drift. The publish
+job's own notes were the bare "Full Changelog" link; the prose was pushed over
+them afterwards, which is what v0.5.4 did too.
+
+**Gate, then tag.** Build, typecheck, test types, 628 tests, renderer ids and
+smoke - all green locally before the tag existed, because the workflow's
+tag/version guard means a failed release is a tag you have to delete.
+
+**Run 34047228182: windows, linux-relay and publish all green.** Seven assets.
+`releases/latest/download/latest.yml` reads `version: 0.5.5` with a sha512
+matching the published installer, and `SHA256SUMS.txt` is alongside it. That
+feed is what the laptop reads, so this reaches a real machine on its next check.
+
+**Still not signed.** B4 is unchanged: no certificate, so the sha512 in
+`latest.yml` remains the only integrity proof for an update. Worth restating on
+a release day rather than only in the backlog.
