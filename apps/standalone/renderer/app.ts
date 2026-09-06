@@ -1160,7 +1160,10 @@ function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | 
 }
 
 function renderKeyStatuses(): void {
-  fieldStatus("dgStatus", inp("deepgramApiKey").value.trim(), verdictFor("deepgram", inp("deepgramApiKey").value.trim()), true);
+  // required only when the cloud engine is actually in use. Hard-coding true
+  // put an amber NOT SET on the Deepgram key for anyone running a local model,
+  // flagging a key they do not need and never will
+  fieldStatus("dgStatus", inp("deepgramApiKey").value.trim(), verdictFor("deepgram", inp("deepgramApiKey").value.trim()), !sttIsLocal());
   fieldStatus("gmStatus", inp("geminiApiKey").value.trim(), verdictFor("gemini", inp("geminiApiKey").value.trim()), false);
   const relay = inp("relayUrl").value.trim();
   const rs = $("relayStatus");

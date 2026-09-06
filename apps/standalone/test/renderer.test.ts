@@ -434,3 +434,28 @@ describe("reaching the OBS overlay link", () => {
     expect(src).toMatch(/id="linkSeg"(?![^>]*hidden)/);
   });
 });
+
+describe("the Deepgram key status", () => {
+  /**
+   * fieldStatus took required=true unconditionally, so a user running speech
+   * on their own machine saw an amber NOT SET against a cloud key they do not
+   * need and never will - the panel flagging a problem that does not exist.
+   */
+  const dgStatus = () => document.getElementById("dgStatus") as HTMLElement;
+
+  it("does not flag a missing cloud key when speech runs locally", async () => {
+    await bootWith({ setupDone: true, stt: "local-zipformer-en-20m", deepgramApiKey: "" });
+    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    await settle(40);
+
+    expect(dgStatus().classList.contains("warn"), "amber on a key that is not needed").toBe(false);
+  });
+
+  it("still flags it when the cloud engine is the one selected", async () => {
+    await bootWith({ setupDone: true, stt: "deepgram-nova-3", deepgramApiKey: "" });
+    (document.getElementById("keysBtn") as HTMLButtonElement).click();
+    await settle(40);
+
+    expect(dgStatus().classList.contains("warn"), "a genuinely missing key went unflagged").toBe(true);
+  });
+});
