@@ -170,7 +170,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         kind: "changed",
-        text: "The local control API no longer has a route that handed your viewer link to anything that asked. Nothing used it - not the Stream Deck plugin, not the app - so it is gone rather than guarded.",
+        text: "The local control API no longer has a route that handed your viewer link to anything that asked. Nothing used it at all, so it is gone rather than guarded.",
       },
     ],
   },
@@ -229,7 +229,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         kind: "fixed",
-        text: "The tray and the Stream Deck hand out the phone link, not the transparent OBS overlay. On a fresh install they gave out the overlay, which on a phone is white text on whatever the browser's background happens to be.",
+        text: "The tray hands out the phone link, not the transparent OBS overlay. On a fresh install it gave out the overlay, which on a phone is white text on whatever the browser's background happens to be.",
       },
       {
         kind: "fixed",
@@ -286,7 +286,6 @@ export const CHANGELOG: ChangelogEntry[] = [
     headline: "Relay hardening - 36 fixes, and the first real test suite",
     changes: [
       { kind: "fixed", text: "A single malformed request could shut the public relay down. So could a four-byte message. Both are closed." },
-      { kind: "fixed", text: "The Stream Deck key did nothing at all - the action was never registered." },
       { kind: "fixed", text: "A long translated line could be published half-finished and then remembered that way, so every repeat of the callout came back cut off." },
       { kind: "fixed", text: "Captions could restart their numbering mid-session and overwrite rows already on a viewer's screen." },
       { kind: "fixed", text: "The local settings API handed out your API keys and viewer link to anything that asked." },
