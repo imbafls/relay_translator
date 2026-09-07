@@ -146,6 +146,13 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
     let opened = 0;
     for (;;) {
       let skip = 0;
+      /**
+       * True only while this generator is suspended at `yield`. An error that
+       * arrives in that window was thrown INTO it by whoever is reading -
+       * `pipeline` destroying this source with the decoder's own error - so it
+       * says nothing about the transport.
+       */
+      let fromConsumer = false;
       opened += 1;
       try {
         const res = await call(url, {
@@ -184,12 +191,18 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
             skip = 0;
           }
           received += buf.length;
+          fromConsumer = true;
           yield buf;
+          fromConsumer = false;
         }
         return;
       } catch (err) {
         // a cancelled download is not a broken one
         if (opts.signal.aborted) throw err;
+        // the consumer's own failure, arriving through the yield above. Retrying
+        // would re-download a file nothing is reading any more, and announcing
+        // it as a lost connection sends the reader at the wrong half.
+        if (fromConsumer) throw err;
         if ((err as { noResume?: boolean }).noResume) throw err;
         const detail = String((err as Error).message || err);
         // a failure that arrives after new bytes is a fresh problem, not the

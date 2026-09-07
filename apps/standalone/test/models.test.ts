@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { SttModelInfo } from "@callout-relay/shared";
 import * as http from "node:http";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { ModelStore, publishRetry, resumableBody } from "../src/models";
 
 /**
@@ -551,6 +553,49 @@ describe("a download that survives the connection dropping", () => {
     for await (const c of stream) parts.push(c as Buffer);
     return Buffer.concat(parts);
   };
+
+  it("does not report the consumer's own error as a lost connection", async () => {
+    /**
+     * `yield` sits inside the try, so when `pipeline` destroys this source with
+     * the DECODER's error, that error lands in the transport catch and gets
+     * announced as a dropped connection. The real log read:
+     *
+     *   lost the connection at 44% - resuming from byte 52361323
+     *     (Error in bzip2: crc32 do not match)
+     *
+     * A bz2 CRC mismatch is not a dropped connection, and saying so sends
+     * whoever reads it at the wrong half of the problem - which is exactly what
+     * it did. An error arriving while suspended at `yield` came from the
+     * consumer, and there is nothing about the transport to retry.
+     */
+    const retries: string[] = [];
+    const payload = Buffer.alloc(64 * 1024, 7);
+    const SIZE = 4096;
+    const fetchImpl = (async () => ({
+      ok: true,
+      status: 200,
+      body: (async function* () {
+        for (let off = 0; off < payload.length; off += SIZE) {
+          yield new Uint8Array(payload.subarray(off, off + SIZE));
+        }
+      })(),
+    })) as unknown as typeof fetch;
+
+    const body = resumableBody("http://example.invalid/consumer", {
+      signal: new AbortController().signal,
+      fetchImpl,
+      onRetry: (_at, detail) => retries.push(detail),
+    });
+
+    const boom = new Transform({
+      transform(_c, _e, cb) {
+        cb(new Error("Error in bzip2: crc32 do not match"));
+      },
+    });
+
+    await expect(pipeline(body, boom)).rejects.toThrow(/crc32/);
+    expect(retries, "the decoder's error was announced as a dropped connection").toEqual([]);
+  });
 
   it("copies each chunk out of memory the fetch implementation may reuse", async () => {
     /**
