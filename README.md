@@ -448,8 +448,9 @@ reached with your own keys under their own terms; none of their software is
 included here and none of it is relicensed by this file. The two fonts in
 `packages/viewer/public/fonts/` - Archivo and Martian Mono, self-hosted from
 Google Fonts - are redistributed under the SIL Open Font License, not this one.
-That licence asks for its text to travel with the files and it is not in the
-tree yet; `docs/OPEN-WORK.md` carries it.
+That licence asks for its text and the copyright notices to travel with the
+files, so they sit in `packages/viewer/public/fonts/OFL.txt`, which the Worker
+serves at `/fonts/OFL.txt` and the build copies wherever it copies the fonts.
 
 `packages/shared/test/license.test.ts` keeps this honest: the LICENSE file is
 the fact, every `license` field is a statement about it, and they have to

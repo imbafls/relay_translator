@@ -272,15 +272,19 @@ fix — read the numbered section there before starting.
   v0.5.1 and describes `ralph/pipeline-hardening` as an unmerged branch; that
   work is in `master`. Its *procedures* for the VPS are now moot (see the top of
   this file); the audio-routing and model-download sections are still good.
-- **The bundled fonts ship without their licence.**
-  `packages/viewer/public/fonts/` carries seven `.woff2` files - Archivo and
-  Martian Mono, self-hosted from Google Fonts - and the Worker serves them at
-  `/fonts/`. Both are under the SIL Open Font License, which requires its text
-  and the copyright notices to accompany redistributed files, and neither is in
-  the tree. Noticed while adding `LICENSE`, which prompted the question of what
-  the MIT grant does and does not cover.
-  **Fix:** add `packages/viewer/public/fonts/OFL.txt` with the licence text and
-  each family's copyright line, taken from the upstream font repositories rather
-  than written from memory. Small, but it needs the real notices.
+- ~~**The bundled fonts ship without their licence.**~~ Done —
+  `packages/viewer/public/fonts/OFL.txt` carries the OFL 1.1 text with both
+  copyright lines, taken verbatim from the upstream repositories. Worth keeping
+  the reason it was not written from memory: upstream says Archivo is **2020**
+  and Martian Mono **2021**, and both guesses were a year out. Neither font
+  declares a Reserved Font Name, so nothing has to be renamed.
+  One inherited oddity, recorded so nobody "fixes" it: Martian Mono contradicts
+  itself upstream and Google Fonts carried it through - `ofl/martianmono/OFL.txt`
+  says 2021 while the shipped binary's name table (nameID 0) says 2020. What is
+  being reproduced here is the licence file, so the licence file's year is the
+  one carried; editing another project's copyright notice would be worse than
+  inheriting its inconsistency.
+  `packages/shared/test/license.test.ts` now fails if a `.woff2` appears in that
+  directory with no notice covering it.
 - **Cosmetic:** the relay logs `data\relay-state.json` with a backslash on
   Linux. Only the log string is wrong; the file on disk is correct.
