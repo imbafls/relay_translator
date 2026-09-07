@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import * as http from "node:http";
 import { CONTROL_CLIENT_HEADER, DEFAULT_CONFIG } from "@callout-relay/shared";
 import type { AppConfig, ControlStatus } from "@callout-relay/shared";
 import { startControlServer } from "../src/controlServer";
@@ -256,5 +257,40 @@ describe("the route that handed out the viewer link", () => {
 
     expect(res.status, "the deletion took the live route with it").toBe(200);
     expect((await res.json()).viewerUrl).toContain("/watch/");
+  });
+});
+
+/**
+ * Audit finding 28, the half of it that can be run.
+ *
+ * The app awaited `startControl()` with no try/catch and installs no
+ * `unhandledRejection` handler, so anything already holding 127.0.0.1:47477
+ * took the whole of startup down with it - no tray, no window, and a process
+ * still holding the single-instance lock, which makes every relaunch quit
+ * silently. That only matters if the reject is real, so here it is, against a
+ * real socket. The call site is guarded at the source in
+ * `packages/shared/test/startupGuards.test.ts` - main.ts imports Electron and
+ * cannot be loaded here.
+ */
+describe("a control server that cannot have the port", () => {
+  it("rejects rather than resolving onto a port it does not hold", async () => {
+    const squatter = http.createServer();
+    await new Promise<void>((r) => squatter.listen(0, "127.0.0.1", () => r()));
+    const taken = (squatter.address() as { port: number }).port;
+
+    await expect(
+      startControlServer(
+        {
+          getStatus: status,
+          start: async () => {},
+          stop: async () => {},
+          patchConfig: async () => status(),
+          rotateLink: async () => {},
+        },
+        { port: taken },
+      ),
+    ).rejects.toThrow(/EADDRINUSE|listen/i);
+
+    await new Promise<void>((r) => squatter.close(() => r()));
   });
 });

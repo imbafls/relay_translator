@@ -2558,3 +2558,30 @@ stream - is checked against every secret in the fixture, so the route cannot
 come back quietly. The third is the counterweight: `/link/rotate` still answers
 the property inspector with a real link, because deleting that too would have
 been the easy way to make the first two pass.
+
+### Turn 72 - Startup (audit finding 28: a busy port that hid the whole app)
+
+`whenReady()` runs a fixed sequence: register IPC, start the embedded relay,
+start the control API, build the updater, `createTray()`, `createWindow()`. The
+relay start is wrapped. `await startControl()` was not, and nothing in the
+process installs an `unhandledRejection` handler.
+
+So anything holding 127.0.0.1:47477 - a second copy of the app, a crashed one
+whose socket has not been reaped, an unrelated process on a port with no
+registry entry - took the rest of startup with it. No window, no tray, no
+updater, and a process still holding the single-instance lock, which makes
+every relaunch quit silently. From the user's side: the app does not open, and
+there is nothing to read.
+
+The try/catch goes inside `startControl`, not around the call, so no future
+caller can forget it. Losing the control API costs the Stream Deck plugin;
+`controlBroadcast` is optional at every use and the log says what happened.
+
+**Guards - three, one watched fail** (`startControl has no try/catch, so a busy
+port aborts startup`). The first one matters more than it looks: it stands up a
+real socket on a real port and checks that `startControlServer` genuinely
+*rejects* rather than resolving or hanging, because the whole finding rests on
+that and nothing had ever asserted it. The call site itself cannot be run -
+main.ts imports Electron - so it is checked at the source the way finding 33
+is, plus the ordering the fix exists to protect: tray and window still come
+after the control API, or the guard would be checking nothing.

@@ -557,32 +557,49 @@ function registerIpc(): void {
 // control API (consumed by Stream Deck plugin)
 // ---------------------------------------------------------------------------
 
+/**
+ * Catches its own failure, deliberately. `startControlServer` rejects when it
+ * cannot bind 127.0.0.1:47477 - a second copy of the app, a crashed one whose
+ * socket has not been reaped, anything at all on a port with no registry entry
+ * - and this is awaited from `whenReady()` above `createTray()` and
+ * `createWindow()`, with no `unhandledRejection` handler anywhere in the
+ * process. An unguarded reject therefore meant no window, no tray and no
+ * updater, while the process kept the single-instance lock, so every relaunch
+ * quit silently: an app that will not open and no reason given.
+ *
+ * The Stream Deck is worth less than the app. `controlBroadcast` is optional at
+ * every use, so the only thing lost is the remote control, and the log says so.
+ */
 async function startControl(): Promise<void> {
-  const handle = await startControlServer({
-    getStatus: () => currentStatus(),
-    async start() {
-      win?.webContents.send("session:command", "start");
-    },
-    async stop() {
-      win?.webContents.send("session:command", "stop");
-    },
-    async patchConfig(patch) {
-      // this arrives from the control API, which has no credential and admits
-      // Origin: null - so it is a web page until proven otherwise. IPC from our
-      // own renderer still goes through applyConfig unfiltered.
-      const { allowed, rejected } = controlConfigPatch(patch);
-      if (rejected.length) {
-        log("warn", `control API tried to set ${rejected.join(", ")} - refused`);
-      }
-      if (Object.keys(allowed).length) await applyConfig(allowed);
-      return currentStatus();
-    },
-    async rotateLink() {
-      await rotateLink();
-    },
-  });
-  controlBroadcast = handle.broadcast;
-  log("info", `control API on 127.0.0.1:${handle.port}`);
+  try {
+    const handle = await startControlServer({
+      getStatus: () => currentStatus(),
+      async start() {
+        win?.webContents.send("session:command", "start");
+      },
+      async stop() {
+        win?.webContents.send("session:command", "stop");
+      },
+      async patchConfig(patch) {
+        // this arrives from the control API, which has no credential and admits
+        // Origin: null - so it is a web page until proven otherwise. IPC from
+        // our own renderer still goes through applyConfig unfiltered.
+        const { allowed, rejected } = controlConfigPatch(patch);
+        if (rejected.length) {
+          log("warn", `control API tried to set ${rejected.join(", ")} - refused`);
+        }
+        if (Object.keys(allowed).length) await applyConfig(allowed);
+        return currentStatus();
+      },
+      async rotateLink() {
+        await rotateLink();
+      },
+    });
+    controlBroadcast = handle.broadcast;
+    log("info", `control API on 127.0.0.1:${handle.port}`);
+  } catch (err) {
+    log("error", `control API failed to start: ${String(err)} - the Stream Deck plugin will not connect`);
+  }
 }
 
 // ---------------------------------------------------------------------------
