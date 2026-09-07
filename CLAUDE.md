@@ -191,6 +191,14 @@ explicitly set `updateFeedUrl`.
   `pnpm <script>` and every file and doc it names actually exists — but a guard
   test cannot catch a stale claim, only a dangling pointer. **There is no
   equivalent guard test over this file.**
+- **`pnpm dev:app` needs Electron's binary, which pnpm's postinstall may never
+  have fetched.** `node_modules/.pnpm/electron@<v>/node_modules/electron/` ships
+  only `index.js` until `install.js` downloads `dist/` (~190 MB) and writes
+  `path.txt`; without them every Electron entry point dies with "Electron failed
+  to install correctly". Run that `install.js` once. Worth checking before
+  concluding that anything Electron-side "cannot be verified from this machine"
+  - that conclusion was carried in this repo's notes for several sessions and
+  was only ever a missing download.
 - The repo merges by **rebase**; history is linear. Don't add merge commits.
 
 ## Conventions

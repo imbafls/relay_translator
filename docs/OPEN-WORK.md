@@ -73,7 +73,28 @@ as defence in depth. **What unblocks it:** a Stream Deck to verify the inspector
 still works after the change.
 
 ### B6 — In-app archive model downloads corrupt at ~28%
-**Band: medium. Blocked on: a real failure with the new instrumentation.**
+**Band: medium. Status: could not be reproduced. Needs a real failure to go
+further.**
+
+**Run on this machine 2026-09-07, on the pinned runtime the app ships**
+(Electron 33.4.11, Node 20.18.3, Chrome 130), driving the real `ModelStore`
+from a real Electron main process:
+
+| Model | Size | Result |
+|-------|------|--------|
+| `local-zipformer-en` | 310 MB archive | installed, 49 s |
+| `local-whisper-tiny-en` | 118 MB archive + VAD | installed, 23 s |
+
+`local-whisper-tiny-en` is the model the report names. Both unpacked through
+bz2 and tar and published cleanly, and the installed whisper model then passed
+the worker's probe against the real sherpa-onnx engine - so **the archive path
+works end to end here**, which the note above said had never been shown.
+
+That is not the same as fixed. It was reported on a different machine and
+network, and this path has changed since: finding 25's `.part` collision fix
+and the single-flight keyed by destination path both landed in it. If it
+recurs, finding 26's rework means the message will now name the right half
+instead of blaming the transport for a decode failure.
 
 > **The two `.part` folders in the models dir were never evidence of this.**
 > `local-nemotron-streaming.part` is empty and `local-whisper-turbo.part` holds
@@ -98,8 +119,8 @@ not bz2 reported *"the download stopped early: 28672 of 524288 bytes (5%)"*.
 That is the message that has been pointing at the wrong half. The next real
 failure will name which half it was.
 
-Until this is resolved no new archive model can be installed through the UI, so
-**the seven archive models have never been run end-to-end in-app**.
+Two of the seven archive models have now been installed and one of them run;
+the rest are untried but there is no longer a reason to think they cannot be.
 
 ---
 

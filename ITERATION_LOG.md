@@ -2744,3 +2744,38 @@ minutes of backlog`). The first revert of the silence guard did not compile, so
 it proved nothing and was redone as a clean deletion of the branch. The other
 two are the counterweights: an engine that keeps up must lose nothing, and a
 silent room must not be reported as one that cannot catch up.
+
+### Turn 77 - B6, and why so much here was called unverifiable
+
+Three separate things in this repo's notes said, in effect, *that cannot be
+checked from this machine*: findings 8 and 17 were blocked on a working local
+model, B6 was blocked on a real failure, and anything touching Electron got a
+source-level guard because `main.ts` and `updater.ts` import it.
+
+The first was wrong, as turn 76 records. The second and third had the same
+cause, and it was not a hard one: **Electron's binary had never been
+downloaded.** `node_modules/.pnpm/electron@33.4.11/node_modules/electron/` held
+`index.js` and nothing else - no `dist/`, no `path.txt` - so every Electron
+entry point on this machine, `pnpm dev:app` included, died with "Electron
+failed to install correctly". Running the package's own `install.js` once fixed
+it. That is the whole blocker that shaped several sessions of decisions.
+
+**B6, with that out of the way.** Driving the real `ModelStore` from a real
+Electron main process on the pinned runtime (33.4.11 / Node 20.18.3 / Chrome
+130): `local-zipformer-en`, 310 MB of bz2+tar, installed in 49 s.
+`local-whisper-tiny-en` - the model the report names, the one said to die at
+~28% with `crc32 do not match` - installed in 23 s, VAD and all, and then
+passed the worker's probe against the real engine.
+
+So the archive path works end to end here. **Not the same as fixed**: it was
+reported on another machine and another network, and this code has changed
+since - finding 25's `.part` collision fix and the single-flight keyed by
+destination path both landed in it. What is different now is that a recurrence
+will be diagnosable, because finding 26 stopped it blaming the transport for a
+decode failure.
+
+No guard test, and that is the right answer: there is no defect here to guard.
+What this turn produced is evidence, and it is written into `docs/OPEN-WORK.md`
+with the runtime versions and the numbers. The Electron trap is written into
+`CLAUDE.md`, because the next session would otherwise reach the same wrong
+conclusion the same way.
