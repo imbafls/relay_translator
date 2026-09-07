@@ -3156,3 +3156,47 @@ every reasonable form of the regex - `.` does not match `` either. It asserts
 real behaviour, so it stays, but it is a behaviour assertion and not a guard,
 and calling it one would be the thing this log exists to stop. The other ten in
 this turn were each proved by breaking exactly the line they cover.
+
+### Turn 88 - Reaping rooms nobody ever used, and a status light that could not change
+
+`POST /claim` mints a Durable Object for anyone who asks and nothing ever
+removed one. Defensible while the only way to reach it was a curl command in a
+README; not now that it sits on a domain people are meant to type. The ~24 rooms
+left from the cost measurement are still there.
+
+**The rule is lopsided on purpose, and that is the whole design.** A room
+nobody ever published to is a test, a measurement, a mistake or an abuse - no
+working link points at one, because a link is worth nothing until captions flow.
+Those go after thirty days. A room that HAS been used belongs to a person, and
+its viewer token may be sitting in somebody's messages; deleting it breaks a
+link its owner believes works, silently, at a time they did not choose. Age is
+not evidence that a link stopped mattering, and there is no way to ask. Those
+are kept, for ever. Unbounded growth in used rooms is not a problem worth
+creating that risk for: each is a real person, the record is tiny, and an idle
+room costs nothing when the billing is per request.
+
+The decision is a pure function so it could be tested hard, and most of the
+tests are about the side that must NOT be reaped - including used-once-a-year
+reading the same as used-yesterday, and a clock that has gone backwards not
+counting as age.
+
+**One thing the pure function cannot see.** It takes a record, not a runtime, so
+it cannot know somebody is connected right now. A room being read from is not
+junk whatever its record says, and deleting under a live socket answers the next
+message with "no such room" - which the viewer renders as a dead link. The alarm
+checks for open sockets itself and waits another day.
+
+**Guards - eight, three watched fail,** including the dangerous direction:
+removing the `usedAt` check reaps rooms people are using, and two tests catch
+it. What is NOT verified is the thirty days actually elapsing - that is not a
+thing to wait for, and shortening the constant would be testing a different one.
+What the live run does prove is the wiring around it: `verify-deploy` claims a
+room and connects an uplink, so the `usedAt` write and the alarm-clear both ran
+against the real runtime, 14/14.
+
+**And the badge.** The landing page said ON AIR when `/health` reported `live`.
+That was true of the single-tenant relay, which had one stream. On a Worker with
+a room per person, a tokenless `/health` returns a fixed `live: false` - it must
+wake no object to answer - so the badge could never light, whoever was
+streaming. A status light that cannot change state is worse than none: it reads
+as nobody is here. It reports whether the service is answering now.

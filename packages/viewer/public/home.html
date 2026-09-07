@@ -134,7 +134,7 @@
       </div>
       <div class="cell">
         <h2 class="label"><span class="n">02</span>Phone or OBS</h2>
-<p>Send a link for a phone, or drop the local one into an OBS browser source as a transparent overlay. Both at once works too.</p>
+<p>Send someone a link to read on their phone, or put the captions into OBS as a transparent overlay. Both at once works too, and the app gives you a link for each.</p>
       </div>
       <div class="cell">
         <h2 class="label"><span class="n">03</span>Updates itself</h2>
@@ -160,13 +160,20 @@
   const $ = (id) => document.getElementById(id);
   $("host").textContent = "RELAY ENDPOINT · " + location.host.toUpperCase();
 
+  // Whether the SERVICE is answering, not whether anyone is streaming.
+  //
+  // This read `live` and said ON AIR, which was true of the single-tenant relay
+  // that had one stream. On a Worker with a room per person a tokenless /health
+  // returns a fixed `live: false` - it must wake no object to answer - so the
+  // badge could never light, whoever was streaming. A status light that cannot
+  // change state is worse than none: it reads as "nobody is using this".
   fetch("/health", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : null))
     .then((h) => {
       const el = $("state");
-      if (!h) return;
-      el.classList.toggle("up", !!h.live);
-      $("stateText").textContent = h.live ? "ON AIR" : "STANDBY";
+      if (!h || !h.ok) throw new Error("not ok");
+      el.classList.add("up");
+      $("stateText").textContent = "ONLINE";
     })
     .catch(() => { $("stateText").textContent = "OFFLINE"; });
 

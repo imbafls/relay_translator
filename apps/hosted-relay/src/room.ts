@@ -27,6 +27,7 @@
  */
 
 import { formatToken, newSecret, secretsMatch } from "./tokens";
+import { nextReapCheck, shouldReap } from "./reap";
 
 /** what a room is, between messages */
 interface RoomState {
@@ -41,6 +42,11 @@ interface RoomState {
   /** last caption id seen, so a reconnecting uplink cannot rewind viewers */
   lastSegId: number;
   createdAt: number;
+  /**
+   * epoch ms a publisher first connected. Absent means nobody ever streamed
+   * here, which is what makes a room safe to remove - see `reap.ts`.
+   */
+  usedAt?: number;
 }
 
 const TAG_UPLINK = "uplink";
@@ -80,7 +86,35 @@ export class Room {
       createdAt: Date.now(),
     };
     await this.save(fresh);
+    // nothing has been published here yet, so it is a candidate for removal.
+    // Set when the room is created rather than on a sweep: there is no sweep,
+    // and nothing else ever visits a room nobody uses.
+    const at = nextReapCheck(fresh);
+    if (at !== undefined) await this.ctx.storage.setAlarm(at);
     return fresh;
+  }
+
+  /**
+   * The alarm set at claim. Fires once, a month later, on a room that may have
+   * been used since - which is exactly the case it has to get right.
+   */
+  async alarm(): Promise<void> {
+    const room = await this.load();
+    if (!room) return;
+    if (!shouldReap(room, Date.now())) return;
+    // Somebody is on it right now. `shouldReap` cannot see this - it takes a
+    // record, not a runtime - and a room being connected to is not junk
+    // whatever its record says. Deleting under a live socket would answer the
+    // next message with "no such room", which the viewer renders as a dead
+    // link, at a moment nobody chose. Wait a day and look again.
+    if (this.ctx.getWebSockets().length > 0) {
+      await this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+      return;
+    }
+    // deleteAll rather than a flag: the tokens are the state, so removing it is
+    // what makes them stop working, and a room with no state answers "no such
+    // room" through the path that already exists
+    await this.ctx.storage.deleteAll();
   }
 
   // ------------------------------------------------------------------ fetch
@@ -145,6 +179,13 @@ export class Room {
       if (op === "uplink") {
         // one publisher per room; the newcomer wins, as the old relay did
         this.closeAll(TAG_UPLINK, CLOSE_REPLACED, "replaced by new publisher");
+        // the room is somebody's now. Recorded on the FIRST publisher only, so
+        // this is one write in a room's life rather than one per reconnect, and
+        // the alarm goes with it - a kept room never needs waking again.
+        if (room.usedAt === undefined) {
+          await this.save({ ...room, usedAt: Date.now() });
+          await this.ctx.storage.deleteAlarm();
+        }
       }
 
       this.ctx.acceptWebSocket(server, [op === "uplink" ? TAG_UPLINK : TAG_VIEWER]);

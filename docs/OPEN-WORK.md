@@ -177,14 +177,13 @@ fix — read the numbered section there before starting.
 
 ### Found while fixing the above, not in the audit
 
-- **The landing page's ON AIR badge can never light.** `home.html` reads a
-  tokenless `/health`, which on a multi-tenant Worker returns a fixed
-  `live: false` because it must wake no object. It meant "someone is streaming"
-  on the single-tenant VPS. Cosmetic, but it is a status light that cannot
-  change state - either give it something real to read or take it out.
-- **`home.html` still says "drop the local one into an OBS browser source",**
-  which means nothing to a visitor who has just typed the domain and has no
-  local link.
+- ~~**The landing page's ON AIR badge can never light.**~~ Fixed 2026-09-07. It
+  reports whether the SERVICE is answering - `ONLINE` / `OFFLINE` - which is a
+  thing a tokenless `/health` can actually know. It used to read `live`, which
+  is fixed `false` on a multi-tenant Worker, so it said STANDBY however many
+  people were streaming.
+- ~~**`home.html` said "drop the local one into an OBS browser source".**~~
+  Fixed 2026-09-07; it no longer refers to a link a visitor does not have.
 
 - ~~**The viewer page deployed on the hosted relay is stale.**~~ Fixed
   2026-09-07. It had gone out from a dirty tree and was missing four viewer
@@ -209,8 +208,14 @@ fix — read the numbered section there before starting.
   above 16 kHz.** Finding 23 stopped the app *asking* it to resample; the
   worklet has no filter of its own. Only matters if something else starts
   feeding it.
-- **Idle rooms on the hosted relay are never reaped.** A room's record is tiny
-  and there is no TTL. See `apps/hosted-relay/README.md`.
+- ~~**Idle rooms on the hosted relay are never reaped.**~~ Fixed 2026-09-07,
+  lopsidedly and on purpose. A room **nobody ever published to** is removed
+  after 30 days by a Durable Object alarm - those are tests, measurements and
+  abuse, and no working link points at one. A room that **has been used** is
+  kept for ever: its viewer token may be in somebody's messages, age is not
+  evidence it stopped mattering, and an idle room costs nothing because the
+  billing is per request. The alarm also declines to fire while a socket is
+  open, since `shouldReap` takes a record and cannot see a live connection.
 - **An unexplained viewer socket, seen once** on the hosted relay. Also in that
   README, with the full note.
 

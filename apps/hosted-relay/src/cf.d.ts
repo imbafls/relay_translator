@@ -25,6 +25,12 @@ interface DurableObjectStorage {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean>;
+  /** removes every key, which for this object means the room stops existing */
+  deleteAll(): Promise<void>;
+  /** one alarm per object; setting again replaces the pending one */
+  setAlarm(scheduledTime: number | Date): Promise<void>;
+  getAlarm(): Promise<number | null>;
+  deleteAlarm(): Promise<void>;
 }
 
 interface DurableObjectState {
