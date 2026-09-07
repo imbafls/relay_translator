@@ -86,6 +86,24 @@ const BYTES_PER_SEC_PER_CHANNEL = 16000 * 2;
  * and the timer only runs out when it stops talking. The ceiling below is what
  * bounds a worker that is talkative but wedged in a loop.
  */
+/**
+ * How far the decoder is allowed to fall behind the microphone before audio is
+ * refused rather than queued.
+ *
+ * `send({type:"audio"})` posts a chunk into the worker's port and returns, and
+ * Node's port queue has no bound. The only drop path lived inside `if (!ready)`
+ * and was dead the moment the worker answered, so a model too slow for the
+ * machine it is on fell further behind every minute, for the rest of the
+ * session, with nothing refused and nothing said. Measured against the real
+ * engine: 120 s of speech accepted in under a second, every frame taken.
+ *
+ * Sixty seconds is well past any honest decode lag - the VAD closes a segment
+ * at fifteen - so tripping it means the engine is not going to recover.
+ */
+const MAX_BACKLOG_SEC = 60;
+/** how often to say so while it stays behind */
+const BACKLOG_REPORT_EVERY_MS = 30000;
+
 const CLOSE_IDLE_MS = 4000;
 const CLOSE_MAX_MS = 60000;
 
@@ -148,6 +166,9 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   if (!localModelReady(opts.modelsDir, cfg.model)) return fail(`model "${info.label}" is not downloaded yet (02 TRANSCRIBE → DOWNLOAD)`);
   if (!fs.existsSync(opts.workerPath)) return fail(`local STT worker missing at ${opts.workerPath} (local models need the desktop app)`);
 
+  /** taken after the guard above, since the hoisted sendAudio cannot see that narrowing */
+  const modelLabel = info.label;
+
   let worker: Worker | null = null;
   let ready = false;
   /** close() was called: audio stops, but finals from the worker's flush still count */
@@ -170,6 +191,13 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   const maxPendingBytes = bytesPerSec * (PROBE_TIMEOUT_MS / 1000);
   let pendingBytes = 0;
   let droppedBytes = 0;
+  /** seconds of audio handed to the worker since it came up */
+  let sentSec = 0;
+  /** the furthest audio position the worker has reported reaching */
+  let decodedSec = 0;
+  /** seconds of speech refused this session because the decoder could not catch up */
+  let behindSec = 0;
+  let lastBacklogReport = 0;
 
   const send = (msg: LocalSttToWorker, transfer?: ArrayBuffer[]): void => {
     try {
@@ -229,7 +257,7 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     if (msg.type === "ready") {
       ready = true;
       if (!closing) events.onOpen?.();
-      for (const b of pending) sendAudio(b);
+      for (const b of pending) sendAudio(b, true);
       pending.length = 0;
       pendingBytes = 0;
       if (droppedBytes > 0) {
@@ -240,7 +268,19 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
       if (closing) requestClose();
     } else if (msg.type === "partial") {
       if (!closing) events.onPartial?.(msg.text, msg.channel);
-    } else if (msg.type === "final") events.onFinal?.(msg.text, { audioEndSec: msg.audioEndSec, channel: msg.channel });
+    } else if (msg.type === "progress") {
+      // the worker's own position in the audio it has been handed. Silence
+      // advances it too, which is the point: without it a quiet minute reads
+      // exactly like a minute of falling behind, and the bound below would
+      // start throwing away speech on an idle mic.
+      if (msg.fedSec > decodedSec) decodedSec = msg.fedSec;
+
+    } else if (msg.type === "final") {
+      // the worker's own position in the audio, which is what makes the
+      // backlog measurable from out here
+      if (msg.audioEndSec > decodedSec) decodedSec = msg.audioEndSec;
+      events.onFinal?.(msg.text, { audioEndSec: msg.audioEndSec, channel: msg.channel });
+    }
     else if (msg.type === "error") events.onError?.(msg.message);
   });
   worker.on("error", (err) => {
@@ -285,7 +325,14 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   }
 
   /** whether the chunk was taken, either into the queue or to the worker */
-  function sendAudio(chunk: Buffer): boolean {
+  /**
+   * `queued` marks the pending buffer being flushed after the model comes up.
+   * That buffer exists precisely to hold speech the worker could not take yet -
+   * up to PROBE_TIMEOUT_MS of it - so the backlog bound must not throw it away
+   * at the moment of delivery. The bound applies to what arrives afterwards,
+   * and the flushed audio still counts towards how far behind the worker is.
+   */
+  function sendAudio(chunk: Buffer, queued = false): boolean {
     if (done) return false;
     if (!ready) {
       // still probing and loading the model; hold the audio rather than lose it
@@ -297,6 +344,24 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
       droppedBytes += chunk.length;
       return false;
     }
+    const chunkSec = chunk.length / bytesPerSec;
+    if (!queued && sentSec - decodedSec > MAX_BACKLOG_SEC) {
+      // refuse rather than queue: the queue is unbounded and the engine is not
+      // coming back. Dropping keeps it in touch with what is being said now
+      behindSec += chunkSec;
+      const now = Date.now();
+      if (now - lastBacklogReport >= BACKLOG_REPORT_EVERY_MS) {
+        const first = lastBacklogReport === 0;
+        lastBacklogReport = now;
+        events.onError?.(
+          first
+            ? `"${modelLabel}" is ${Math.round(sentSec - decodedSec)}s behind and cannot catch up - speech is being dropped from here. Pick a faster model under 02 TRANSCRIBE.`
+            : `"${modelLabel}" is still behind - ${Math.round(behindSec)}s of speech dropped so far.`,
+        );
+      }
+      return false;
+    }
+    sentSec += chunkSec;
     // copy into a standalone ArrayBuffer so it can be transferred
     const ab = new ArrayBuffer(chunk.length);
     new Uint8Array(ab).set(chunk);

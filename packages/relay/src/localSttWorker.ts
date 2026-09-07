@@ -38,6 +38,14 @@ export type LocalSttFromWorker =
   | { type: "ready" }
   | { type: "partial"; channel: number; text: string }
   | { type: "final"; channel: number; text: string; audioEndSec: number }
+  /**
+   * How far into the audio this worker has actually got. The producer cannot
+   * see the depth of the port queue - Node does not expose it - so this is what
+   * it measures the backlog against. It has to be independent of whether anyone
+   * is speaking: reading progress off finals alone means a minute of silence
+   * looks exactly like a minute of falling behind.
+   */
+  | { type: "progress"; fedSec: number }
   | { type: "error"; message: string };
 
 const SAMPLE_RATE = 16000;
@@ -46,6 +54,8 @@ const VAD_WINDOW = 512;
 const PARTIAL_EVERY_SEC = 1.2;
 /** never decode a partial on less than this much speech */
 const PARTIAL_MIN_SEC = 0.8;
+/** how often to tell the producer where in the audio this worker has got to */
+const PROGRESS_EVERY_MS = 1000;
 
 function post(msg: LocalSttFromWorker): void {
   parentPort?.postMessage(msg);
@@ -70,6 +80,8 @@ interface ChannelState {
   open: Float32Array[];
   openLen: number;
   sincePartial: number;
+  /** wall clock of the last partial decode, so a backlog is not replayed at full cost */
+  lastPartialAt: number;
   window: Float32Array;
   windowLen: number;
 }
@@ -169,6 +181,7 @@ function setup(i: LocalSttInit): void {
       open: [],
       openLen: 0,
       sincePartial: 0,
+      lastPartialAt: 0,
       window: new Float32Array(VAD_WINDOW),
       windowLen: 0,
     };
@@ -278,13 +291,21 @@ function feedOffline(c: number, st: ChannelState, samples: Float32Array): void {
         post({ type: "final", channel: c, text, audioEndSec });
       }
     }
-    // partial for the segment still open
+    // Partial for the segment still open. Gated on wall clock as well as on
+    // buffered audio: `sincePartial` counts SAMPLES, so when the worker is
+    // chewing through a backlog it fired every 1.2 s of queued audio - each one
+    // re-decoding the whole open segment - and the backlog was replayed at full
+    // cost, which is the thing keeping it from ever catching up. Partials are a
+    // preview for a human reading them; more than one every PARTIAL_EVERY_SEC
+    // of real time is not something anyone can read anyway.
     if (
       speaking &&
       st.openLen >= PARTIAL_MIN_SEC * SAMPLE_RATE &&
-      st.sincePartial >= PARTIAL_EVERY_SEC * SAMPLE_RATE
+      st.sincePartial >= PARTIAL_EVERY_SEC * SAMPLE_RATE &&
+      Date.now() - st.lastPartialAt >= PARTIAL_EVERY_SEC * 1000
     ) {
       st.sincePartial = 0;
+      st.lastPartialAt = Date.now();
       const text = decodeOffline(concat(st.open, st.openLen));
       if (text && text !== st.lastPartial) {
         st.lastPartial = text;
@@ -293,6 +314,8 @@ function feedOffline(c: number, st: ChannelState, samples: Float32Array): void {
     }
   }
 }
+
+let lastProgressAt = 0;
 
 function onAudio(buffer: ArrayBuffer): void {
   if (!init) return;
@@ -306,6 +329,16 @@ function onAudio(buffer: ArrayBuffer): void {
     st.fed += frames;
     if (st.online) feedOnline(c, st, f32);
     else feedOffline(c, st, f32);
+  }
+  // reported after the work, not before it: this is a statement about what has
+  // been processed, and the producer treats the gap between what it has sent
+  // and this as the backlog
+  const now = Date.now();
+  if (now - lastProgressAt >= PROGRESS_EVERY_MS) {
+    lastProgressAt = now;
+    let fed = 0;
+    for (const st of chans) fed = Math.max(fed, st.fed);
+    post({ type: "progress", fedSec: fed / SAMPLE_RATE });
   }
 }
 

@@ -612,3 +612,171 @@ setInterval(() => {}, 1000);
     expect(took, "a silent worker now holds the session open indefinitely").toBeLessThan(12000);
   }, 20000);
 });
+
+/**
+ * Audit finding 8, the producer half.
+ *
+ * `sendAudio` posts a 100 ms chunk into the worker's port and returns. Node's
+ * port queue is unbounded and nothing ever measured its depth: the only drop
+ * path, `droppedBytes += chunk.length`, sits inside `if (!ready)` and is dead
+ * the moment the worker answers ready. So a decoder running slower than the
+ * audio arrives falls further behind every minute, for the rest of the
+ * session, with no drop, no warning and no recovery.
+ *
+ * Reproduced against the real sherpa-onnx engine before this was written:
+ * 120 s of speech was accepted in under a second, every frame taken, nothing
+ * reported. On that machine the decoder happened to be ten times faster than
+ * realtime so it caught up - a slower model, or two channels, and it never
+ * would have.
+ *
+ * The bound is on how far behind the DECODER is, not on bytes queued: the
+ * worker stamps every final with the audio position it reached, and the
+ * producer knows how much it has sent, so the difference is the backlog in
+ * seconds of speech.
+ */
+function writeDeafWorker(dir: string): string {
+  const file = path.join(dir, "deafWorker.js");
+  fs.writeFileSync(
+    file,
+    `
+if (process.argv[2] === "--probe") { process.exit(0); }
+const { parentPort } = require("worker_threads");
+parentPort.on("message", (msg) => {
+  // answers init, takes audio, and never finishes a decode: the shape of a
+  // model too slow for the machine it is on
+  if (msg.type === "init") parentPort.postMessage({ type: "ready" });
+  else if (msg.type === "close") process.exit(0);
+});
+`,
+  );
+  return file;
+}
+
+describe("a speech engine that cannot keep up", () => {
+  /** 100 ms frames; 16 kHz mono 16-bit */
+  const secondsOf = (n: number): number => Math.round(n * 10);
+
+  it("stops taking audio once the decoder is minutes behind, and says so", async () => {
+    const models = tmp();
+    stageModel(models, "local-sense-voice", { vad: true });
+    const workerPath = writeDeafWorker(models);
+
+    const errors: string[] = [];
+    let opened!: () => void;
+    const isOpen = new Promise<void>((r) => {
+      opened = r;
+    });
+
+    const stream = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: "local-sense-voice", language: "en", channels: 1 },
+      { onOpen: () => opened(), onError: (m) => errors.push(m), onClose: () => {} },
+    );
+    await isOpen;
+
+    // five minutes of speech into a worker that never decodes any of it
+    let taken = 0;
+    let refused = 0;
+    for (let i = 0; i < secondsOf(300); i += 1) {
+      if (stream.sendAudio(frame())) taken += 1;
+      else refused += 1;
+    }
+    stream.close();
+
+    expect(refused, "five minutes of audio went into an unbounded queue with nothing refused").toBeGreaterThan(0);
+    expect(taken, "the bound is so tight that ordinary decode lag would trip it").toBeGreaterThan(secondsOf(30));
+    expect(errors.join(" "), "audio was dropped without telling anyone").toMatch(/behind|dropped/i);
+  });
+
+  it("does not mistake a quiet microphone for an engine falling behind", async () => {
+    const models = tmp();
+    stageModel(models, "local-moonshine-tiny", { vad: true });
+    // keeps up perfectly and has nothing to transcribe, because nobody is
+    // talking. Reading progress off finals alone, ten minutes of silence is
+    // indistinguishable from ten minutes of backlog - and the session would
+    // start dropping the audio it is about to need.
+    const file = path.join(models, "silentRoomWorker.js");
+    fs.writeFileSync(
+      file,
+      `
+if (process.argv[2] === "--probe") { process.exit(0); }
+const { parentPort } = require("worker_threads");
+let sec = 0;
+parentPort.on("message", (msg) => {
+  if (msg.type === "init") parentPort.postMessage({ type: "ready" });
+  else if (msg.type === "audio") { sec += 0.1; parentPort.postMessage({ type: "progress", fedSec: sec }); }
+  else if (msg.type === "close") process.exit(0);
+});
+`,
+    );
+
+    const errors: string[] = [];
+    let opened!: () => void;
+    const isOpen = new Promise<void>((r) => {
+      opened = r;
+    });
+    const stream = createLocalSttStream(
+      { modelsDir: models, workerPath: file },
+      { model: "local-moonshine-tiny", language: "en", channels: 1 },
+      { onOpen: () => opened(), onError: (m) => errors.push(m), onClose: () => {} },
+    );
+    await isOpen;
+
+    let refused = 0;
+    for (let i = 0; i < secondsOf(600); i += 1) {
+      if (!stream.sendAudio(frame())) refused += 1;
+      if (i % 100 === 0) await new Promise((r) => setImmediate(r));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    stream.close();
+
+    expect(refused, "ten minutes of silence was read as ten minutes of backlog").toBe(0);
+    expect(errors, "a silent room was reported as an engine that cannot catch up").toEqual([]);
+  }, 20000);
+
+  it("keeps taking audio from an engine that is keeping up", async () => {
+    const models = tmp();
+    stageModel(models, "local-zipformer-en-20m");
+    // reports the audio position it has reached, the way the real worker does
+    const file = path.join(models, "keepingUpWorker.js");
+    fs.writeFileSync(
+      file,
+      `
+if (process.argv[2] === "--probe") { process.exit(0); }
+const { parentPort } = require("worker_threads");
+let sec = 0;
+parentPort.on("message", (msg) => {
+  if (msg.type === "init") parentPort.postMessage({ type: "ready" });
+  else if (msg.type === "audio") {
+    sec += 0.1;
+    parentPort.postMessage({ type: "final", text: "keeping up", audioEndSec: sec, channel: 0 });
+  } else if (msg.type === "close") process.exit(0);
+});
+`,
+    );
+
+    const errors: string[] = [];
+    let opened!: () => void;
+    const isOpen = new Promise<void>((r) => {
+      opened = r;
+    });
+    const stream = createLocalSttStream(
+      { modelsDir: models, workerPath: file },
+      { model: "local-zipformer-en-20m", language: "en", channels: 1 },
+      { onOpen: () => opened(), onFinal: () => {}, onError: (m) => errors.push(m), onClose: () => {} },
+    );
+    await isOpen;
+
+    // ten minutes of speech, answered as fast as it arrives
+    let refused = 0;
+    for (let i = 0; i < secondsOf(600); i += 1) {
+      if (!stream.sendAudio(frame())) refused += 1;
+      if (i % 100 === 0) await new Promise((r) => setImmediate(r));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    stream.close();
+
+    expect(refused, "a healthy engine had its audio thrown away").toBe(0);
+    expect(errors, "a healthy engine was reported as falling behind").toEqual([]);
+  }, 20000);
+});

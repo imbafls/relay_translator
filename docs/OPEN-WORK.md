@@ -75,6 +75,16 @@ still works after the change.
 ### B6 — In-app archive model downloads corrupt at ~28%
 **Band: medium. Blocked on: a real failure with the new instrumentation.**
 
+> **The two `.part` folders in the models dir were never evidence of this.**
+> `local-nemotron-streaming.part` is empty and `local-whisper-turbo.part` holds
+> one complete 57 MB file - both are **per-file** models, abandoned when the app
+> was closed mid-download, and neither goes near the bz2 path. That reading was
+> what made findings 8 and 17 look blocked; they were not. sherpa-onnx loads on
+> this machine, and `local-sense-voice` (per-file, 240 MB) downloads, probes and
+> transcribes correctly here, so the local engine can now be exercised end to
+> end. B6 itself is still untested: it needs an **archive** model, and that is
+> still the path that has never completed.
+
 Reported in `HANDOFF.md`, **taken on report — not reproduced here.**
 Downloading `local-whisper-tiny-en` in the app fails with
 `Error in bzip2: crc32 do not match`. The identical download succeeds in plain
@@ -129,7 +139,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 28 | A busy control-API port took the tray and the window down with it | `dd6e9c6` |
 | 34 | A passing local-STT probe thrown away because the session had stopped | `3b2d21f` |
 | 27 | A changed update feed that did nothing until the app was restarted | `5fec896` |
-| 17 | The flat 4 s kill timer that threw away the last thing said before STOP | *(this commit)* |
+| 17 | The flat 4 s kill timer that threw away the last thing said before STOP | `ffa8156` |
+| 8 | An unbounded worker queue and a partial gate that replayed the backlog | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -138,7 +149,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | Rank | Band | Finding | Primary location |
 |------|------|---------|------------------|
 | 3 | high | Control API: no credential and `Origin: null` admitted, so a page you visit can start/stop the session, patch config, and `POST /link/rotate` for an unredacted viewer link. **Partly closed** - `GET /link` deleted (it had no callers); the rest needs a token the property inspector has no testable way to receive. *(Also B5.)* | `packages/companion/src/controlServer.ts` |
-| 8 | high | Offline local STT has no backpressure and can never catch up: partials are gated on buffered samples rather than wall clock, and the worker queue is unbounded. **Cannot be verified on this machine** - both archive models in the models dir are `.part` files, which is B6's symptom, so the local engine has never run here. | `packages/relay/src/localSttWorker.ts` |
 | 17 (part) | low | The close is still posted behind the queued audio on the same port. With the deadline scaled to the worker going quiet, that costs a slower STOP rather than a lost caption; moving it out of band means changing the protocol on both sides, and the worker half needs sherpa-onnx to exercise at all. | `packages/relay/src/localSttWorker.ts` |
 
 Each entry in the audit carries a reproduced failure scenario and a suggested

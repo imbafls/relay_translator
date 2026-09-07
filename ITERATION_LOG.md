@@ -2693,3 +2693,54 @@ and captions were lost`, 4 of 6; and `the flush ran twice, so every closing
 caption was delivered twice`). The third is the one that keeps the fix from
 being a hang: a worker that answers init and then goes silent for ever is still
 given up on, and quickly.
+
+### Turn 76 - Local STT (audit finding 8: the queue nothing was watching)
+
+**First, the blocker was wrong.** Findings 8 and 17 were both filed as
+unverifiable here because "both archive models in the models dir are `.part`
+files, which is B6's symptom". They are not archive models. Looking at the
+folders: `local-nemotron-streaming.part` is empty and `local-whisper-turbo.part`
+holds one complete 57 MB file - both **per-file** models abandoned when the app
+was closed mid-download, neither anywhere near the bz2 path. sherpa-onnx loads
+fine on this machine. `local-sense-voice` is per-file too, so it downloads,
+probes and transcribes without touching the broken path at all. Twenty minutes
+of actually looking, against two turns' worth of taking a note at its word.
+
+So this is fixed against the real engine, with real speech, and measured.
+
+**The producer half.** `send({type:"audio"})` posts a chunk into the worker's
+port and returns; Node's port queue is unbounded, and the only drop path lived
+inside `if (!ready)` - dead the moment the worker answered. Measured before the
+fix: 120 s of speech accepted in under a second, every frame taken, nothing
+said. On this machine SenseVoice runs about ten times faster than realtime so
+it caught up; a slower model, or two channels, and it never would have.
+
+The bound is on how far behind the decoder is, in seconds of speech, not on
+bytes queued - sixty seconds, well past the fifteen at which the VAD closes a
+segment, so tripping it means the engine is not coming back.
+
+**The thing that measure needed, and did not have.** Reading the position off
+finals alone, a quiet minute is indistinguishable from a minute of backlog, and
+the bound would start dropping the audio on an idle mic. The worker now posts
+its own fed-position once a second, which advances through silence. That is a
+guard test of its own, and it fails hard against the version without it: ten
+minutes of silence, 5400 frames refused.
+
+**The worker half.** `st.sincePartial` counted SAMPLES, so while chewing
+through a backlog a partial fired every 1.2 s of *queued* audio, each one
+re-decoding the whole open segment - the backlog was replayed at full cost,
+which is what kept it from ever catching up. Gated on wall clock as well now.
+Checked that this does not starve partials in an ordinary session: 40 s of
+speech at 1x realtime gives 6 finals and 22 partials, nothing refused.
+
+**Verified against the real engine, not only in the suite:** at 4x realtime,
+nothing refused and every second decoded. At 60x, the bound bites at exactly 60
+s behind, refuses 2399 of 3000 frames and reports once, in words that name the
+model and say what to do.
+
+**Guards - four, two watched fail** (`five minutes of audio went into an
+unbounded queue with nothing refused`; `ten minutes of silence was read as ten
+minutes of backlog`). The first revert of the silence guard did not compile, so
+it proved nothing and was redone as a clean deletion of the branch. The other
+two are the counterweights: an engine that keeps up must lose nothing, and a
+silent room must not be reported as one that cannot catch up.
