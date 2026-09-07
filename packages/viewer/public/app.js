@@ -48,6 +48,9 @@
     shadow: obs,
     align: "left",
     lines: 8,
+    // seconds the overlay keeps the last line after everything goes quiet; 0
+    // never hides it. Only the overlay uses this - see resetFade.
+    holdSeconds: 10,
     fg: obs ? "#ffffff" : DARK.fg,
     accent: DARK.accent,
     bg: obs ? "#000000" : DARK.bg,
@@ -64,6 +67,12 @@
       for (const k of Object.keys(DEFAULT_STYLE)) if (parsed[k] !== undefined) merged[k] = parsed[k];
       merged.size = Math.min(40, Math.max(14, Number(merged.size) || 18));
       merged.lines = Math.min(15, Math.max(3, Number(merged.lines) || 8));
+      // 0 is a real setting here - "never hide" - so `|| default` would silently
+      // turn it back on. Only a value that is not a number falls back.
+      const hold = Number(merged.holdSeconds);
+      merged.holdSeconds = Number.isFinite(hold)
+        ? Math.min(120, Math.max(0, hold))
+        : DEFAULT_STYLE.holdSeconds;
       if (!FONT_STACKS[merged.font]) merged.font = "relay";
       return merged;
     } catch {
@@ -117,6 +126,8 @@
     $("alignVal").textContent = style.align.toUpperCase();
     $("setLines").value = String(style.lines);
     $("linesVal").textContent = String(style.lines);
+    $("setHold").value = String(style.holdSeconds);
+    $("holdVal").textContent = style.holdSeconds ? style.holdSeconds + "s" : "NEVER";
     $("setFg").value = style.fg;
     $("setAccent").value = style.accent;
     $("setBg").value = style.bg;
@@ -131,6 +142,9 @@
     applyStyle();
     saveStyle();
     syncDisplayUI();
+    // a changed hold has to take effect on the line already on screen, not on
+    // the next caption - otherwise "Never" looks broken until someone speaks
+    resetFade();
   }
 
   function initDisplayUI() {
@@ -140,6 +154,15 @@
       o.value = String(n);
       o.textContent = String(n);
       sel.appendChild(o);
+    }
+    // 0 first, because "Never" is the old behaviour and the one someone goes
+    // looking for when the fade surprises them
+    const hold = $("setHold");
+    for (const n of [0, 5, 10, 20, 30, 60, 120]) {
+      const o = document.createElement("option");
+      o.value = String(n);
+      o.textContent = n === 0 ? "Never" : `${n}s`;
+      hold.appendChild(o);
     }
     $("openDisplay").addEventListener("click", () => showScreen("display"));
     $("closeDisplay").addEventListener("click", () => showScreen("live"));
@@ -154,6 +177,7 @@
     $("setFont").addEventListener("change", () => update({ font: $("setFont").value }));
     $("setAlign").addEventListener("change", () => update({ align: $("setAlign").value }));
     $("setLines").addEventListener("change", () => update({ lines: Number($("setLines").value) }));
+    $("setHold").addEventListener("change", () => update({ holdSeconds: Number($("setHold").value) }));
     $("setFg").addEventListener("input", () => update({ fg: $("setFg").value }));
     $("setAccent").addEventListener("input", () => update({ accent: $("setAccent").value }));
     $("setBg").addEventListener("input", () => update({ bg: $("setBg").value }));
@@ -314,6 +338,36 @@
     // interim is the one being spoken now
     for (const el of interims.values()) target = el;
     for (const el of linesEl.querySelectorAll(".row")) el.classList.toggle("obs-live", el === target);
+    resetFade();
+  }
+
+  /**
+   * The overlay renders one line and used to render it for ever, so a streamer
+   * who stopped talking kept their last sentence on the broadcast through every
+   * quiet stretch of a game. It hides once nothing has arrived for
+   * `holdSeconds`, and any caption puts it back.
+   *
+   * Driven from markOverlayLine because that is the one place both kinds of
+   * caption meet: showPartial calls it directly and showSubtitle reaches it
+   * through markLatest. A pause between sentences arrives as a partial, so the
+   * clock restarts rather than running out mid-word.
+   *
+   * The phone page never fades. Its stack is a transcript somebody may be
+   * reading back through, and hiding that would be a bug wearing a fix's
+   * clothes.
+   */
+  let fadeTimer = null;
+  function resetFade() {
+    if (fadeTimer) {
+      clearTimeout(fadeTimer);
+      fadeTimer = null;
+    }
+    document.body.classList.remove("idle");
+    if (!obs || !style.holdSeconds) return;
+    fadeTimer = setTimeout(() => {
+      fadeTimer = null;
+      document.body.classList.add("idle");
+    }, style.holdSeconds * 1000);
   }
 
   function showPartial(msg) {

@@ -672,3 +672,92 @@ describe("a viewer is told why they were disconnected", () => {
     expect(title(), "a missing reason was reported as a specific one").not.toMatch(/another device/i);
   });
 });
+
+describe("the overlay does not leave the last thing said on the broadcast", () => {
+  /**
+   * The overlay renders exactly one row, and it used to render it for ever. A
+   * streamer who stopped talking kept their last sentence burned into the
+   * broadcast until they said something else - which is the state a scene sits
+   * in during every quiet stretch of a game.
+   *
+   * So the live line fades once nothing has arrived for `holdSeconds`, and any
+   * caption - interim or final - brings it straight back. The phone page is
+   * deliberately exempt: its stack is a transcript somebody may be reading
+   * back through, and hiding it would be a bug rather than a fix.
+   */
+  const HOLD_MS = 10_000;
+  const faded = (): boolean => document.body.classList.contains("idle");
+
+  /** boot with a live stream and the fake clock already running */
+  function overlay(search = "?obs=1", style?: Record<string, unknown>): void {
+    vi.useFakeTimers();
+    if (style) localStorage.setItem("relay-style-v2", JSON.stringify(style));
+    boot(search);
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false });
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  it("fades the live line once the hold passes with nothing said", () => {
+    overlay();
+    push({ type: "subtitle", id: 1, source: "spike is down", final: true });
+
+    expect(faded(), "faded while the line was still fresh").toBe(false);
+    vi.advanceTimersByTime(HOLD_MS + 100);
+    expect(faded(), "the last thing said is still on the broadcast").toBe(true);
+  });
+
+  it("keeps it up while someone is still speaking", () => {
+    overlay();
+    push({ type: "subtitle", id: 1, source: "spike is down", final: true });
+
+    // a partial lands most of the way through the hold, as a pause between
+    // sentences does - the clock has to start again, not run out mid-word
+    vi.advanceTimersByTime(HOLD_MS - 500);
+    push({ type: "partial", id: 2, source: "rotating" });
+    vi.advanceTimersByTime(HOLD_MS - 500);
+
+    expect(faded(), "a caption in progress was faded out from under the speaker").toBe(false);
+  });
+
+  it("brings it straight back when the next caption lands", () => {
+    overlay();
+    push({ type: "subtitle", id: 1, source: "spike is down", final: true });
+    vi.advanceTimersByTime(HOLD_MS + 100);
+    expect(faded()).toBe(true);
+
+    push({ type: "partial", id: 2, source: "he is one shot" });
+    expect(faded(), "the overlay stayed hidden while somebody was talking into it").toBe(false);
+  });
+
+  it("never fades when the hold is set to zero", () => {
+    // somebody who wants a permanent last-line readout can still have one
+    overlay("?obs=1", { holdSeconds: 0 });
+    push({ type: "subtitle", id: 1, source: "spike is down", final: true });
+    vi.advanceTimersByTime(HOLD_MS * 6);
+
+    expect(faded(), "zero was treated as a hold rather than as off").toBe(false);
+  });
+
+  it("honours a hold the viewer shortened", () => {
+    overlay("?obs=1", { holdSeconds: 3 });
+    push({ type: "subtitle", id: 1, source: "spike is down", final: true });
+
+    vi.advanceTimersByTime(2_000);
+    expect(faded(), "faded before the viewer's own hold elapsed").toBe(false);
+    vi.advanceTimersByTime(1_500);
+    expect(faded(), "the viewer's shorter hold was ignored").toBe(true);
+  });
+
+  it("never fades the phone page, where the stack is a transcript", () => {
+    overlay("");
+    push({ type: "subtitle", id: 1, source: "spike is down", final: true });
+    vi.advanceTimersByTime(HOLD_MS * 6);
+
+    expect(faded(), "the phone viewer hid a transcript somebody may be reading").toBe(false);
+  });
+});

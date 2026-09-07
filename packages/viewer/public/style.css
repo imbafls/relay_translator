@@ -321,3 +321,14 @@ body.obs .row.obs-live .src, body.obs .row.obs-live .tgt { text-shadow: 0 2px 6p
 body.obs.obs-black .row.obs-live { background: rgba(0, 0, 0, 0.55); padding: 18px 28px 18px 0; }
 body.obs.obs-black .row.obs-live::before { margin-left: 0; }
 body.obs .display-body, body.obs #display { background: var(--bgc); }
+
+/* The overlay used to keep the last line up for ever, so a quiet stretch of a
+   game left a stale sentence on the broadcast. app.js adds `idle` once nothing
+   has arrived for the viewer's hold; a caption removes it again. Only the
+   overlay - the phone stack is a transcript. */
+body.obs .row.obs-live { transition: opacity .6s ease; }
+body.obs.idle .row.obs-live { opacity: 0; }
+
+/* the hold only means anything on the overlay, so the control only appears there */
+.obs-only { display: none; }
+body.obs .obs-only { display: flex; }
