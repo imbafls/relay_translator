@@ -1440,3 +1440,21 @@ describe("settings keeps a subject in one place", () => {
     expect(feed).toBe(groupOf("checkUpdate"));
   });
 });
+
+describe("settings leads with the question people came to answer", () => {
+  /**
+   * Grouping put every reach control together, but the left column is 1309px of
+   * content in a 700px window and WHAT VIEWERS SEE alone is 705px of it - so the
+   * claim button sat below the fold at y=1142, deeper than the y=1105 it was at
+   * before the regroup. Reaching viewers is what people open settings for;
+   * captions and speaker names are set once. So it leads the column.
+   */
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const groups = [...doc.querySelectorAll("#settings .keys-col:first-child [data-group]")].map(
+    (g) => g.getAttribute("data-group"),
+  );
+
+  it("puts reaching viewers above the settings people change once", () => {
+    expect(groups.slice(0, 2)).toEqual(["reach", "viewers"]);
+  });
+});
