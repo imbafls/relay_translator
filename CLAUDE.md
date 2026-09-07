@@ -89,10 +89,9 @@ documents both variables; the app's KEYS placeholder now says
 |------|----------------|
 | `packages/shared` | The contract: `AppConfig` + defaults, the STT model catalogue, `CONTROL_PORT` (47477), control-API patch policy, `isAllowedUpdateFeed()`. One file, `src/index.ts`. Every other package typechecks against its emitted `.d.ts`, so **it must be built first on a clean checkout**. |
 | `packages/relay` | The relay server itself: HTTP + WebSocket (`server.ts`), publisher session and broadcast (`session.ts`), Deepgram STT (`deepgram.ts`), Gemini translation (`gemini.ts`), local sherpa-onnx STT and its worker (`localStt.ts`, `localSttWorker.ts`), token/state/dotenv handling (`config.ts`), and the `cli.ts` entry that becomes the SEA binary shipped to the VPS. |
-| `packages/companion` | Shared client side: audio capture and the downsampling worklet (`capture/`), the relay client (`relayClient.ts`), the uplink client (`uplinkClient.ts`), config store and merge (`config.ts`), and the loopback control API (`controlServer.ts` / `controlClient.ts`) the Stream Deck talks to. |
+| `packages/companion` | Shared client side: audio capture and the downsampling worklet (`capture/`), the relay client (`relayClient.ts`), the uplink client (`uplinkClient.ts`), config store and merge (`config.ts`), and claiming a room on the hosted relay (`hostedRoom.ts`). |
 | `packages/viewer` | The phone/OBS subtitle page (`public/`) that the relay serves. Plain JS, no build step (`build` and `typecheck` are `node -e "1"`). |
 | `apps/standalone` | The Electron desktop app, **Windows-only**. `src/main.ts` (embedded relay, uplink, tray, IPC), `src/models.ts` (local model download/extract), `src/updater.ts` (electron-updater), `renderer/` (the UI). This is the app users install. |
-| `apps/streamdeck` | Elgato Stream Deck plugin. Talks to the desktop app's control API on `127.0.0.1:47477`; the app must be running. Carries its own `manifest.json` version, which `version-bump` also updates. |
 
 ## Commands
 
@@ -106,11 +105,10 @@ All verified against `package.json` at v0.5.3.
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
 | `pnpm -r build` | Build every package. `shared` emits the `.d.ts` the others need. |
 | `pnpm smoke` | `packages/relay/scripts/smoke.mjs` — end-to-end against a real `startRelay` on an ephemeral port (`port: 0`): token auth, the subtitle pipeline, two channels, the admin endpoints. Requires `packages/relay/dist`, so build first. |
-| `node scripts/check-renderer-ids.mjs` | Every element id the renderer, the viewer and the Stream Deck inspector reference must exist in the markup. Prints the counts and exits non-zero if one dangles. |
-| `pnpm build:sd` | Build the Stream Deck plugin. |
+| `node scripts/check-renderer-ids.mjs` | Every element id the desktop renderer and the viewer page reference must exist in the markup. Prints the counts and exits non-zero if one dangles. |
 | `pnpm dist:relay` | Build the relay + bundle + inject the SEA binary (`packages/relay/sea/`). |
 | `pnpm dist:app` | electron-builder, Windows. |
-| `pnpm version-bump <v>` | Set the version across the root, every workspace package.json, **and** the Stream Deck manifest. Prints the exact next commands. |
+| `pnpm version-bump <v>` | Set the version across the root and every workspace package.json. Prints the exact next commands. |
 | `pnpm dev:relay` / `pnpm dev:app` | Run the relay CLI / the Electron app. |
 
 The full gate — what CI runs and what a release must pass — is:
@@ -260,17 +258,5 @@ Full list and status in `docs/OPEN-WORK.md`. The three that shape decisions:
   allows `http:` only for loopback (`localhost`, `127.0.0.1`, `[::1]`, `::1`) on
   the grounds that that is a developer serving their own build. An unset feed
   means the packaged GitHub feed and is allowed.
-- **The local control API has no credential.** `allowedOrigin` in
-  `packages/companion/src/controlServer.ts` admits `Origin: null` - what a
-  sandboxed iframe on any page sends - and the only gate on a mutation is the
-  *presence* of a client header, which a preflighted `fetch` supplies. So a
-  page you visit can start and stop your session, patch your config, and
-  `POST /link/rotate`, which answers with the **unredacted** viewer link (and
-  kicks whoever was watching). The reads are masked: `GET /status` and the SSE
-  stream go through `redact()`, and `GET /link` - which returned the link to
-  anyone who asked - was deleted, having never had a caller. Closing the rest
-  needs a per-launch token the Stream Deck property inspector can present, and
-  the property inspector has no channel to receive one that can be tested
-  without the hardware.
 - **The VPS is behind and cannot be updated from this machine.** See
   `docs/OPEN-WORK.md` for what unblocks it.

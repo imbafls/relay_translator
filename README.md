@@ -33,8 +33,8 @@ code.
         ▲                  └──────────────────────────────┘
         │
 ┌───────┴───────────┐
-│  companion        │◀──── Stream Deck plugin (toggle key + settings panel)
-│  (standalone app) │      local control API on 127.0.0.1:47477
+│  companion        │      claims a room on the hosted relay
+│  (standalone app) │      capture, tray, settings, updates
 └───────────────────┘
 ```
 
@@ -42,9 +42,8 @@ code.
 
 ```
 apps/standalone/     Electron app: settings UI, audio picker, copy-link, tray
-apps/streamdeck/     @elgato/streamdeck plugin: toggle key + settings panel
 apps/hosted-relay/   Cloudflare Worker: one room per user, pure caption fan-out
-packages/companion/  shared capture + relay client + local control API
+packages/companion/  shared capture + relay client + hosted-room claim
 packages/relay/      the relay: audio in -> Deepgram or local sherpa-onnx ->
                      Gemini -> WS out, and serves the viewer page
 packages/viewer/     phone page, token-gated, OBS transparent mode
@@ -84,7 +83,7 @@ Windows will warn about an unknown publisher: the installer is not code-signed
 yet. The sha512 in `latest.yml` is what the app checks before applying an
 update.
 
-The desktop apps embed the relay, the viewer page, the control API and the
+The desktop apps embed the relay, the viewer page and the
 local speech engine - there are no dev servers, no Node.js install, no terminal.
 Install (or run the portable exe), pick cloud or local speech in the setup, and
 you're done. The relay server exe is cloud-only (no local models).
@@ -216,8 +215,8 @@ every control sits in one signal-chain strip underneath it
 - Settings changes (model / language / audio source) apply live: the session
   restarts but the viewer link survives.
 
-The phone viewer, OBS overlay and Stream Deck property inspector share the same
-design; `DESIGN.md` is the spec they are all built against.
+The phone viewer and the OBS overlay share the app's design; `DESIGN.md` is the
+spec they are built against.
 
 ### Sending someone the link
 
@@ -296,21 +295,6 @@ node apps/hosted-relay/scripts/verify-isolation.cjs https://textrelay.cc
 Run both verify scripts after any deploy. The Worker serves the viewer page from
 `packages/viewer/public`, so deploying from a dirty tree publishes whatever is
 in it - which is how the live page once ended up four fixes behind the repo.
-
-### Stream Deck plugin
-
-1. `pnpm build:sd`
-2. Copy `apps/streamdeck/com.callout-relay.sdPlugin/` into
-   `%appdata%\Elgato\StreamDeck\Plugins\`
-3. Restart Stream Deck. Drop **Callout Relay → Toggle Relay** on a key.
-4. The property inspector is one panel: the viewer link with COPY and NEW, then
-   `01 SOURCE`, `02 TRANSCRIBE`, `03 TRANSLATE` and `04 MODEL`.
-5. The key goes green **LIVE** whenever a session is running - regardless of
-   whether it was started from the app, tray, or the key itself.
-
-The plugin talks to the desktop app's local control API
-(`127.0.0.1:47477`, loopback-only), so the app must be running (it lives in
-the tray anyway).
 
 ## Viewer page
 
@@ -446,14 +430,13 @@ it is worth keeping that way.
 - `CLAUDE.md` - architecture, commands, the release process, and the traps.
   Read it before debugging anything network-shaped.
 - `docs/OPEN-WORK.md` - the consolidated backlog, including the known-open
-  risks: the installer is unsigned, and the local control API on
-  `127.0.0.1:47477` has no credential, so a page you visit can start and stop
-  your session and rotate your link.
+  risk: the installer is unsigned, so the sha512 in `latest.yml` is the only
+  integrity proof an update has.
 - `ITERATION_LOG.md` - what was found and fixed, and how each fix was proved.
 - `apps/hosted-relay/README.md` - the Worker, what it costs, and what it does
   not do.
-- `DESIGN.md` - the UI spec the app, the phone page and the Stream Deck panel
-  are all built against. It predates the SETTINGS rework, so read it as intent.
+- `DESIGN.md` - the UI spec the app and the phone page are built against. It
+  predates the SETTINGS rework, so read it as intent.
 
 ## Done when
 

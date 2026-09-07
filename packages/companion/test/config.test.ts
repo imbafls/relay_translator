@@ -259,9 +259,9 @@ describe("a key that only exists in the environment", () => {
 describe("the legacy pair and the source list", () => {
   /**
    * `sources` is the truth, but audioSource/audioSource2 are still what the
-   * Stream Deck property inspector patches through the control API - and that
+   * an older config can still carry - and that
    * patch arrives with no `sources` in it. Merged naively it would land beside
-   * a stale list that resolveSourceIds prefers, so pressing a Stream Deck key
+   * a stale list that resolveSourceIds prefers, so starting a session
    * would silently revert the source the user just chose, with the pane still
    * showing the new one.
    */

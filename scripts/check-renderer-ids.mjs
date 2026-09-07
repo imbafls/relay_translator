@@ -18,11 +18,6 @@ const PAIRS = [
     html: "packages/viewer/public/index.html",
     scripts: ["packages/viewer/public/app.js"],
   },
-  {
-    name: "stream deck inspector",
-    html: "apps/streamdeck/com.callout-relay.sdPlugin/pi/index.html",
-    scripts: ["apps/streamdeck/com.callout-relay.sdPlugin/pi/pi.js"],
-  },
 ];
 
 /** ids the script builds at runtime rather than looking up literally */

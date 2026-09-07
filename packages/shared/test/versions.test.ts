@@ -8,7 +8,7 @@ import * as path from "node:path";
  * refuses a tag that disagrees with apps/standalone - this covers the rest,
  * which nothing checked.
  *
- * The Stream Deck manifest is why: it is not a package.json, `pnpm version-bump`
+ * Every workspace package carries the same version, and `pnpm version-bump`
  * did not know about it, and it sat at 0.1.0 through five releases. Elgato both
  * displays that number and uses it to decide a plugin is newer, so a stuck one
  * reads as a plugin that has never been updated.
@@ -31,27 +31,12 @@ function packageFiles(): string[] {
   return out;
 }
 
-/** any Stream Deck plugin manifest under apps/ */
-function manifestFiles(): string[] {
-  const out: string[] = [];
-  for (const name of fs.readdirSync(path.join(root, "apps"))) {
-    const dir = path.join(root, "apps", name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    for (const entry of fs.readdirSync(dir)) {
-      if (!entry.endsWith(".sdPlugin")) continue;
-      const rel = `apps/${name}/${entry}/manifest.json`;
-      if (fs.existsSync(path.join(root, rel))) out.push(rel);
-    }
-  }
-  return out;
-}
 
 const appVersion = read("apps/standalone/package.json").version as string;
 
 describe("everything ships as one version", () => {
   it("found the files it means to check", () => {
     expect(packageFiles().length).toBeGreaterThan(5);
-    expect(manifestFiles().length).toBeGreaterThan(0);
   });
 
   it("agrees across every workspace package", () => {
@@ -61,12 +46,6 @@ describe("everything ships as one version", () => {
     expect(odd, `these disagree with ${appVersion}: ${odd.map(([f, v]) => `${f}=${v}`).join(", ")}`).toEqual([]);
   });
 
-  it("agrees in the Stream Deck manifest, which is not a package.json", () => {
-    const odd = manifestFiles()
-      .map((f) => [f, read(f).Version as string] as const)
-      .filter(([, v]) => v !== appVersion);
-    expect(odd, `these disagree with ${appVersion}: ${odd.map(([f, v]) => `${f}=${v}`).join(", ")}`).toEqual([]);
-  });
 
   it("is a version the tooling will accept", () => {
     expect(appVersion).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
@@ -81,11 +60,6 @@ describe("the bump script reaches everything above", () => {
     expect(bump).toContain("packages/*/package.json");
   });
 
-  it("rewrites the Stream Deck manifest too", () => {
-    // without this the manifest is the one file a release cannot move
-    expect(bump).toContain("manifest.json");
-    expect(bump).toContain('"Version"');
-  });
 });
 
 describe("a release has notes to publish", () => {

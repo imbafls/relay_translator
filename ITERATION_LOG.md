@@ -3200,3 +3200,40 @@ a room per person, a tokenless `/health` returns a fixed `live: false` - it must
 wake no object to answer - so the badge could never light, whoever was
 streaming. A status light that cannot change state is worse than none: it reads
 as nobody is here. It reports whether the service is answering now.
+
+### Turn 89 - Dropping the Stream Deck, and the security finding that went with it
+
+Asked for directly: the plugin is out of scope. `apps/streamdeck/` is gone.
+
+The interesting part is what it took with it. **Audit finding 3 - the highest
+open item in the backlog for four days - is closed by deletion.** The local
+control API on `127.0.0.1:47477` admitted `Origin: null`, which is what a
+sandboxed iframe on any page sends, and gated mutations on the mere PRESENCE of
+a header that a preflighted `fetch` supplies. So a page you visited could stop
+your session, patch your config, and rotate your viewer link - getting the new
+one back unredacted. It was blocked on Stream Deck hardware to test the
+property inspector against.
+
+`ControlClient` had exactly one consumer: the plugin. With the plugin gone the
+server has no client at all, and the same reasoning that retired `GET /link` in
+turn 71 applies to the whole thing - an API nobody calls is not an API to
+authenticate. `controlServer.ts`, `controlClient.ts`, their tests, the patch
+policy in shared, `CONTROL_PORT`, and `startControl()` in the app all go.
+
+`ControlStatus` stays, and keeps its name: it is what the whole app calls the
+shape the main process hands its own renderer over IPC. It was only ever named
+after the API that used to carry it.
+
+Two guards went with their subjects, and it is worth being explicit that this
+is not a loss of coverage. `startupGuards.test.ts`'s finding-28 half asked
+whether `await startControl()` was wrapped; there is no such call now.
+`versions.test.ts` checked the Stream Deck manifest, which was the only
+non-package.json a release had to keep in step.
+
+The suite drops from 749 to 679 tests. Every one of the seventy covered code
+that no longer exists.
+
+**Caught by the doc guard**, which is what it is for: `pnpm build:sd` in
+`CLAUDE.md` and `apps/streamdeck/...` paths in three documents all went red the
+moment the files went. `scripts/diag-renderer.mjs` drove the control API to
+press START and could no longer work at all, so it went too.

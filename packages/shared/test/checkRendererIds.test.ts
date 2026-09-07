@@ -53,8 +53,6 @@ const OK = {
   "apps/standalone/renderer/app.ts": `$("alpha");`,
   "packages/viewer/public/index.html": `<div id="beta"></div>`,
   "packages/viewer/public/app.js": `$("beta");`,
-  "apps/streamdeck/com.callout-relay.sdPlugin/pi/index.html": `<div id="gamma"></div>`,
-  "apps/streamdeck/com.callout-relay.sdPlugin/pi/pi.js": `$("gamma");`,
 };
 
 describe("the id checker", () => {

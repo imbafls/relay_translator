@@ -50,28 +50,6 @@ LAN-MITM paths; it does not make an update cryptographically verified.
 **What unblocks it:** obtain a certificate, then set `win.publisherName` and
 wire signing into `electron-builder`.
 
-### B5 — A real credential for the local control API (`GET /link`)
-**Band: high. Blocked on: Stream Deck hardware to test the property inspector
-against.**
-
-Audit finding 3, half fixed. `packages/companion/src/controlServer.ts` carries
-an explicit `STILL OPEN` comment on the route:
-
-- `GET /link` returns the unredacted viewer link and does not go through
-  `redact()` at all.
-- `allowedOrigin` returns true for `origin === "null"` and echoes it back as
-  `Access-Control-Allow-Origin: null` — which matches the opaque origin a
-  sandboxed iframe on any web page sends.
-- `guardPost` checks header **presence**, not a secret, and the OPTIONS
-  preflight advertises the header name.
-
-So a page you visit can ask for your viewer link and watch your live captions.
-
-**Fix:** a per-launch token the app writes to `%APPDATA%` and the property
-inspector reads, gating reads as well as writes, with the origin allowlist kept
-as defence in depth. **What unblocks it:** a Stream Deck to verify the inspector
-still works after the change.
-
 ### B6 — In-app archive model downloads corrupt at ~28%
 **Band: medium. Status: could not be reproduced. Needs a real failure to go
 further.**
@@ -161,7 +139,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 34 | A passing local-STT probe thrown away because the session had stopped | `3b2d21f` |
 | 27 | A changed update feed that did nothing until the app was restarted | `5fec896` |
 | 17 | The flat 4 s kill timer that threw away the last thing said before STOP | `ffa8156` |
-| 8 | An unbounded worker queue and a partial gate that replayed the backlog | *(this commit)* |
+| 8 | An unbounded worker queue and a partial gate that replayed the backlog | `7c634ae` |
+| 3 | The control API a page you visit could drive - deleted with its only consumer | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -169,7 +148,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
 | Rank | Band | Finding | Primary location |
 |------|------|---------|------------------|
-| 3 | high | Control API: no credential and `Origin: null` admitted, so a page you visit can start/stop the session, patch config, and `POST /link/rotate` for an unredacted viewer link. **Partly closed** - `GET /link` deleted (it had no callers); the rest needs a token the property inspector has no testable way to receive. *(Also B5.)* | `packages/companion/src/controlServer.ts` |
 | 17 (part) | low | The close is still posted behind the queued audio on the same port. With the deadline scaled to the worker going quiet, that costs a slower STOP rather than a lost caption; moving it out of band means changing the protocol on both sides, and the worker half needs sherpa-onnx to exercise at all. | `packages/relay/src/localSttWorker.ts` |
 
 Each entry in the audit carries a reproduced failure scenario and a suggested

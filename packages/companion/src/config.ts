@@ -152,10 +152,10 @@ export class ConfigStore {
  * Keep `sources` and the deprecated audioSource/audioSource2 pair telling the
  * same story after a patch.
  *
- * The pair is not dead weight: it is what the Stream Deck property inspector
+ * The pair is not dead weight: it is what an older config carries
  * writes through the control API, and such a patch arrives with no `sources`
  * in it at all. Merged and left alone it would sit beside a list that
- * resolveSourceIds prefers, so a Stream Deck key press would appear to do
+ * resolveSourceIds prefers, so starting a session would appear to do
  * nothing - or worse, revert a source the user had just chosen.
  *
  * A legacy patch names a SLOT, not the whole list. An old client patching

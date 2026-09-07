@@ -1,8 +1,8 @@
 # Relay - UI redesign spec ("caption console")
 
-Source of truth for visuals: `Relay Redesign.dc.html`, turns **3** (console, viewer, OBS, Stream Deck) and **4** (onboarding). Turn 2 is superseded; turn 1 is the old UI recreated for comparison. Screen ids (3a, 4c…) below match the badges in that file.
+Source of truth for visuals: `Relay Redesign.dc.html`, turns **3** (console, viewer, OBS) and **4** (onboarding). Turn 2 is superseded; turn 1 is the old UI recreated for comparison. Screen ids (3a, 4c…) below match the badges in that file.
 
-Applies to: `apps/standalone/renderer` (desktop), `packages/viewer/public` (phone/OBS), `apps/streamdeck/com.callout-relay.sdPlugin/pi` (property inspector).
+Applies to: `apps/standalone/renderer` (desktop) and `packages/viewer/public` (phone/OBS).
 
 ## Concept
 Relay is a broadcast caption encoder, not a settings form. The live text is the hero; every control lives in one **signal-chain strip** (01 SOURCE → 02 TRANSCRIBE → 03 TRANSLATE → 04 OUTPUT). No cards, no rounded panels - one ruled grid on warm black. Amber appears only when something is live or needs attention.
@@ -55,9 +55,6 @@ Relay URL/token are **not** in onboarding - they live in the keys view; the cons
 
 ## OBS overlay (`?obs=1`, 3g)
 Transparent, bottom-left, 120px inset, 8px amber bar left of text, text-shadow `0 2px 6px rgba(0,0,0,.7)` (intrinsic to the overlay, not a user setting). Original 34px `--ink-2`, translation 46px wt 600; both scale with the viewer's size setting. Honors the other viewer display settings.
-
-## Stream Deck property inspector (320 wide, 3h)
-Header `● ON AIR · KEY = STOP`; LINK row (mono, underline, `COPY NEW`); 2×2 grid of chain blocks (01 SOURCE, 02 TRANSCRIBE, 03 TRANSLATE w/ ON, 04 MODEL) each a small select; mono footnote about System audio.
 
 ## Components (build once, reuse)
 - `ChainBlock` {index, label, value, meta, state: default|active|live|disabled(hatched), trailing toggle?}

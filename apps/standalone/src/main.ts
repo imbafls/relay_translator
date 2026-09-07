@@ -14,7 +14,7 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { claimHostedRoom, ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
+import { claimHostedRoom, ConfigStore, defaultDataDir, UplinkClient } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
 import {
   AppConfig,
@@ -27,7 +27,6 @@ import {
   recommendTier,
   UpdateStatus,
   UsageInfo,
-  controlConfigPatch,
   HOSTED_RELAY_URL,
   RELAY_CONFIG_KEYS,
   relayRollbackPatch,
@@ -72,7 +71,6 @@ const APP_NAME = "Callout Relay";
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let relay: RelayHandle | null = null;
-let controlBroadcast: ((status: ControlStatus) => void) | null = null;
 let quitting = false;
 let uplink: UplinkClient | null = null;
 let uplinkState: NonNullable<ControlStatus["relay"]["uplinkState"]> = "off";
@@ -127,7 +125,7 @@ function httpOriginOfRelayUrl(relayUrl: string): string | null {
  *
  * The `obs` flavour carries `?obs=1` and renders as a transparent single-line
  * overlay. It used to be the only thing this returned, which is how the tray
- * and the Stream Deck ended up handing it to people's phones.
+ * and the tray ended up handing it to people's phones.
  */
 function localViewerUrl(obs = true): string | undefined {
   if (!relay) return undefined;
@@ -144,7 +142,7 @@ function phoneUrl(): string | undefined {
   return `${base}/watch/${token}`;
 }
 
-/** the link shown front-and-center (tray, Stream Deck): follows the OUTPUT choice */
+/** the link shown front-and-center (footer, tray): follows the OUTPUT choice */
 function viewerUrl(): string | undefined {
   return viewerLinkFor({
     output: config().output,
@@ -398,7 +396,6 @@ function currentStatus() {
 
 function broadcastStatus(): void {
   const status = currentStatus();
-  controlBroadcast?.(status);
   win?.webContents.send("status:changed", status);
   refreshTray();
 }
@@ -579,55 +576,6 @@ function registerIpc(): void {
 }
 
 // ---------------------------------------------------------------------------
-// control API (consumed by Stream Deck plugin)
-// ---------------------------------------------------------------------------
-
-/**
- * Catches its own failure, deliberately. `startControlServer` rejects when it
- * cannot bind 127.0.0.1:47477 - a second copy of the app, a crashed one whose
- * socket has not been reaped, anything at all on a port with no registry entry
- * - and this is awaited from `whenReady()` above `createTray()` and
- * `createWindow()`, with no `unhandledRejection` handler anywhere in the
- * process. An unguarded reject therefore meant no window, no tray and no
- * updater, while the process kept the single-instance lock, so every relaunch
- * quit silently: an app that will not open and no reason given.
- *
- * The Stream Deck is worth less than the app. `controlBroadcast` is optional at
- * every use, so the only thing lost is the remote control, and the log says so.
- */
-async function startControl(): Promise<void> {
-  try {
-    const handle = await startControlServer({
-      getStatus: () => currentStatus(),
-      async start() {
-        win?.webContents.send("session:command", "start");
-      },
-      async stop() {
-        win?.webContents.send("session:command", "stop");
-      },
-      async patchConfig(patch) {
-        // this arrives from the control API, which has no credential and admits
-        // Origin: null - so it is a web page until proven otherwise. IPC from
-        // our own renderer still goes through applyConfig unfiltered.
-        const { allowed, rejected } = controlConfigPatch(patch);
-        if (rejected.length) {
-          log("warn", `control API tried to set ${rejected.join(", ")} - refused`);
-        }
-        if (Object.keys(allowed).length) await applyConfig(allowed);
-        return currentStatus();
-      },
-      async rotateLink() {
-        await rotateLink();
-      },
-    });
-    controlBroadcast = handle.broadcast;
-    log("info", `control API on 127.0.0.1:${handle.port}`);
-  } catch (err) {
-    log("error", `control API failed to start: ${String(err)} - the Stream Deck plugin will not connect`);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // window + tray
 // ---------------------------------------------------------------------------
 
@@ -784,7 +732,6 @@ if (!gotLock) {
     }
     // usage refresh loop (Deepgram balance cached inside the relay for 5 min)
     setInterval(() => void refreshUsage(), 60000);
-    await startControl();
     updater = new Updater({
       config,
       log,

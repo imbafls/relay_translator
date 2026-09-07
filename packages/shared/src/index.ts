@@ -1,6 +1,6 @@
 /**
  * Shared types: config schema, wire protocol, control API.
- * Used by relay, companion, standalone app and stream deck plugin.
+ * Used by the relay, the companion, the desktop app and the hosted relay.
  */
 
 /** what the app shows after it updates itself */
@@ -37,7 +37,7 @@ export interface AppConfig {
   sourceLabels?: string[];
   /**
    * @deprecated superseded by `sources`. Still written and still read: it is
-   * what the Stream Deck property inspector patches through the control API,
+   * what an older config carries,
    * and what every config.json already on disk contains.
    * "default-mic" | "system-loopback" | a deviceId from enumerateDevices()
    */
@@ -116,47 +116,6 @@ export const DEFAULT_CONFIG: AppConfig = {
  */
 export const FALLBACK_STT = "deepgram-nova-3";
 
-/**
- * The settings a remote control may change.
- *
- * The control API on 47477 has no credential and its origin check admits
- * `Origin: null`, so a web page can reach it. `configStore.update` merges
- * whatever it is handed, which put the API keys, the relay endpoint, the
- * publisher token and `updateFeedUrl` - the last of which decides which
- * executable the app downloads and runs - inside reach of a POST from a
- * sandboxed iframe.
- *
- * This is what a Stream Deck legitimately changes: what to transcribe, in which
- * languages, from which device, and how it is shown. Nothing here can point the
- * app at a different server or a different binary.
- */
-export const CONTROL_PATCHABLE_KEYS = [
-  "stt",
-  "translation",
-  "audioSource",
-  "audioSource2",
-  "languages",
-  "translationEnabled",
-  "showLatency",
-  "profanityFilter",
-  "output",
-  "linkMode",
-] as const;
-
-/** the part of an untrusted patch that a remote control is allowed to apply */
-export function controlConfigPatch(patch: Record<string, unknown> | null | undefined): {
-  allowed: Partial<AppConfig>;
-  rejected: string[];
-} {
-  const allowed: Record<string, unknown> = {};
-  const rejected: string[] = [];
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { allowed, rejected };
-  for (const [key, value] of Object.entries(patch)) {
-    if ((CONTROL_PATCHABLE_KEYS as readonly string[]).includes(key)) allowed[key] = value;
-    else rejected.push(key);
-  }
-  return { allowed: allowed as Partial<AppConfig>, rejected };
-}
 
 /**
  * Whether an auto-update feed may be used.
@@ -368,8 +327,8 @@ export const DEFAULT_SOURCE = "default-mic";
  *
  * `sources` wins when it is a usable list; otherwise the legacy
  * audioSource/audioSource2 pair is folded in. That order matters: the pair is
- * what the Stream Deck writes, so preferring it would silently drop a third
- * source every time someone pressed a Stream Deck key.
+ * what an older config carries, so preferring it would silently drop a third
+ * source for anyone upgrading.
  *
  * Blanks are dropped and a device named twice is collapsed - two channels
  * carrying one voice is the most confusing failure this app has, because both
@@ -1053,11 +1012,14 @@ export type ServerToUplink =
   | { type: "viewers"; count: number };
 
 // ---------------------------------------------------------------------------
-// Local control API (companion process <-> standalone UI <-> Stream Deck)
+// App status (main process -> renderer)
+//
+// `ControlStatus` keeps its name because it is what the whole app calls this
+// shape. It was the payload of a loopback HTTP API the Stream Deck plugin read;
+// that plugin and that API are both gone, and this is now purely what the main
+// process hands its own renderer over IPC.
 // ---------------------------------------------------------------------------
 
-export const CONTROL_PORT = 47477;
-export const CONTROL_CLIENT_HEADER = "x-callout-relay-client";
 
 export interface AudioDeviceInfo {
   id: string;

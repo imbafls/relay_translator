@@ -247,7 +247,7 @@ describe("which viewer link is handed out", () => {
   /**
    * Audit finding 20. `localViewerUrl()` hardcoded the OBS flavour and
    * `viewerUrl()`'s fallback returned it unchanged. The desktop footer strips
-   * the suffix itself; the tray and the Stream Deck property inspector do not.
+   * the suffix itself; the tray does not.
    *
    * On a fresh install - `output: "phone"`, no relayUrl - the phone link is
    * undefined, so the fallback handed out
