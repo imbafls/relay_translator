@@ -28,6 +28,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.8",
+    date: "2026-09-07",
+    headline: "The phone page stops guessing why it lost the link",
+    changes: [
+      {
+        kind: "fixed",
+        text: "When a second phone opens the same link, the first one now says so - Someone else opened this link, and trying again takes it back. It used to say the session was stopped or a new link was made, which was not what happened, and sent the person reading off to ask you for a link they already had. On your own network only one device can read a link at a time, so this is the most common way it happens; getting an address under WHO CAN OPEN IT removes the limit as well as explaining it.",
+      },
+      {
+        kind: "fixed",
+        text: "Setup no longer tells you to set a relay URL under KEYS. There has been no panel called KEYS since 0.5.5, and pasting a relay address by hand has not been the way to reach a phone since 0.5.7 - it points at the one press that does it now. Three other places still saying KEYS were fixed with it.",
+      },
+      {
+        kind: "changed",
+        text: "There is a written guide, for setting this up rather than working on it - the first run, getting a link onto somebody else's phone, and what the person reading sees on their end. Linked from SETTINGS, next to the button that gets you an address.",
+      },
+      {
+        kind: "fixed",
+        text: "The hint under a second audio source said the first is tagged YOU and the second CHAT. System audio is tagged CHAT whichever slot it is in, so that was wrong whenever system audio came first.",
+      },
+    ],
+  },
+  {
     version: "0.5.7",
     date: "2026-09-07",
     headline: "One button for a link that works outside your network",
