@@ -239,6 +239,23 @@ export function isRoomClaim(value: unknown): value is RoomClaim {
     typeof v.viewerToken === "string" && v.viewerToken.length > 0;
 }
 
+/**
+ * Hide the token inside a viewer link, keeping the shape of the URL.
+ *
+ * A viewer link is `<origin>/watch/<viewerToken>`, and that token is the whole
+ * auth model - no second factor, no expiry, no IP binding - so the link IS the
+ * secret. Redacting the `viewerToken` field and printing the URL is the same
+ * leak in a different shape, which is why this exists in one place and both the
+ * control API and the app's own footer go through it.
+ *
+ * The origin is deliberately left alone: a masked link the user cannot
+ * recognise is not something they will trust, and the origin is not the secret.
+ */
+export function maskViewerLink(url: string | undefined, mask = "***"): string | undefined {
+  if (!url) return url;
+  return url.replace(/\/watch\/[^/?#]+/, `/watch/${mask}`);
+}
+
 /** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
 export function isLocalStt(id: string): boolean {
   const info = sttModel(id);

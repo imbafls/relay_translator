@@ -160,6 +160,11 @@ button:disabled { cursor: default; }
    failed restart - the amber error string printed straight through the
    captions and neither could be read. Scrim it, rather than wiping the
    transcript: what was said stays, dimmed, behind the reason it stopped. */
+/* The link is masked until clicked - it is the whole auth model, and it sat
+   in full on screen for the entire session. Signal that it is a control. */
+.link-url { cursor: pointer; }
+.link-url.masked:hover { color: var(--ink); }
+
 .idle.over-lines {
   background: rgba(19, 19, 19, 0.88);
   backdrop-filter: blur(2px);

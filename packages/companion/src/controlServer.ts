@@ -3,6 +3,7 @@ import {
   CONTROL_CLIENT_HEADER,
   CONTROL_PORT,
   ControlStatus,
+  maskViewerLink,
 } from "@callout-relay/shared";
 
 export interface ControlHandlers {
@@ -56,10 +57,7 @@ const REDACTED = "***";
  * leaving `relay.viewerUrl` alone hands out the same power in a different
  * shape - anyone holding the link watches the stream.
  */
-function maskLink(url: string | undefined): string | undefined {
-  if (!url) return url;
-  return url.replace(/\/watch\/[^/?#]+/, `/watch/${REDACTED}`);
-}
+const maskLink = (url: string | undefined): string | undefined => maskViewerLink(url, REDACTED);
 
 function redact(status: ControlStatus): ControlStatus {
   const config = { ...status.config };

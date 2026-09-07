@@ -976,3 +976,96 @@ describe("getting a link that works outside this network", () => {
     expect(claimBtn().hidden, "an extra room would be claimed and the old one orphaned").toBe(true);
   });
 });
+
+/**
+ * The viewer link is the whole auth model: `packages/relay/src/server.ts`
+ * refuses any token that is not the viewer token, and there is no second
+ * factor, no expiry and no IP binding. Anyone who reads the link watches the
+ * captions - which are a live transcript of whatever the microphone hears.
+ *
+ * It was printed in full in the footer for the entire session. `stripUrl`
+ * removed `https://` and nothing else, and the same URL went into the element's
+ * `title`, so it leaked on hover too. One paused frame of a screen share, one
+ * clip, one person looking over a shoulder.
+ *
+ * The control API one file over has masked this since audit finding 3
+ * (`maskViewerLink`). The window the user actually looks at did not.
+ *
+ * Masked by default, revealed on a click, and re-masked when the link changes -
+ * the sticky SHOW button on the key fields is the mistake not to repeat.
+ */
+describe("the viewer link on screen", () => {
+  const TOKEN = "7f3a1c9e5b2d4088";
+  const linkEl = (): HTMLElement => document.getElementById("linkUrl") as HTMLElement;
+
+  async function withLink(): Promise<void> {
+    await bootWith({ setupDone: true, linkMode: "fixed" });
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: { localViewerUrl: `http://127.0.0.1:8787/watch/${TOKEN}?obs=1`, remoteViewerUrl: "", uplinkState: "off" },
+      usage: undefined,
+    });
+    await settle(40);
+  }
+
+  it("does not print the token that lets anyone watch", async () => {
+    await withLink();
+
+    expect(linkEl().textContent, "the link is blank - the point is to show it, masked").toBeTruthy();
+    expect(linkEl().textContent, "the viewer token is on screen in full").not.toContain(TOKEN);
+    expect(linkEl().textContent, "the host is masked too, which leaves nothing to recognise").toContain("127.0.0.1:8787");
+  });
+
+  it("does not leak it on hover either", async () => {
+    await withLink();
+    expect(linkEl().title, "the full link is in the title attribute").not.toContain(TOKEN);
+  });
+
+  it("shows it when the user asks, because they do need to read it sometimes", async () => {
+    await withLink();
+    linkEl().click();
+    await settle(20);
+
+    expect(linkEl().textContent, "clicking it revealed nothing").toContain(TOKEN);
+  });
+
+  it("hides it again on a second click", async () => {
+    await withLink();
+    linkEl().click();
+    await settle(20);
+    linkEl().click();
+    await settle(20);
+
+    expect(linkEl().textContent).not.toContain(TOKEN);
+  });
+
+  it("goes back to hidden when the link is replaced", async () => {
+    await withLink();
+    linkEl().click();
+    await settle(20);
+    expect(linkEl().textContent).toContain(TOKEN);
+
+    // NEW, or a session start in the default link mode: a fresh token must not
+    // inherit the last one's revealed state
+    const next = "0000deadbeef1111";
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: { localViewerUrl: `http://127.0.0.1:8787/watch/${next}?obs=1`, remoteViewerUrl: "", uplinkState: "off" },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect(linkEl().textContent, "a new link arrived already revealed").not.toContain(next);
+  });
+
+  it("still copies and opens the real link while it is masked", async () => {
+    await withLink();
+    (document.getElementById("copyLink") as HTMLButtonElement).click();
+    await settle(20);
+
+    // masking is a display decision; the buttons read the link itself
+    expect(calls.clipboard.join(" "), "masking broke COPY, which is what the link is for").toContain(TOKEN);
+  });
+});

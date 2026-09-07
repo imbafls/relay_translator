@@ -32,6 +32,7 @@ import {
   SPEAKER_COLORS,
   speakerTags,
   MAX_CAPTURE_CHANNELS,
+  maskViewerLink,
 } from "@callout-relay/shared";
 import type { ChangelogEntry } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
@@ -999,15 +1000,54 @@ function currentLink(): string | undefined {
   return r.remoteViewerUrl || r.localViewerUrl?.replace(/\?obs=1$/, "");
 }
 
+/**
+ * Whether the footer is currently showing the viewer token in full.
+ *
+ * Off by default and reset whenever the link changes. The link is the entire
+ * auth model - anyone who reads it watches the captions - and it sat on screen
+ * in full for the whole session, which is a live transcript of the room handed
+ * to whoever is looking. The user does genuinely need to read it sometimes, so
+ * it is a click, not a removal.
+ */
+let linkRevealed = false;
+/** the link the reveal belongs to; a new link must not inherit it */
+let revealedFor: string | undefined;
+let revealTimer: ReturnType<typeof setTimeout> | null = null;
+
+const REVEAL_MS = 20000;
+
+function revealLink(on: boolean): void {
+  linkRevealed = on;
+  if (revealTimer) clearTimeout(revealTimer);
+  revealTimer = null;
+  // re-hides itself. The SHOW buttons on the key fields do not, and a key
+  // revealed an hour ago is still on screen when settings is next opened -
+  // the same mistake is not worth making twice
+  if (on) revealTimer = setTimeout(() => {
+    linkRevealed = false;
+    renderFooter();
+  }, REVEAL_MS);
+  renderFooter();
+}
+
 function renderFooter(): void {
   if (!config) return;
   const live = session === "live" || session === "starting";
   const url = currentLink();
   const showLink = !!url && (live || config.linkMode === "fixed");
   const linkEl = $("linkUrl");
-  linkEl.textContent = showLink ? stripUrl(url!) : "— appears on start";
+  if (url !== revealedFor) {
+    revealedFor = url;
+    linkRevealed = false;
+    if (revealTimer) clearTimeout(revealTimer);
+    revealTimer = null;
+  }
+  const shown = url && !linkRevealed ? maskViewerLink(url, "•".repeat(10)) : url;
+  linkEl.textContent = showLink ? stripUrl(shown!) : "— appears on start";
   linkEl.classList.toggle("live", showLink);
-  linkEl.title = showLink ? url! : "";
+  linkEl.classList.toggle("masked", showLink && !linkRevealed);
+  // the title carried the full URL, scheme included, so it leaked on hover
+  linkEl.title = showLink ? (linkRevealed ? "click to hide" : "click to show the full link") : "";
   // always reachable: both destinations exist whatever `output` says, and
   // hiding one is what sent a user to OBS with the wrong URL
   $("linkSeg").hidden = false;
@@ -2203,6 +2243,11 @@ function bind(): void {
   $("installUpdate").onclick = () => void cr.installUpdate();
   $("openReleases").onclick = () => void cr.openExternal(update?.releaseUrl || "https://github.com/imbafls/relay_translator/releases/latest");
   $("autoUpdate").onclick = () => void saveAndApply({ autoUpdate: config.autoUpdate === false });
+  $("linkUrl").onclick = () => {
+    if (!currentLink()) return;
+    revealLink(!linkRevealed);
+  };
+
   $("claimRoom").onclick = () => void claimRoom();
 
   $("updateChip").onclick = () => {

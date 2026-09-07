@@ -2887,3 +2887,43 @@ at `relay.supr.systems` is 18,272 bytes against 22,010 in the tree, and carries
 none of the recent viewer fixes - it went out from a dirty working tree. A
 phone reaching that room gets the old page however good the app gets. It needs
 a `wrangler deploy` from a clean tree, which is the user's call to make.
+
+### Turn 81 - The link stops sitting on screen, and the stale viewer page goes out
+
+**The deploy first.** `relay.supr.systems` was serving an 18,272-byte
+`/watch/app.js` against 22,010 in the tree, matching no committed version - it
+had gone out from a dirty working tree. `wrangler deploy` from a clean one
+uploaded **exactly one asset**, `/app.js`, which is the diagnosis confirming
+itself: everything else was already current. It is now byte-identical to the
+tree by sha256. `verify-deploy.cjs` 14/14 and `verify-isolation.cjs` 9/9
+against the live service afterwards.
+
+Until that deploy, three of the viewer fixes shipped in v0.5.6 could not reach
+anyone on a hosted room, however current their app was.
+
+**Then the link.** The viewer link is the entire auth model - `server.ts`
+refuses any token that is not the viewer token, and there is no second factor,
+no expiry, no IP binding - so anyone who reads it watches the captions, which
+are a live transcript of whatever the microphone hears. It was printed in full
+in the footer for the whole session. `stripUrl` removed `https://` and nothing
+else, and the same URL went into the element's `title`, so it leaked on hover
+as well.
+
+The control API one file over has masked exactly this since finding 3. The
+window the user actually looks at did not. `maskViewerLink` moved to shared so
+there is one implementation and both go through it.
+
+Masked by default, revealed on a click, re-masked after twenty seconds, and
+reset whenever the link changes. That last part is not decoration: **NEW**
+mints a fresh token, and a new secret inheriting the old one's revealed state
+is the sticky-SHOW bug on the key fields, which never resets and is still open.
+Not worth making the same mistake twice in one window.
+
+COPY and OPEN read `currentLink()` directly, so masking is purely a display
+decision - confirmed in the browser, not just asserted: the footer reads
+`127.0.0.1:8790/watch/..........` while the clipboard gets the real URL.
+
+**Guards - six, three watched fail** (the token on screen, the token in the
+title, and a new link arriving already revealed). The third revert had to be
+redone: `if (false)` narrowed a timer handle to `never` and would not compile,
+which proves nothing, so it became a one-line deletion of the reset instead.
