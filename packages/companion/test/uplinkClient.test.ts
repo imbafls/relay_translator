@@ -105,8 +105,14 @@ describe("coming back after a drop", () => {
     await until(() => live().length === 1, "the first connection");
 
     accepted[0].close();
+    // The server accepting a socket and the client considering itself connected
+    // are two different round trips. Reading `c.state` the instant the server
+    // has accepted asserts the client's state off the server's observable, and
+    // on a loaded runner the client's own open handler has not run yet - green
+    // here, red on CI, and about nothing that matters. Wait for the client.
     await until(() => accepted.length === 2, "a reconnect", 6000);
-    expect(c.state).toBe("connected");
+    await until(() => c.state === "connected", "the client to finish its handshake", 6000);
+    expect(accepted.length, "it reconnected without opening a new socket").toBe(2);
   });
 
   it("sends its hello again on the new socket", async () => {

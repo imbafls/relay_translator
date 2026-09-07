@@ -2808,3 +2808,33 @@ silence, and reporting the wrong thing.
 seconds and with the message that names the defect. Then run five times over,
 and once more with four busy cores alongside it, which is the condition the
 runner failed under.
+
+### Turn 79 - A second flaky test, found by reading the CI history rather than my own
+
+Turn 78 fixed one flaky guard and I said the two red runs after v0.5.5 were both
+it. They were not. The second, run `34085929098`, was
+`uplinkClient.test.ts > reconnects on its own when the relay goes away`, which I
+had not written and had not looked at.
+
+It is the same mistake in a different file:
+
+```ts
+await until(() => accepted.length === 2, "a reconnect", 6000);
+expect(c.state).toBe("connected");
+```
+
+`accepted` is what the test's SERVER has accepted. `c.state` is what the CLIENT
+thinks. Those are two different round trips, and on a loaded runner the client's
+own `onopen` has not run when the server's `connection` handler already has - so
+the assertion reads `connecting` and fails, about nothing that matters. Green on
+a fast desktop, red on CI: the same signature as turn 78.
+
+It now waits for the client's own state and keeps the socket count as the
+invariant, so the test still means "a NEW socket was opened" and not merely
+"the old one never dropped". Reverting the reconnect still fails it - `a
+reconnect never happened within 6000ms` - so the guard did not get weaker.
+
+The lesson is one this log already carries, and it caught me from the outside
+this time: **ask what the observable actually proves.** A server-side count does
+not prove a client-side state, however reliably the two coincide on the machine
+where the test was written.
