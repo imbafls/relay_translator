@@ -15,6 +15,11 @@ Two things people use it for:
 - **Translated game comms.** Your callouts in English, your friend reading
   Vietnamese, neither of you leaving the game.
 
+**If you just want to use it, read [`docs/GUIDE.md`](docs/GUIDE.md).** It walks
+through the first run and getting a link onto someone else's phone, without
+assuming you know what a relay is. The rest of this file is for working on the
+code.
+
 ```
  up to 3 audio sources (PCM 16 kHz, interleaved 1-3 channels)
         │  WebSocket (token-authed)
@@ -436,6 +441,8 @@ it is worth keeping that way.
 
 ## The other docs
 
+- `docs/GUIDE.md` - the user guide. Start there if you are setting this up for
+  somebody rather than working on it.
 - `CLAUDE.md` - architecture, commands, the release process, and the traps.
   Read it before debugging anything network-shaped.
 - `docs/OPEN-WORK.md` - the consolidated backlog, including the known-open

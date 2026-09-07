@@ -573,7 +573,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     if (sttIsLocal()) {
       if (!modelReady(config.stt)) throw new Error(`Download ${sttFull(config.stt)} first (02 TRANSCRIBE → DOWNLOAD).`);
     } else if (!config.deepgramApiKey) {
-      throw new Error("Add a Deepgram key first (KEYS), or pick a local model under 02 TRANSCRIBE.");
+      throw new Error("Add a Deepgram key first (SETTINGS), or pick a local model under 02 TRANSCRIBE.");
     }
     clearStage();
     renderStageHeads();
@@ -978,7 +978,7 @@ function renderChain(): void {
   } else if (up === "connecting" || up === "disconnected") {
     items.push({ text: "RELAY CONNECTING…" });
   } else {
-    items.push({ text: "RELAY ERROR · CHECK KEYS", cls: "warn" });
+    items.push({ text: "RELAY ERROR · CHECK SETTINGS", cls: "warn" });
   }
   metaSpans($("metaOutput"), items);
 }
@@ -1771,7 +1771,7 @@ function renderOnboarding(): void {
     $("obStepLabel").textContent = "STEP 2 OF 3 · OPTIONAL";
     $("obTitle").textContent = "Want captions in another language?";
     $("obBody").textContent =
-      "Add a Gemini key and Relay translates each line as it lands. Skip it and viewers get English captions only - you can add it later under KEYS.";
+      "Add a Gemini key and Relay translates each line as it lands. Skip it and viewers get English captions only - you can add it later under SETTINGS.";
   } else {
     $("obStepLabel").textContent = "STEP 3 OF 3";
     $("obTitle").textContent = "Pick what Relay listens to.";
@@ -1782,7 +1782,11 @@ function renderOnboarding(): void {
     if (out === "obs") meta.textContent = "OBS READS A LOCAL LINK. NOTHING LEAVES THIS PC.";
     else if (config.relayUrl) meta.textContent = "PHONE LINKS GO THROUGH YOUR RELAY.";
     else {
-      meta.textContent = "PHONE LINKS WORK ON YOUR LAN. SET A RELAY URL UNDER KEYS FOR THE INTERNET.";
+      // named the panel wrongly and pointed at the wrong fix: KEYS became
+      // SETTINGS two releases ago, and setting a relay URL by hand is the
+      // developer path. There is a button for this now, and setup - the one
+      // screen everybody sees - was the only place not mentioning it
+      meta.textContent = "PHONE LINKS ONLY WORK ON THIS NETWORK. SETTINGS - WHO CAN OPEN IT FIXES THAT IN ONE PRESS.";
       meta.classList.add("warn");
     }
   }

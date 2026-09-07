@@ -2969,3 +2969,45 @@ script the root package does not have, which is why there is now a
 `deploy:hosted`. Proved the usual way, by pointing the README at a script that
 does not exist and watching it fail. A guard cannot catch a stale claim - only a
 dangling pointer - but this file had plenty of both.
+
+### Turn 83 - A guide, and the setup screen that pointed away from the feature
+
+`docs/GUIDE.md` is written for the person who has just installed the app and
+wants captions on somebody else's phone - explicitly for someone setting it up
+*for* another person, since that is the case the app is actually for. It uses
+the on-screen labels verbatim, and every one of them was checked against the
+markup rather than remembered.
+
+Writing it surfaced what documentation always surfaces: the places where the app
+has to be explained around rather than read.
+
+**The worst one.** Step 3 of setup - the one screen every single user sees -
+said `PHONE LINKS WORK ON YOUR LAN. SET A RELAY URL UNDER KEYS FOR THE
+INTERNET.` Two things wrong in one line. `KEYS` was renamed to SETTINGS two
+releases ago. And setting a relay URL by hand is the developer path, buried in
+ADVANCED - there has been a button for this since yesterday. So the single most
+important setup step was the one setup never mentioned, and the text pointed the
+other way. Shipping the button in 0.5.7 while leaving this in place would have
+wasted it.
+
+Three more user-facing `KEYS` strings went with it: the same message hardcoded
+in the markup, the START error telling you where to put a Deepgram key, and the
+`RELAY ERROR - CHECK KEYS` chip.
+
+And a caption stating a rule the code does not follow: `FIRST IS TAGGED YOU,
+SECOND CHAT` is unconditional, but `speakerTags` keys off device kind - system
+audio is `CHAT` whichever slot it sits in, so system-first gives `CHAT` then
+`YOU`.
+
+**Guards - three, two watched fail.** One is a whole-document check that setup
+names no panel called KEYS, which is the kind of thing that rots silently
+because nothing renders differently when it is wrong. The third is the
+counterweight: someone who already has an address must not be warned about not
+having one.
+
+**Still open, found the same way and not fixed here:** a kicked viewer is told
+the wrong reason. The relay sends `{type:"kicked", reason}` - for the LAN
+one-viewer limit that reason is `another device opened this link` - and the
+viewer discards `msg.reason` and always prints "The session was stopped, or a
+new link was made." So the most confusing thing about a LAN setup is reported
+as two causes that are both false. Written into `docs/OPEN-WORK.md`.

@@ -1069,3 +1069,47 @@ describe("the viewer link on screen", () => {
     expect(calls.clipboard.join(" "), "masking broke COPY, which is what the link is for").toContain(TOKEN);
   });
 });
+
+/**
+ * Setup is the one screen every user sees, and it was still sending them to a
+ * panel called KEYS - renamed to SETTINGS two releases ago - and telling them to
+ * "SET A RELAY URL" for an internet link. That is the developer path, buried in
+ * ADVANCED, and it is no longer the answer: there is a button that claims an
+ * address in one press.
+ *
+ * So the single most important setup step was the one setup never mentioned,
+ * and the text pointed the other way.
+ */
+describe("what setup tells you about reaching a phone", () => {
+  const outputMeta = (): HTMLElement => document.getElementById("obOutputMeta") as HTMLElement;
+
+  it("names a panel that exists", async () => {
+    await bootWith({ setupDone: false });
+    const text = document.body.textContent || "";
+    expect(text, "setup still sends people to KEYS, which was renamed to SETTINGS").not.toMatch(/\bKEYS\b/);
+  });
+
+  it("points at the button that gets you an address, not at the relay fields", async () => {
+    await bootWith({ setupDone: false });
+    // step 3 is where output is chosen; drive setup to it
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await settle(60);
+
+    const meta = outputMeta().textContent || "";
+    expect(meta, "setup says nothing about reach at all").toBeTruthy();
+    expect(meta, "setup still tells a first-run user to set a relay URL by hand").not.toMatch(/RELAY URL/i);
+    expect(meta, "setup does not name the thing that actually fixes this").toMatch(/SETTINGS/i);
+  });
+
+  it("says nothing about it when a relay is already set up", async () => {
+    await bootWith({ setupDone: false, relayUrl: "wss://relay.supr.systems", publisherToken: "p1_x_y" });
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(outputMeta().className, "someone who already has an address is warned anyway").not.toContain("warn");
+  });
+});
