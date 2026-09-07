@@ -435,3 +435,59 @@ describe("a viewer socket that drops and comes back", () => {
     expect(opened.length, "a kicked viewer reconnected to a token it cannot use").toBe(1);
   });
 });
+
+describe("a link that is no longer valid", () => {
+  /**
+   * Found while verifying finding 10, and written down in docs/OPEN-WORK.md as
+   * its own item: a viewer that is KICKED gets the ENDED panel, but a viewer
+   * that *loads* an already-dead link does not. The socket is refused, the page
+   * shows RECONNECTING, and it retries for ever - because a refusal and a
+   * dropped train tunnel look identical to it.
+   *
+   * The relay closes with 4401 for a token it does not know. That is a fact,
+   * not a network condition, and retrying cannot change it.
+   */
+  const shown = (id: string): boolean => !(document.getElementById(id) as HTMLElement).hidden;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    boot();
+    vi.advanceTimersByTime(1);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("says the link is dead instead of reconnecting for ever", () => {
+    const a = opened[0];
+    a.readyState = 3;
+    a.onclose?.({ code: 4401 });
+    vi.advanceTimersByTime(10000);
+
+    expect(opened.length, "it kept retrying a token the relay has refused").toBe(1);
+    expect(shown("ended"), "the viewer was left staring at RECONNECTING").toBe(true);
+  });
+
+  it("still reconnects when the connection merely dropped", () => {
+    const a = opened[0];
+    a.readyState = 3;
+    a.onclose?.({ code: 1006 });
+    vi.advanceTimersByTime(3000);
+
+    expect(opened.length, "a normal drop stopped reconnecting").toBeGreaterThan(1);
+    expect(shown("ended")).toBe(false);
+  });
+
+  it("shows nothing at all in the overlay, which must not paint onto a broadcast", () => {
+    boot("?obs=1");
+    vi.advanceTimersByTime(1);
+    const a = opened[opened.length - 1];
+    a.readyState = 3;
+    a.onclose?.({ code: 4401 });
+    vi.advanceTimersByTime(10000);
+
+    expect(shown("ended")).toBe(false);
+    expect(shown("live")).toBe(false);
+  });
+});

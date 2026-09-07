@@ -116,7 +116,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 26 | An archive failure always blames the transport | *(this commit)* |
 | 29 | `audioEndSec` double-counts `msg.start`, pinning latency at 0 | `71ffe88` (v0.5.4) |
 | 31 | Any save re-syncs LINK MODE and discards the unsaved pick | `680d528` (v0.5.4) |
-| 24 | The uplink fights a 4409 kick for ever; the 4401 branch was dead | *(this commit)* |
+| 24 | The uplink fights a 4409 kick for ever; the 4401 branch was dead | `7aef02c` |
+| — | A phone that loads a dead link retried for ever instead of saying so *(found here, not in the audit)* | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -143,10 +144,6 @@ fix — read the numbered section there before starting.
 
 ### Found while fixing the above, not in the audit
 
-- **A phone viewer that *loads* a dead link sits on `RECONNECTING` forever.**
-  A rejected socket is a different path from a `kicked` message, so the ENDED
-  panel never appears. Noticed while verifying finding 10; adjacent to 9 but not
-  the same defect.
 - **`packages/viewer/public/app.js` still decimates if it is ever fed a rate
   above 16 kHz.** Finding 23 stopped the app *asking* it to resample; the
   worklet has no filter of its own. Only matters if something else starts

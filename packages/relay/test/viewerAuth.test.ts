@@ -54,6 +54,31 @@ afterEach(async () => {
   }
 });
 
+/**
+ * A refusal now arrives as close code 4401 on an OPEN socket rather than as a
+ * 401 during the handshake. The page cannot tell a refused handshake (1006)
+ * from a train tunnel, so it retried for ever and a viewer opening a dead link
+ * sat on RECONNECTING with nothing to say the link was simply finished. Same
+ * change, same reason, as /ws/uplink in audit finding 24.
+ */
+function refusalCode(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    sockets.push(ws);
+    const timer = setTimeout(() => reject(new Error("no close arrived")), 4000);
+    ws.on("close", (code: number) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+    // a handshake failure surfaces here, never as a close - which is exactly
+    // the shape this stopped doing
+    ws.on("error", () => {
+      clearTimeout(timer);
+      resolve(1006);
+    });
+  });
+}
+
 describe("who may watch", () => {
   it("lets the real token in", async () => {
     const ws = await open(viewerUrl(relay.state.viewerToken));
@@ -61,21 +86,21 @@ describe("who may watch", () => {
   });
 
   it("refuses a token that is simply wrong", async () => {
-    await expect(open(viewerUrl("not-the-token"))).rejects.toThrow();
+    await expect(refusalCode(viewerUrl("not-the-token"))).resolves.toBe(4401);
   });
 
   it("refuses a request with no token at all", async () => {
-    await expect(open(`ws://127.0.0.1:${relay.port}/ws/viewer`)).rejects.toThrow();
+    await expect(refusalCode(`ws://127.0.0.1:${relay.port}/ws/viewer`)).resolves.toBe(4401);
   });
 
   it("refuses the publisher's token", async () => {
     // the two are separate powers; holding one must not confer the other
-    await expect(open(viewerUrl(relay.state.publisherToken))).rejects.toThrow();
+    await expect(refusalCode(viewerUrl(relay.state.publisherToken))).resolves.toBe(4401);
   });
 
   it("refuses a token that is a prefix of the real one", async () => {
     const short = relay.state.viewerToken.slice(0, -4);
-    await expect(open(viewerUrl(short))).rejects.toThrow();
+    await expect(refusalCode(viewerUrl(short))).resolves.toBe(4401);
   });
 
   it("still serves the page to anyone, which is the deliberate part", async () => {
@@ -95,7 +120,7 @@ describe("rotating the link", () => {
     expect(next).not.toBe(old);
 
     // the assertion the smoke test's own heading promises and does not make
-    await expect(open(viewerUrl(old))).rejects.toThrow();
+    await expect(refusalCode(viewerUrl(old))).resolves.toBe(4401);
   });
 
   it("lets the new token in", async () => {

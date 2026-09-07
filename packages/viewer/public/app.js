@@ -405,6 +405,15 @@
    * the socket it was created for to compare against. This is the fix cc824dd
    * applied to relayClient and uplinkClient.
    */
+  /** the panel a viewer gets when the link is finished, however it finished */
+  function showEnded() {
+    const d = new Date();
+    $("endedAt").textContent = `ENDED ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const n = rows.size;
+    $("savedCount").textContent = `${n} LINE${n === 1 ? "" : "S"} SAVED`;
+    showScreen("ended");
+  }
+
   function connect() {
     if (closedByKick) return;
     if (retryTimer) {
@@ -465,11 +474,7 @@
           break;
         case "kicked": {
           closedByKick = true;
-          const d = new Date();
-          $("endedAt").textContent = `ENDED ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-          const n = rows.size;
-          $("savedCount").textContent = `${n} LINE${n === 1 ? "" : "S"} SAVED`;
-          showScreen("ended");
+          showEnded();
           try {
             sock.close();
           } catch {
@@ -481,8 +486,18 @@
           break;
       }
     };
-    sock.onclose = () => {
+    sock.onclose = (ev) => {
       if (!current() || closedByKick) return;
+      // 4401 is the relay saying it does not know this token - a fact, not a
+      // network condition, and retrying cannot change it. It used to arrive as
+      // a refused HTTP handshake (1006), indistinguishable from a train
+      // tunnel, so a viewer opening an already-dead link sat on RECONNECTING
+      // for ever with nothing to say the link was simply finished.
+      if (ev && ev.code === 4401) {
+        closedByKick = true;
+        showEnded();
+        return;
+      }
       setHud("warn", "RECONNECTING");
       retryTimer = setTimeout(connect, 2000);
     };

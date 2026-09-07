@@ -580,9 +580,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
 
     if (url.pathname === "/ws/viewer") {
       if (token !== state.viewerToken) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
+        // Same reasoning as /ws/uplink above: refused with a close code on an
+        // open socket, because the page cannot tell a refused handshake (1006)
+        // from a train tunnel. A viewer opening an already-dead link used to
+        // sit on RECONNECTING for ever; it now gets the ENDED panel, which is
+        // what a viewer who was kicked has always got.
+        return void wss.handleUpgrade(req, socket, head, (ws) => ws.close(4401, "viewer token rejected"));
       }
       wss.handleUpgrade(req, socket, head, (ws) => onViewer(ws, token));
       return;

@@ -2250,3 +2250,42 @@ socket - a phone that *loads* a dead link sits on RECONNECTING for ever, which
 is already written down in `docs/OPEN-WORK.md`. That is a bigger blast radius
 (six asserted contracts in `viewerAuth.test.ts`, plus the viewer's own UI) and
 gets its own turn rather than riding along in this one.
+
+### Turn 63 - Message orchestration (a dead link that says so)
+
+The follow-up scoped out of the previous turn, and not an audit finding: I found
+it while verifying finding 10 and wrote it into `docs/OPEN-WORK.md` rather than
+folding it in there.
+
+A viewer who is **kicked** gets the ENDED panel. A viewer who *loads* an
+already-dead link did not: the socket was refused during the HTTP upgrade, which
+reaches the page as close code **1006** - indistinguishable from a train tunnel
+- so it showed RECONNECTING and retried every two seconds, for ever, with
+nothing to say the link was simply finished. Handing someone a link that has
+since rotated produced a page that looked broken rather than expired.
+
+Same shape as finding 24's second half, same fix: `/ws/viewer` refuses **after**
+the upgrade with a real 4401, and the page treats that as a fact rather than a
+network condition - it stops, and shows the panel it already had.
+
+`showEnded()` came out of the `kicked` handler so both routes to "this link is
+finished" render the same thing, including the line count and the timestamp.
+And the overlay still shows nothing at all, because finding 10's rule holds
+whatever ended the link.
+
+**Six contracts changed.** `viewerAuth.test.ts` asserted `rejects.toThrow()` in
+six places - it was asserting the handshake refusal, which was the defect. They
+assert the close code now, and the helper resolves `1006` on `error` precisely
+so that a regression to a handshake refusal shows up as `expected 1006 to be
+4401` rather than as a timeout.
+
+**Verified in a browser** against a real relay: the rotated token from earlier
+in this session now renders "THIS LINK HAS ENDED - The session was stopped, or a
+new link was made", with TRY AGAIN, instead of RECONNECTING. The current token
+still opens the live view. Both read off the live DOM.
+
+**The trade, stated.** Accepting an upgrade before refusing it means allocating
+a socket for an unauthenticated caller. It is closed immediately and registered
+nowhere, so the cost is one short-lived socket per attempt - about what the
+refused handshake cost - and it is what the hosted relay already does. Worth
+naming rather than assuming.
