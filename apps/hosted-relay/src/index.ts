@@ -35,7 +35,6 @@ interface Env {
  * one source of truth, not two.
  */
 const RELEASE_BASE = "https://github.com/imbafls/relay_translator/releases/latest/download";
-const RELEASES_PAGE = "https://github.com/imbafls/relay_translator/releases/latest";
 
 /**
  * The landing page reads this for the version, and enables its download button
@@ -53,15 +52,65 @@ async function updateFeed(): Promise<Response> {
 }
 
 /**
- * The installer named by that feed. Resolved rather than hardcoded, because the
- * filename carries the version and would go stale on every release.
+ * An installer filename we are willing to put in a response header.
+ *
+ * `installerName` reads whatever the feed says, and a header value carrying a
+ * newline splits the response. The real names are electron-builder's, which
+ * this matches exactly; anything else is treated as no build rather than
+ * sanitised into something that merely looks safe.
  */
-async function downloadRedirect(): Promise<Response> {
-  const res = await fetch(`${RELEASE_BASE}/latest.yml`, { cf: { cacheTtl: 300 } } as RequestInit);
-  const name = res.ok ? installerName(await res.text()) : undefined;
-  // the releases page rather than a 404: someone who clicked download should
-  // land somewhere they can get the thing, even if the feed is having a moment
-  return Response.redirect(name ? `${RELEASE_BASE}/${name}` : RELEASES_PAGE, 302);
+const SAFE_INSTALLER = /^[A-Za-z0-9._+-]+$/;
+
+/**
+ * The installer named by the feed, streamed through this Worker rather than
+ * redirected to.
+ *
+ * It used to 302 to the release asset, which meant a visitor who clicked
+ * Download on textrelay.cc watched their address bar turn into the maintainer's
+ * personal account. The bytes are the same either way; the difference is whose
+ * name is on the request. `fetch` follows the release redirect and the body is
+ * handed straight back, so nothing is buffered in the isolate.
+ *
+ * The filename is still resolved rather than hardcoded, because it carries the
+ * version and would go stale on every release.
+ */
+export async function downloadInstaller(): Promise<Response> {
+  const feed = await fetch(`${RELEASE_BASE}/latest.yml`, { cf: { cacheTtl: 300 } } as RequestInit);
+  const name = feed.ok ? installerName(await feed.text()) : undefined;
+
+  // No feed, no build. This used to fall back to the public releases page,
+  // which is exactly the leak this function exists to close - so it now says
+  // the same thing the landing page says when the feed will not parse.
+  if (!name || !SAFE_INSTALLER.test(name)) {
+    return new Response("no build published yet", {
+      status: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+
+  const asset = await fetch(`${RELEASE_BASE}/${name}`, {
+    cf: { cacheEverything: true, cacheTtl: 3600 },
+  } as RequestInit);
+  if (!asset.ok || !asset.body) {
+    return new Response("download unavailable", {
+      status: 502,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+
+  const headers = new Headers({
+    "Content-Type": "application/octet-stream",
+    // without this the browser names the file after the path, which is
+    // "download" with no extension - Windows will not run that
+    "Content-Disposition": `attachment; filename="${name}"`,
+    "Cache-Control": "public, max-age=3600",
+  });
+  // pass the length through when upstream gave one, so the browser can show a
+  // progress bar on an 84 MB file instead of an indeterminate spinner
+  const len = asset.headers.get("content-length");
+  if (len) headers.set("Content-Length", len);
+
+  return new Response(asset.body, { status: 200, headers });
 }
 
 /** everyone Cloudflare could not name shares one bucket */
@@ -101,7 +150,7 @@ export default {
         return updateFeed();
 
       case "download":
-        return downloadRedirect();
+        return downloadInstaller();
 
       case "viewer-page":
         // the page itself is public; the token is checked when its script opens
