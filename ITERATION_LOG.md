@@ -2653,3 +2653,43 @@ updateFeedAction`). The five in `updateFeed.test.ts` are unit tests of the new
 decision, not guards over the old bug - a function that did not exist cannot
 have failed against the old tree, and saying otherwise would be the kind of
 claim this log exists to stop.
+
+### Turn 75 - Local STT (audit finding 17: a deadline on a job with no fixed size)
+
+`close()` posts the close and hard-terminates the worker four seconds later,
+flat. The worker has to drain whatever audio is still queued, run `vad.flush()`,
+then `decodeOffline()` once per channel before the closing finals exist. On a
+heavy offline model with two channels that is longer than four seconds - so the
+last thing anyone said before STOP was terminated mid-decode and dropped by the
+`if (done) return` guard, with nothing logged. Worse if STOP landed while the
+model-load backlog was still queued: that buffer deliberately holds up to
+`PROBE_TIMEOUT_MS` of speech, and all of it got the same four seconds.
+
+This one was listed as blocked on a working local model. It is not: the flat
+deadline lives in `localStt.ts`, and the file's existing stand-in worker speaks
+the same message contract, so a worker that flushes for 5.4 s is a script. Only
+finding 8, which is inside `localSttWorker.ts` and needs sherpa-onnx to run at
+all, is genuinely blocked.
+
+A deadline on the whole flush cannot be right, because the flush has no fixed
+size. A deadline on SILENCE can: anything from the worker re-arms it, so while
+finals are arriving it keeps draining, and the clock only runs out when it stops
+talking. A 60 s ceiling bounds a worker that is talkative but wedged.
+
+**Not fixed, and the finding stays open for it:** the close is still posted
+behind the queued audio on the same port. Out-of-band means a protocol change on
+both sides and the worker half cannot be exercised here. With the deadline
+scaled, a queued close costs a slower STOP, not a lost caption.
+
+**Found by writing the test, not by the audit.** The first draft closed
+synchronously inside `onOpen` and got every caption twice. `close()` requests
+the flush when the worker is already up, and the `ready` handler requests it
+when the close arrived mid-load - and STOP pressed as the worker comes up hits
+both. Two closes, two flushes, and a leaked kill timer per call. `closeSent`
+makes it idempotent.
+
+**Guards - three, two watched fail separately** (`the flush was cut off partway
+and captions were lost`, 4 of 6; and `the flush ran twice, so every closing
+caption was delivered twice`). The third is the one that keeps the fix from
+being a hang: a worker that answers init and then goes silent for ever is still
+given up on, and quickly.

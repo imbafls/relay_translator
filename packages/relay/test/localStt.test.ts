@@ -460,3 +460,155 @@ describe("a probe that comes back after the session stopped", () => {
     expect(runs, "a failed probe was cached as a pass").toBe(2);
   });
 });
+
+/**
+ * Audit finding 17.
+ *
+ * `close()` posts `{type:"close"}` and hard-terminates the thread 4 s later,
+ * flat. But the worker has to drain every queued chunk and then run its flush -
+ * `vad.flush()` and a `decodeOffline()` per channel - before the closing finals
+ * can come out. On a heavy offline model with two channels that takes longer
+ * than four seconds, so the last thing anyone said before STOP never reached a
+ * viewer: `finish()` set `done` at t+4000 and the `if (done) return` guard in
+ * the message handler dropped every final that arrived after. Nothing was
+ * logged. Worse when STOP lands while the model-load backlog is still queued -
+ * the buffer deliberately holds up to `PROBE_TIMEOUT_MS` of speech, and all of
+ * it got the same four seconds.
+ *
+ * A flat deadline cannot be right, because the thing being waited for has no
+ * flat size. What is bounded is the worker going QUIET: while finals are still
+ * arriving it is draining, and the deadline is what happens when they stop.
+ *
+ * Not fixed here, and worth saying: the close is still posted behind the audio
+ * on the same port. Moving it out of band means changing the protocol on both
+ * sides, and the worker half needs sherpa-onnx to be exercised at all. With the
+ * deadline scaled, a queued close costs the user a slower STOP, not a lost
+ * caption.
+ */
+function writeSlowFlushWorker(dir: string, opts: { finals: number; everyMs: number }): string {
+  const file = path.join(dir, "slowFlushWorker.js");
+  fs.writeFileSync(
+    file,
+    `
+if (process.argv[2] === "--probe") { process.exit(0); }
+const { parentPort } = require("worker_threads");
+parentPort.on("message", (msg) => {
+  if (msg.type === "init") parentPort.postMessage({ type: "ready" });
+  else if (msg.type === "close") {
+    // the flush: one final per utterance, each decode taking real time
+    let sent = 0;
+    const tick = setInterval(() => {
+      sent += 1;
+      parentPort.postMessage({ type: "final", text: "utterance " + sent, audioEndSec: sent, channel: 0 });
+      if (sent === ${opts.finals}) { clearInterval(tick); process.exit(0); }
+    }, ${opts.everyMs});
+  }
+});
+`,
+  );
+  return file;
+}
+
+describe("the last thing said before STOP", () => {
+  it("survives a flush that takes longer than the old flat deadline", async () => {
+    const models = tmp();
+    stageModel(models, "local-moonshine-base", { vad: true });
+    // 6 finals, 900 ms apart: 5.4 s of draining, comfortably past the flat 4 s
+    const workerPath = writeSlowFlushWorker(models, { finals: 6, everyMs: 900 });
+
+    const finals: string[] = [];
+    let resolveClose!: () => void;
+    const closed = new Promise<void>((r) => {
+      resolveClose = r;
+    });
+
+    let stream: ReturnType<typeof createLocalSttStream> | null = null;
+    stream = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: "local-moonshine-base", language: "en", channels: 1 },
+      {
+        onOpen: () => setTimeout(() => stream?.close(), 20),
+        onFinal: (text) => finals.push(text),
+        onError: () => {},
+        onClose: () => resolveClose(),
+      },
+    );
+
+    await closed;
+    expect(finals, "the flush was cut off partway and captions were lost").toHaveLength(6);
+    expect(finals[5]).toBe("utterance 6");
+  }, 20000);
+
+  /**
+   * Found by writing the test above, not by the audit. `close()` requests the
+   * flush when the worker is already up, and the `ready` handler requests it
+   * when the close arrived mid-load - and STOP pressed the instant the worker
+   * comes up hits both. Two close messages means the worker runs its flush
+   * twice, so every closing caption is delivered twice and the second pass has
+   * nothing left to say. It also leaked a kill timer per call.
+   */
+  it("asks for the flush once, even when STOP lands exactly as the worker comes up", async () => {
+    const models = tmp();
+    stageModel(models, "local-zipformer-en", { vad: true });
+    const workerPath = writeSlowFlushWorker(models, { finals: 2, everyMs: 50 });
+
+    const finals: string[] = [];
+    let resolveClose!: () => void;
+    const closed = new Promise<void>((r) => {
+      resolveClose = r;
+    });
+
+    let stream: ReturnType<typeof createLocalSttStream> | null = null;
+    stream = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: "local-zipformer-en", language: "en", channels: 1 },
+      {
+        // synchronous, inside onOpen: close() sees ready and requests the
+        // flush, then the ready handler that called onOpen sees `closing`
+        onOpen: () => stream?.close(),
+        onFinal: (text) => finals.push(text),
+        onError: () => {},
+        onClose: () => resolveClose(),
+      },
+    );
+
+    await closed;
+    expect(finals, "the flush ran twice, so every closing caption was delivered twice").toEqual([
+      "utterance 1",
+      "utterance 2",
+    ]);
+  }, 20000);
+
+  it("still gives up on a worker that has gone quiet", async () => {
+    const models = tmp();
+    stageModel(models, "local-whisper-tiny-en", { vad: true });
+    // answers init, then never says anything again - a wedged decode
+    const file = path.join(models, "wedgedWorker.js");
+    fs.writeFileSync(
+      file,
+      `
+if (process.argv[2] === "--probe") { process.exit(0); }
+const { parentPort } = require("worker_threads");
+parentPort.on("message", (msg) => { if (msg.type === "init") parentPort.postMessage({ type: "ready" }); });
+setInterval(() => {}, 1000);
+`,
+    );
+
+    const started = Date.now();
+    let resolveClose!: () => void;
+    const closed = new Promise<void>((r) => {
+      resolveClose = r;
+    });
+
+    let stream: ReturnType<typeof createLocalSttStream> | null = null;
+    stream = createLocalSttStream(
+      { modelsDir: models, workerPath: file },
+      { model: "local-whisper-tiny-en", language: "en", channels: 1 },
+      { onOpen: () => setTimeout(() => stream?.close(), 20), onError: () => {}, onClose: () => resolveClose() },
+    );
+
+    await closed;
+    const took = Date.now() - started;
+    expect(took, "a silent worker now holds the session open indefinitely").toBeLessThan(12000);
+  }, 20000);
+});

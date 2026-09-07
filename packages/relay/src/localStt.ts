@@ -71,6 +71,25 @@ const PROBE_TIMEOUT_MS = 180000;
 const BYTES_PER_SEC_PER_CHANNEL = 16000 * 2;
 
 /**
+ * How long after the worker last said anything to give up on its flush.
+ *
+ * This used to be a flat 4 s from the close request, and the flush is not a
+ * flat-sized job: the worker has to drain whatever audio is still queued, run
+ * `vad.flush()`, then `decodeOffline()` once per channel. A heavy offline model
+ * with two channels takes longer than that, so the last utterance before STOP
+ * was terminated mid-decode and dropped with nothing logged - and if STOP
+ * landed while the model-load backlog was still queued, up to PROBE_TIMEOUT_MS
+ * of speech got the same four seconds.
+ *
+ * A deadline on the whole flush cannot be right. A deadline on SILENCE can:
+ * while finals are still arriving the worker is draining and gets more time,
+ * and the timer only runs out when it stops talking. The ceiling below is what
+ * bounds a worker that is talkative but wedged in a loop.
+ */
+const CLOSE_IDLE_MS = 4000;
+const CLOSE_MAX_MS = 60000;
+
+/**
  * Load the model once in a throwaway child process. sherpa-onnx aborts the
  * process outright on some models instead of throwing, which would take the
  * whole app down from a worker thread; here only the child dies and the exit
@@ -135,7 +154,10 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   let closing = false;
   /** the worker is gone (or never came up) and onClose has fired */
   let done = false;
+  /** the close was posted; a second close would start a second flush */
+  let closeSent = false;
   let killTimer: ReturnType<typeof setTimeout> | null = null;
+  let hardTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Audio spoken before the worker is ready waits here. Since the crash guard
@@ -161,14 +183,28 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
     if (done) return;
     done = true;
     if (killTimer) clearTimeout(killTimer);
+    if (hardTimer) clearTimeout(hardTimer);
     void worker?.terminate().catch(() => {});
     events.onClose?.();
   };
 
+  /** restart the silence deadline; the worker just proved it is still working */
+  const armKill = (): void => {
+    if (killTimer) clearTimeout(killTimer);
+    killTimer = setTimeout(finish, CLOSE_IDLE_MS);
+  };
+
   const requestClose = (): void => {
+    // `ready` calls this when close() arrived mid-load, and close() calls it
+    // directly when the worker was already up. Both can happen for one stop,
+    // and a second close message starts a second flush in the worker.
+    if (closeSent) return;
+    closeSent = true;
     send({ type: "close" });
-    // give the flush a moment, then make sure the thread is gone
-    killTimer = setTimeout(finish, 4000);
+    armKill();
+    // a worker that keeps talking without ever finishing is still a worker to
+    // give up on, so the silence deadline has a ceiling over it
+    hardTimer = setTimeout(finish, CLOSE_MAX_MS);
   };
 
   function startWorker(): void {
@@ -186,6 +222,10 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   function wire(worker: Worker): void {
   worker.on("message", (msg: LocalSttFromWorker) => {
     if (done) return;
+    // anything at all from the worker means it is still draining, so the flush
+    // gets its time back. Without this the finals of a long decode were cut off
+    // at a fixed four seconds and silently thrown away.
+    if (closeSent) armKill();
     if (msg.type === "ready") {
       ready = true;
       if (!closing) events.onOpen?.();
