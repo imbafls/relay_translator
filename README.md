@@ -438,6 +438,23 @@ it is worth keeping that way.
 - `DESIGN.md` - the UI spec the app and the phone page are built against. It
   predates the SETTINGS rework, so read it as intent.
 
+## License
+
+MIT - see `LICENSE`. The copyright holder is the project name rather than a
+person, which is also what `apps/standalone` already carries as its `author`.
+
+That covers the code in this repo and nothing else. Deepgram and Gemini are
+reached with your own keys under their own terms; none of their software is
+included here and none of it is relicensed by this file. The two fonts in
+`packages/viewer/public/fonts/` - Archivo and Martian Mono, self-hosted from
+Google Fonts - are redistributed under the SIL Open Font License, not this one.
+That licence asks for its text to travel with the files and it is not in the
+tree yet; `docs/OPEN-WORK.md` carries it.
+
+`packages/shared/test/license.test.ts` keeps this honest: the LICENSE file is
+the fact, every `license` field is a statement about it, and they have to
+agree. The landing page may say MIT only while that file does.
+
 ## Done when
 
 Someone who cannot hear what is being said reads it on their phone, a few
