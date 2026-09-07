@@ -2462,3 +2462,26 @@ The relay-side test caught that: the fix was in, and `elapsedMs` still came back
 anchor removed, twice over, and the relay stamp removed). The invariants: a
 relay that sends only `since` still works, and a stream that is not live sends
 no elapsed time at all, so a viewer does not start a clock for nothing.
+
+### Turn 69 - Client UI (audit finding 30: a verdict that arrives too late)
+
+`obCheckDeepgram` ends with a bare `renderOnboarding()`. Its Gemini sibling,
+four lines below, ends with `renderObKeyStatus()` - and never had this problem.
+
+The check is debounced 500 ms and then awaits a round trip, and
+`renderOnboarding` has no view guard: it calls `renderOnboardingChain`, which
+greys every block in the signal chain, hides the selects and the level meter and
+hides the translate toggle, whatever view is actually on screen.
+
+So paste a key, close setup, and half a second later the **live console
+repaints itself as a setup placeholder**. Nothing recovers it until the next
+thing that happens to call `renderChain`.
+
+One line: repaint setup only if setup is still what the user is looking at,
+otherwise repaint the chain - the verdict does change what 02 TRANSCRIBE says,
+so it cannot simply be dropped.
+
+**Guards - two, one watched fail** (`the translate toggle was hidden by a
+repaint that belonged to setup`). The other is the invariant that a verdict
+arriving while setup IS open still reaches it and still enables CONTINUE -
+a fix that guarded too hard would have broken the thing the check exists for.

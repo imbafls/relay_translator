@@ -1772,7 +1772,15 @@ const obCheckDeepgram = debounce(async () => {
   if (inp("obDeepgramKey").value.trim() !== key) return;
   obDeepgram = res;
   keyCheck.deepgram = { key, result: res };
-  renderOnboarding();
+  // Only if setup is still what the user is looking at. This check is debounced
+  // 500 ms and then awaits a round trip, and renderOnboarding has no view guard
+  // - it calls renderOnboardingChain, which greys every block, hides the
+  // selects and the meter and hides the translate toggle whatever view is on
+  // screen. Paste a key, close setup, and half a second later the live console
+  // repainted itself as a setup placeholder. Its Gemini sibling ends with
+  // renderObKeyStatus() and never had the problem.
+  if (view === "onboarding") renderOnboarding();
+  else renderChain();
 }, 500);
 
 const obCheckGemini = debounce(async () => {

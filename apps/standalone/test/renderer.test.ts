@@ -767,3 +767,60 @@ describe("a save that did not work", () => {
     expect(logText().toLowerCase()).toContain("port");
   });
 });
+
+describe("a key check that lands after setup has closed", () => {
+  /**
+   * Audit finding 30. `obCheckDeepgram` ends with a bare `renderOnboarding()`,
+   * while its Gemini sibling ends with `renderObKeyStatus()`. The check is
+   * debounced 500 ms and then awaits a network round trip, and `renderOnboarding`
+   * has no view guard - it calls `renderOnboardingChain`, which greys every
+   * block, hides the selects and the level meter, and hides the translate
+   * toggle, regardless of which view is actually on screen.
+   *
+   * So: paste a key, close setup, and half a second later the live console
+   * repaints itself as a setup placeholder. Nothing recovers it until the next
+   * thing that calls renderChain.
+   */
+  it("does not repaint the console as a setup placeholder", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "" });
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+
+    const field = document.getElementById("obDeepgramKey") as HTMLInputElement;
+    field.value = "dg-a-real-key";
+    field.dispatchEvent(new Event("input"));
+
+    // the user gives up on setup while the check is still debounced
+    (document.getElementById("obClose") as HTMLButtonElement).click();
+    await settle(40);
+    expect((document.getElementById("app") as HTMLElement).dataset.view).toBe("stage");
+
+    // ...and the verdict lands afterwards
+    await settle(900);
+
+    expect((document.getElementById("app") as HTMLElement).dataset.view).toBe("stage");
+    expect(
+      document.getElementById("blkStt")?.classList.contains("placeholder"),
+      "the live console was repainted as a setup placeholder",
+    ).toBe(false);
+    expect(
+      (document.getElementById("translateToggle") as HTMLElement).hidden,
+      "the translate toggle was hidden by a repaint that belonged to setup",
+    ).toBe(false);
+  });
+
+  it("still repaints setup when setup is what is on screen", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "" });
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+
+    const field = document.getElementById("obDeepgramKey") as HTMLInputElement;
+    field.value = "dg-a-real-key";
+    field.dispatchEvent(new Event("input"));
+    await settle(900);
+
+    // the verdict has to reach the panel the user is looking at
+    expect((document.getElementById("app") as HTMLElement).dataset.view).toBe("onboarding");
+    expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
