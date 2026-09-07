@@ -4,6 +4,20 @@ Domain bought 2026-09-06 as the product's own name, with a year of email.
 Not migrated yet, deliberately. This is the runbook so none of the reasoning
 has to be worked out again.
 
+## Status, checked 2026-09-07
+
+    textrelay.cc  NS  nova.dns-parking.com, cosmos.dns-parking.com
+    textrelay.cc  A   2.57.91.91          (Hostinger parking, answers 200)
+    (still no MX)
+
+Nothing has moved. The zone is exactly as it was bought, which means the
+ten-minute window described below is still open.
+
+**The blocker is not technical.** Step 1 changes nameservers on the Hostinger
+account, and DNS, Cloudflare account settings and the Hostinger account are all
+off-limits to the agent working in this repo. It needs a person. Everything
+after step 1 can be done from here.
+
 ## The one thing that makes this urgent-ish
 
     textrelay.cc      A      2.57.91.91   (Hostinger parking)
@@ -39,8 +53,12 @@ indefinitely; the relay runs fine on `relay.supr.systems`.
    Verify by sending both directions and reading `SPF: PASS` / `DKIM: PASS` off a
    received message. Records resolving is not the same as mail working.
 3. **Then point the Worker at it** and decide apex vs subdomain (below).
-4. **Then repoint the desktop app** (`relayUrl` in `%APPDATA%\callout-relay\config.json`,
-   or the KEYS panel) and claim a room on the new host.
+4. **Then repoint the desktop app.** Since v0.5.7 this is one constant -
+   `HOSTED_RELAY_URL` in `packages/shared/src/index.ts` - because the app claims
+   its own room now rather than being handed a URL and a token by hand. Change
+   it, ship a release, and every install claims on the new name from then on.
+   Rooms already claimed on `relay.supr.systems` keep working as long as that
+   name still answers, which is the reason for keeping it.
 5. Update the changelog wording and `apps/hosted-relay/README.md`, which currently
    name `relay.supr.systems`.
 
@@ -75,7 +93,12 @@ and have stayed moved for a while.
 
 ## Cost note
 
-None of this changes the hosting cost question, which is still unmeasured:
-Durable Objects bill wall-clock duration while a WebSocket is accepted. Measure
-that against a real stream before inviting anyone, regardless of which domain it
-is on. See the board card "Gates before anyone else uses the hosted relay".
+**Measured since this was written, and the answer inverts the worry above.**
+Hibernation works, so duration is a non-issue: 3.83 GB-s per room-hour against a
+free-plan 13,000 GB-s/day is about 3,400 room-hours a day. What binds is
+**requests** - every inbound WebSocket message on a hibernating object is one, so
+every caption is one. Measured at 1,597 requests per room-hour, the free plan is
+about **63 room-hours a day**, and the lever is batching captions, not anything
+about hibernation. Numbers and method in `apps/hosted-relay/README.md`.
+
+None of that changes with the domain.
