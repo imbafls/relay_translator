@@ -51,8 +51,29 @@ LAN-MITM paths; it does not make an update cryptographically verified.
 wire signing into `electron-builder`.
 
 ### B6 — In-app archive model downloads corrupt at ~28%
-**Band: medium. Status: could not be reproduced. Needs a real failure to go
-further.**
+**Band: medium. Status: still failing for the user, still not reproducible
+here. Instrumented 2026-09-07 so the next failure leaves evidence.**
+
+> **Reported again 2026-09-07**, on `local-nemotron-streaming` and
+> `local-whisper-turbo` - the two largest archives. Both left an EMPTY `.part`
+> directory in `%APPDATA%\callout-relay\models`. Driving the same
+> `local-nemotron-streaming` download through the real `ModelStore` in a real
+> Electron main process on the pinned runtime succeeded: 475 MB, 68 s, model
+> ready. So it is not the model, not the size, and not the archive path in
+> isolation - it is something about the running app that a bare main process
+> does not reproduce.
+>
+> **Why it stayed dark for so long.** The app's `log()` wrote to stdout and
+> nowhere else, and a packaged Electron app has no console - so
+> `models.ts` recording "model download failed: <id> - <message>" went
+> straight into the void. The renderer put the message in a `title` tooltip
+> that vanishes on the next render, and the chain strip replaced it with the
+> constant `DOWNLOAD FAILED`. The reason existed the whole time and could not
+> be read.
+>
+> Both are fixed: the app writes `relay.log` next to `config.json` in the data
+> dir, and the strip shows the reason. **The next failure will say what it
+> was.** Ask for that file.
 
 **Run on this machine 2026-09-07, on the pinned runtime the app ships**
 (Electron 33.4.11, Node 20.18.3, Chrome 130), driving the real `ModelStore`

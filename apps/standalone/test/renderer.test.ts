@@ -1348,3 +1348,44 @@ describe("recovering when the relay stops accepting the stored room", () => {
     expect(reach().textContent).toMatch(/ANYONE WITH THE LINK/i);
   });
 });
+
+/**
+ * When a model download fails the store records why - `models.ts` logs
+ * "model download failed: <id> - <message>" and puts the message on the status
+ * it hands back. The chain strip replaced all of it with the constant
+ * `DOWNLOAD FAILED`.
+ *
+ * So the one fact worth having never reached the person who needed it. B6 -
+ * archive downloads failing in the app - has been open and unreproducible for
+ * days, and this is part of why: a user hits it, sees three words, and has
+ * nothing to report.
+ */
+describe("when a model download fails", () => {
+  const strip = (): string => (document.getElementById("metaStt") as HTMLElement).textContent || "";
+
+  const failWith = async (error: string): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: { localViewerUrl: "", remoteViewerUrl: "", uplinkState: "off" },
+      localModels: [{ id: "local-whisper-turbo", downloaded: false, sizeMb: 564, error }],
+      usage: undefined,
+    });
+    await settle(50);
+  };
+
+  it("says what went wrong, not just that something did", async () => {
+    await bootWith({ setupDone: true, stt: "local-whisper-turbo" });
+    await failWith("Error in bzip2: crc32 do not match");
+
+    expect(strip(), "the strip still says only DOWNLOAD FAILED").toMatch(/crc32/i);
+  });
+
+  it("still says it failed, so the reason does not replace the state", async () => {
+    await bootWith({ setupDone: true, stt: "local-whisper-turbo" });
+    await failWith("the download stopped early: 2752512 of 6324614 bytes");
+
+    expect(strip()).toMatch(/FAILED/i);
+    expect(strip()).toMatch(/2752512/);
+  });
+});

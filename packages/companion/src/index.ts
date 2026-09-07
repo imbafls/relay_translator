@@ -1,4 +1,6 @@
 export { ConfigStore, defaultDataDir } from "./config";
+export { openFileLog } from "./fileLog";
+export type { FileLog } from "./fileLog";
 export { RelayPublisherClient } from "./relayClient";
 export {
   anyTrackLive,

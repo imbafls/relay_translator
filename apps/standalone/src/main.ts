@@ -14,7 +14,7 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { claimHostedRoom, ConfigStore, defaultDataDir, UplinkClient } from "@callout-relay/companion";
+import { claimHostedRoom, ConfigStore, defaultDataDir, openFileLog, UplinkClient } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
 import {
   AppConfig,
@@ -102,10 +102,20 @@ function setPowerBlock(on: boolean): void {
 // helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * A packaged Electron app has no console attached, so this used to discard
+ * every reason it ever produced. The model store records exactly why a download
+ * failed and nobody could read it afterwards - which is why B6 stayed open and
+ * unreproducible for days. It goes to a file in the data dir now, next to the
+ * config, so a user who hits it has something to send.
+ */
+const fileLog = openFileLog(defaultDataDir());
+
 function log(level: "info" | "warn" | "error", message: string): void {
   const line = `[${new Date().toISOString()}] [${level}] ${message}`;
   if (level === "error") console.error(line);
   else console.log(line);
+  fileLog(level, message);
 }
 
 function config(): AppConfig {

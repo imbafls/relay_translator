@@ -908,7 +908,9 @@ function renderChain(): void {
     const m = modelState(config.stt);
     const items: { text: string; cls?: string }[] = [{ text: STT_TAG[config.stt] || "" }, { text: "ON THIS PC" }];
     if (m?.progress != null) items.push({ text: `DOWNLOADING ${m.progress}%` });
-    else if (m?.error) items.push({ text: "DOWNLOAD FAILED", cls: "warn" });
+    // the store records WHY; this used to replace it with a constant, so the
+    // one fact worth having never reached the person who needed it
+    else if (m?.error) items.push({ text: `DOWNLOAD FAILED · ${m.error.toUpperCase()}`, cls: "warn" });
     else if (m?.downloaded) items.push({ text: "READY" });
     else items.push({ text: "NOT DOWNLOADED", cls: "warn" });
     metaSpans($("metaStt"), items);
