@@ -28,6 +28,69 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.6",
+    date: "2026-09-07",
+    headline: "Captions that keep up, and links that tell the truth",
+    changes: [
+      {
+        kind: "fixed",
+        text: "A phone opening a link that has been replaced is now told so, instead of sitting on RECONNECTING for ever. A refused link and a dropped tunnel used to look identical to the page, so the one thing it could not say was the one thing that had happened.",
+      },
+      {
+        kind: "fixed",
+        text: "The timer on the phone counted from your clock, not the viewer's, so anyone whose phone was a few seconds out saw the wrong session length - and a phone running behind sat at 00:00:00 all night.",
+      },
+      {
+        kind: "fixed",
+        text: "A START that fails no longer spends your viewer link on the way. It used to rotate and save a new one before checking the relay was there, so three presses while the port was busy invalidated the link three times and kicked everyone watching, with only start failed on screen.",
+      },
+      {
+        kind: "fixed",
+        text: "Half-finished captions no longer stay on the phone for ever. A cough or a false start left a blinking line that nothing cleared, and reconnecting to a stream that was not live kept one under the OFF AIR badge.",
+      },
+      {
+        kind: "fixed",
+        text: "A phone that vanishes without hanging up - out of range, screen off, aeroplane mode - is now actually dropped. The heartbeat pinged, never checked for a reply, and went on counting a viewer who had gone.",
+      },
+      {
+        kind: "fixed",
+        text: "Two copies of the app on one publish token no longer displace each other about once a second for ever, losing every subtitle in between.",
+      },
+      {
+        kind: "fixed",
+        text: "The last thing said before you press STOP now reaches the phone when you are running a model on your own PC. The engine was given four seconds flat to finish, which is not enough for a heavy model, and whatever it produced after that was thrown away without a word.",
+      },
+      {
+        kind: "fixed",
+        text: "A local speech model too slow for the PC it is on now says so and drops audio, rather than falling further behind every minute for the rest of the session with nothing on screen to explain why the captions are minutes late.",
+      },
+      {
+        kind: "fixed",
+        text: "Could not start no longer prints on top of the transcript. The panel has a background now, so the reason it stopped is readable and what was said is still there behind it.",
+      },
+      {
+        kind: "fixed",
+        text: "Checking a key just after closing setup no longer repaints the live console as a setup placeholder, greying the signal chain and hiding the device pickers until something else happened to redraw it.",
+      },
+      {
+        kind: "fixed",
+        text: "Downloading two speech models at once no longer corrupts the voice-detection file they share, which could leave it quietly broken for every model that needed it.",
+      },
+      {
+        kind: "fixed",
+        text: "Changing the update feed takes effect on the next check rather than the next launch, and clearing it says plainly that the normal feed comes back on restart.",
+      },
+      {
+        kind: "fixed",
+        text: "Something already using the app's local control port no longer stops the app opening at all. It used to take the window, the tray icon and the updater with it, and leave a copy running that made every relaunch quit in silence.",
+      },
+      {
+        kind: "changed",
+        text: "The local control API no longer has a route that handed your viewer link to anything that asked. Nothing used it - not the Stream Deck plugin, not the app - so it is gone rather than guarded.",
+      },
+    ],
+  },
+  {
     version: "0.5.5",
     date: "2026-09-06",
     headline: "Settings you can actually find, and up to three audio sources",
