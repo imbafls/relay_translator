@@ -117,7 +117,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 29 | `audioEndSec` double-counts `msg.start`, pinning latency at 0 | `71ffe88` (v0.5.4) |
 | 31 | Any save re-syncs LINK MODE and discards the unsaved pick | `680d528` (v0.5.4) |
 | 24 | The uplink fights a 4409 kick for ever; the 4401 branch was dead | `7aef02c` |
-| — | A phone that loads a dead link retried for ever instead of saying so *(found here, not in the audit)* | *(this commit)* |
+| — | A phone that loads a dead link retried for ever instead of saying so *(found here, not in the audit)* | `0585354` |
+| 33 | `runtime:prepare` rotates the viewer link before checking the relay | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -134,7 +135,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | 28 | low | An unguarded `await startControl()` aborts startup before the tray and window exist. | `apps/standalone/src/main.ts` |
 | 30 | low | The Deepgram key validator repaints the live console as a setup placeholder. | `apps/standalone/renderer/app.ts` |
 | 32 | low | The error overlay paints on top of the previous transcript. | `apps/standalone/renderer/app.ts` |
-| 33 | low | `runtime:prepare` rotates the viewer link **before** checking the relay. | `apps/standalone/src/main.ts` |
 | 34 | low | A successful local-STT probe is discarded when the session already stopped. | `packages/relay/src/localStt.ts` |
 | 35 | low | Ghost interim rows that never resolve. | `packages/viewer/public/app.js` |
 | 36 | low | The session clock subtracts the streamer's epoch from the viewer's. | `packages/viewer/public/app.js` |

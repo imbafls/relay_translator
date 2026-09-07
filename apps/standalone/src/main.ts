@@ -464,9 +464,14 @@ function registerIpc(): void {
   // when entering a new session in "unique" mode
   ipcMain.handle("runtime:prepare", async (_e, opts: { rotate?: boolean } = {}) => {
     const cfg = config();
-    if (opts.rotate && cfg.linkMode === "unique") await rotateLink();
+    // The relay check comes FIRST. Rotating before it meant every failed START
+    // in the default link mode still minted a new viewer token, persisted it,
+    // and kicked everyone on the phone link - three presses while the port was
+    // busy invalidated the link three times, with only "start failed" on
+    // screen. Nothing about a session that cannot start should spend the link.
     const url = publisherWsUrl();
     if (!url) throw new Error("local relay not ready");
+    if (opts.rotate && cfg.linkMode === "unique") await rotateLink();
     return {
       publisherUrl: url,
       viewerUrl: viewerUrl(),

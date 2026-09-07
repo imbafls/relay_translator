@@ -2289,3 +2289,36 @@ a socket for an unauthenticated caller. It is closed immediately and registered
 nowhere, so the cost is one short-lived socket per attempt - about what the
 refused handshake cost - and it is what the hosted relay already does. Worth
 naming rather than assuming.
+
+### Turn 64 - Resilience & state (audit finding 33: spending the link before using it)
+
+Two lines, and the previous turn made it matter more.
+
+`runtime:prepare` rotated the viewer link **before** checking that the relay
+could be published to at all. So every failed START in the default link mode
+still minted a new viewer token, persisted it, and kicked everyone on the phone
+link. Three presses while the port was busy invalidated the link three times,
+with only "start failed" on screen to explain it.
+
+That misfire used to leave phone viewers on RECONNECTING, which at least looked
+like a network hiccup. Since the previous turn a refused viewer socket says
+**THIS LINK HAS ENDED** - correctly, because the token really was retired - so a
+failed START now visibly ends everyone's session. The fix went from tidy to
+worth doing.
+
+The check moves above the rotate. Nothing about a session that cannot start
+should spend the link.
+
+**Guarded at the source, and that needs saying.** The handler is in
+`apps/standalone/src/main.ts`, which imports Electron and cannot be loaded by
+the suite, and the defect is purely an ORDER between two statements: there is no
+value to assert, and nothing pure to extract that would not be a rewrite of the
+thing under test. So the guard reads the handler's text and compares two
+offsets. The repo already guards non-source facts this way -
+`workflows.test.ts`, `lineEndings.test.ts`, `checkRendererIds`. It fails loudly
+on a rename, which is the right failure for a check like this.
+
+It also pins the half that is easy to get wrong while fixing the first: whatever
+is returned to the renderer has to be read **after** the rotate, or the app
+hands back a token it has just retired. Watched fail on
+`expected 244 to be less than 165`.
