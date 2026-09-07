@@ -124,7 +124,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 35 | Ghost interim rows that never resolve | `47d7ade` |
 | 36 | The session clock subtracts the streamer's epoch from the viewer's | `4ec491c` |
 | 30 | A late key verdict repaints the live console as a setup placeholder | `ace475d` |
-| 32 | The error overlay printed straight through the transcript underneath it | *(this commit)* |
+| 32 | The error overlay printed straight through the transcript underneath it | `71c320e` |
+| 3 (part) | The unauthenticated `GET /link` route, which had no callers | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -132,7 +133,7 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
 | Rank | Band | Finding | Primary location |
 |------|------|---------|------------------|
-| 3 | high | Control API: no credential, `Origin: null` admitted, `GET /link` unredacted. *(Also B5.)* | `packages/companion/src/controlServer.ts` |
+| 3 | high | Control API: no credential and `Origin: null` admitted, so a page you visit can start/stop the session, patch config, and `POST /link/rotate` for an unredacted viewer link. **Partly closed** - `GET /link` deleted (it had no callers); the rest needs a token the property inspector has no testable way to receive. *(Also B5.)* | `packages/companion/src/controlServer.ts` |
 | 8 | high | Offline local STT has no backpressure and can never catch up: partials are gated on buffered samples rather than wall clock, and the worker queue is unbounded. **Cannot be verified on this machine** - both archive models in the models dir are `.part` files, which is B6's symptom, so the local engine has never run here. | `packages/relay/src/localSttWorker.ts` |
 | 17 | medium | The flat 4 s kill timer discards the local STT worker's flush finals, so the last utterance before STOP never reaches viewers. | `packages/relay/src/localStt.ts` |
 | 27 | low | Changing `updateFeedUrl` has no effect until restart. | `apps/standalone/src/updater.ts` |

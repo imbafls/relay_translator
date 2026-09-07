@@ -251,12 +251,17 @@ Full list and status in `docs/OPEN-WORK.md`. The three that shape decisions:
   allows `http:` only for loopback (`localhost`, `127.0.0.1`, `[::1]`, `::1`) on
   the grounds that that is a developer serving their own build. An unset feed
   means the packaged GitHub feed and is allowed.
-- **The local control API has no credential.** `GET /link` in
-  `packages/companion/src/controlServer.ts` carries an explicit `STILL OPEN`
-  comment: it returns the unredacted viewer link, `allowedOrigin` admits
-  `Origin: null` (what a sandboxed iframe on any page sends), and there is
-  nothing to check. `GET /status` is masked by `redact()`; `/link` is not.
-  Closing it needs a per-launch token the Stream Deck property inspector can
-  present.
+- **The local control API has no credential.** `allowedOrigin` in
+  `packages/companion/src/controlServer.ts` admits `Origin: null` - what a
+  sandboxed iframe on any page sends - and the only gate on a mutation is the
+  *presence* of a client header, which a preflighted `fetch` supplies. So a
+  page you visit can start and stop your session, patch your config, and
+  `POST /link/rotate`, which answers with the **unredacted** viewer link (and
+  kicks whoever was watching). The reads are masked: `GET /status` and the SSE
+  stream go through `redact()`, and `GET /link` - which returned the link to
+  anyone who asked - was deleted, having never had a caller. Closing the rest
+  needs a per-launch token the Stream Deck property inspector can present, and
+  the property inspector has no channel to receive one that can be tested
+  without the hardware.
 - **The VPS is behind and cannot be updated from this machine.** See
   `docs/OPEN-WORK.md` for what unblocks it.

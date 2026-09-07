@@ -205,3 +205,56 @@ describe("who is allowed to ask", () => {
     expect(res.status).toBe(403);
   });
 });
+
+/**
+ * Audit finding 3, the half of it that turned out to be dead code.
+ *
+ * `GET /link` carried a `STILL OPEN` comment: it returns the unredacted viewer
+ * link on purpose, `allowedOrigin` admits `Origin: null` - which is what a
+ * sandboxed iframe on any web page sends - and there is no credential to check.
+ * So any page you visit could ask for your viewer link and watch your stream.
+ *
+ * It has no callers. Not the Stream Deck plugin (`apps/streamdeck/src/plugin.ts`
+ * uses status/start/stop only), not the property inspector (`pi/pi.js` calls
+ * /status, /config, /link/rotate and /events), not the desktop app, which reads
+ * its own config over IPC. The only caller was `ControlClient.link()`, which
+ * nothing called either. A route that exists to hand out a secret, that nobody
+ * asks for, is not a route to authenticate - it is a route to delete.
+ *
+ * What this does NOT close is the rest of finding 3: `POST /link/rotate` hands
+ * back the same unredacted link, and the property inspector genuinely needs it,
+ * so it cannot simply be masked. That still needs the per-launch token.
+ */
+describe("the route that handed out the viewer link", () => {
+  it("is not there any more", async () => {
+    const base = await serve();
+    const res = await fetch(`${base}/link`, { headers: { Origin: "null" } });
+
+    expect(res.status, "GET /link still answers").toBe(404);
+    expectNoSecrets(await res.text());
+  });
+
+  it("leaves nothing an unauthenticated reader can pull the link out of", async () => {
+    const base = await serve();
+
+    // everything a sandboxed iframe can reach with a plain GET: no client
+    // header, no credential, the null origin the check admits
+    const st = await fetch(`${base}/status`, { headers: { Origin: "null" } });
+    expect(st.status).toBe(200);
+    expectNoSecrets(await st.text());
+
+    const ctl = new AbortController();
+    const ev = await fetch(`${base}/events`, { headers: { Origin: "null" }, signal: ctl.signal });
+    const frame = await ev.body!.getReader().read();
+    ctl.abort();
+    expectNoSecrets(new TextDecoder().decode(frame.value));
+  });
+
+  it("still rotates the link for the property inspector, which does use that", async () => {
+    const base = await serve();
+    const res = await post(base, "/link/rotate");
+
+    expect(res.status, "the deletion took the live route with it").toBe(200);
+    expect((await res.json()).viewerUrl).toContain("/watch/");
+  });
+});

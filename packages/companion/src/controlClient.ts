@@ -25,12 +25,6 @@ export class ControlClient {
     return (await res.json()) as ControlStatus;
   }
 
-  async link(): Promise<{ viewerUrl: string | null }> {
-    const res = await fetch(`${this.baseUrl}/link`);
-    if (!res.ok) throw new Error(`link ${res.status}`);
-    return (await res.json()) as { viewerUrl: string | null };
-  }
-
   async start(): Promise<ControlStatus> {
     const res = await fetch(`${this.baseUrl}/start`, { method: "POST", headers: this.headers() });
     if (!res.ok) throw new Error(`start ${res.status}: ${await res.text()}`);

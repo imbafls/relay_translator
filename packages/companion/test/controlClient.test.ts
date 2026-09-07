@@ -97,9 +97,13 @@ describe("talking to the control server", () => {
     expect((await client.stop()).session.state).toBe("idle");
   });
 
-  it("reads the viewer link", async () => {
+  it("rotates the viewer link, which is how the link is fetched now", async () => {
+    // there used to be a plain `link()` read here. `GET /link` handed out the
+    // unredacted link to any caller and had none, so it went; rotating is the
+    // route the property inspector actually uses and the only one left that
+    // answers with a real link.
     const client = await serve();
-    expect((await client.link()).viewerUrl).toContain("/watch/");
+    expect((await client.rotateLink()).viewerUrl).toContain("/watch/");
   });
 
   it("turns a refusal into an error rather than a silent undefined", async () => {

@@ -43,6 +43,12 @@ const REDACTED = "***";
  * Nothing downstream needs the values: the property inspector asks whether a
  * key is set and the desktop UI reads its config over IPC, not from here. So
  * presence is all that leaves, and a redacted field stays truthy.
+ *
+ * `GET /link` used to sit alongside these and return the link unredacted, on
+ * the grounds that handing out the link was its job. It had no callers at all,
+ * so it is gone. `POST /link/rotate` still answers with a real link - the
+ * property inspector needs it - and is still guarded only by the client
+ * header. That is the open half of audit finding 3.
  */
 /**
  * A viewer link is `<origin>/watch/<viewerToken>`, so the token is in the URL
@@ -117,19 +123,6 @@ export function startControlServer(
       switch (`${req.method} ${url.pathname}`) {
         case `GET /status`: {
           json(200, redact(handlers.getStatus()));
-          return;
-        }
-        case `GET /link`: {
-          // STILL OPEN. This route exists to hand out the viewer link, so it
-          // returns the unredacted status on purpose - and nothing here is a
-          // secret: `allowedOrigin` admits `Origin: null`, which is what a
-          // sandboxed iframe on any web page sends, and there is no credential
-          // to check. Masking the link in /status (above) closes the broad read;
-          // this one needs the control API to have a real per-launch token that
-          // the Stream Deck property inspector can present. Until then, a page
-          // you visit can ask for your viewer link.
-          const status = handlers.getStatus();
-          json(200, { viewerUrl: status.relay.viewerUrl || null });
           return;
         }
         case `GET /events`: {

@@ -2520,3 +2520,41 @@ the CSSOM guarantees, which is the shape of a test this run has already been
 burned by once. The scrim was checked in a browser, in a real error state, with
 ten real caption rows underneath it: `rgba(19, 19, 19, 0.88)` plus a 2px blur,
 amber on near-black, legible.
+
+### Turn 71 - Control API (audit finding 3: the leak was a route nobody called)
+
+`GET /link` on the local control API carried a `STILL OPEN` comment saying
+exactly what was wrong with it: it returns the unredacted viewer link on
+purpose, `allowedOrigin` admits `Origin: null` - what a sandboxed iframe on any
+web page sends - and there is no credential to check. Every previous pass read
+that comment and concluded the same thing: closing it needs a per-launch token
+the Stream Deck property inspector can present, and that needs hardware.
+
+It needs neither. The route has **no callers**. The plugin
+(`apps/streamdeck/src/plugin.ts`) uses status, start and stop. The property
+inspector (`pi/pi.js`) calls `/status`, `/config`, `/link/rotate` and
+`/events` - grep it, `/link` is not there. The desktop app reads its own config
+over IPC. The only thing that ever called it was `ControlClient.link()`, which
+nothing called either, and a test written to cover it. A route whose whole job
+is handing out a secret, that nobody asks for, is not a route to authenticate.
+
+Both are deleted.
+
+**What this does not close, said plainly.** Finding 3 is bigger than the route
+it named. `POST /link/rotate` returns the same unredacted link, the property
+inspector genuinely needs that value, and the only gate on any mutation is the
+*presence* of a client header - which a preflighted `fetch` from a sandboxed
+iframe supplies. So a page you visit can still start your session, stop it,
+patch your config, and rotate your link (kicking whoever was watching) to read
+the new one. Closing that needs the token, and the property inspector has no
+channel to receive one that can be tested on a machine with no Stream Deck.
+The finding stays open with that written into it, and `CLAUDE.md`'s summary of
+the risk - which described the dead route as the hole - is corrected.
+
+**Guards - three, one watched fail** (`GET /link still answers`). The second is
+the invariant the deletion is really about: everything an unauthenticated
+reader can reach with a plain GET and a null origin - `/status` and the SSE
+stream - is checked against every secret in the fixture, so the route cannot
+come back quietly. The third is the counterweight: `/link/rotate` still answers
+the property inspector with a real link, because deleting that too would have
+been the easy way to make the first two pass.
