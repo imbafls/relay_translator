@@ -3082,3 +3082,35 @@ reading). Two counterweights, both of which would be wrong to get right by
 accident: the limit must NOT be claimed once an address makes it untrue - the
 hosted relay broadcasts to everyone - and the second press must actually go
 through, rather than an armed button that never fires.
+
+### Turn 86 - The SHOW button that never unpressed itself
+
+Every secret field ships as `type="password"` and SHOW flips it to `text`. That
+flip was the **only** assignment to `.type` in the whole renderer. Nothing put
+it back - not closing the panel, not saving, not reopening it, not restarting a
+session. Only clicking the same button again.
+
+So: reveal a Deepgram key to check a paste, carry on, and an hour later open
+SETTINGS to change a language, with a live billable key in plain text on
+whatever is being shared. The button reading HIDE was the only clue, in the
+corner of a field nobody is looking at.
+
+Two locks, because they cover different accidents. `hideSecrets()` runs on every
+view change, which covers the one above - revealed long ago, panel reopened for
+something unrelated. And a twenty-second timer, which covers leaving the panel
+open with the key on screen. Same `REVEAL_MS` the viewer link uses; these are
+worth more than the link.
+
+It applies to all five `[data-show]` fields, not just the Deepgram one that
+prompted it - Gemini and the publish token were the same, and the two in setup
+have no reveal button at all, which was already right.
+
+**Guards - four, two watched fail** (the key still in plain text on reopening,
+and the button still claiming it is showing). The first two are the ordinary
+behaviour that must survive: it starts hidden, and SHOW still shows it. A fix
+that hid the field and left it hidden would pass a careless version of this.
+
+The timer is **not** in the suite - twenty seconds is not a thing to wait for in
+a test, and shortening it for testability would be testing a different
+constant. It was driven in a browser instead: revealed, `text` and HIDE;
+twenty-one seconds later, `password` and SHOW.

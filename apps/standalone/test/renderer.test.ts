@@ -1222,3 +1222,83 @@ describe("NEW, which disconnects everyone reading", () => {
     expect(calls.rotated, "asked to confirm disconnecting nobody").toHaveLength(1);
   });
 });
+
+/**
+ * Every secret field is `type="password"` in the markup, and the SHOW button
+ * flips it to `text`. That flip was the ONLY assignment to `.type` in the whole
+ * renderer - nothing put it back. Not closing the panel, not saving, not
+ * reopening it.
+ *
+ * So: reveal a Deepgram key once to check a paste, carry on, and an hour later
+ * open SETTINGS to change a language - with the key in plain text, on whatever
+ * is being screen-shared. The button reads HIDE, which is the only clue, and it
+ * is in the corner of a field nobody is looking at.
+ *
+ * The viewer link learned this a few commits ago and re-masks itself. These
+ * fields are worth more than the link.
+ */
+describe("a revealed key does not stay revealed", () => {
+  const field = (id: string): HTMLInputElement => document.getElementById(id) as HTMLInputElement;
+  const showBtn = (id: string): HTMLButtonElement =>
+    document.querySelector(`[data-show="${id}"]`) as HTMLButtonElement;
+
+  const openSettings = async (): Promise<void> => {
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+  };
+
+  it("starts hidden, with the button offering to show it", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-live-secret" });
+    await openSettings();
+
+    expect(field("deepgramApiKey").type).toBe("password");
+    expect(showBtn("deepgramApiKey").textContent).toMatch(/SHOW/i);
+  });
+
+  it("shows it when asked", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-live-secret" });
+    await openSettings();
+    showBtn("deepgramApiKey").click();
+    await settle(20);
+
+    expect(field("deepgramApiKey").type).toBe("text");
+    expect(showBtn("deepgramApiKey").textContent).toMatch(/HIDE/i);
+  });
+
+  it("hides it again the next time the panel is opened", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-live-secret" });
+    await openSettings();
+    showBtn("deepgramApiKey").click();
+    await settle(20);
+    expect(field("deepgramApiKey").type).toBe("text");
+
+    // leave, come back - which is the shape of the accident: revealed an hour
+    // ago, panel reopened on camera to change something unrelated
+    (document.getElementById("settingsBack") as HTMLButtonElement).click();
+    await settle(20);
+    await openSettings();
+
+    expect(field("deepgramApiKey").type, "the key was still in plain text on reopening").toBe("password");
+    expect(showBtn("deepgramApiKey").textContent, "the button still claims it is showing").toMatch(/SHOW/i);
+  });
+
+  it("does it for every secret on the panel, not just the one that was reported", async () => {
+    await bootWith({
+      setupDone: true,
+      deepgramApiKey: "dg-live-secret",
+      geminiApiKey: "gm-live-secret",
+      publisherToken: "p1_live_secret",
+    });
+    await openSettings();
+    for (const id of ["deepgramApiKey", "geminiApiKey", "publisherToken"]) showBtn(id).click();
+    await settle(20);
+
+    (document.getElementById("settingsBack") as HTMLButtonElement).click();
+    await settle(20);
+    await openSettings();
+
+    for (const id of ["deepgramApiKey", "geminiApiKey", "publisherToken"]) {
+      expect(field(id).type, `${id} was left in plain text`).toBe("password");
+    }
+  });
+});

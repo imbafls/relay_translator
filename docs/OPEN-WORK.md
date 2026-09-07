@@ -192,11 +192,9 @@ fix — read the numbered section there before starting.
 - ~~**`NEW` is unconfirmed and immediately destructive.**~~ Fixed 2026-09-07. It
   arms to `SURE?` for five seconds when somebody is reading, and still fires on
   one press when nobody is.
-- **The SHOW toggle on the API-key fields never resets.** `i.type` is assigned
-  in exactly one place in the renderer - the toggle itself - so a key revealed
-  once stays revealed for the life of the window, including the next time
-  SETTINGS is opened. The viewer link now re-masks itself on a timer and on any
-  change; these fields do not.
+- ~~**The SHOW toggle on the API-key fields never resets.**~~ Fixed 2026-09-07.
+  Every secret goes back behind its dots on any view change, and on a
+  twenty-second timer, for all five `[data-show]` fields.
 
 - **`packages/viewer/public/app.js` still decimates if it is ever fed a rate
   above 16 kHz.** Finding 23 stopped the app *asking* it to resample; the

@@ -310,6 +310,9 @@ function setView(next: View): void {
   $("stepper").hidden = next !== "onboarding";
   $("settingsBtn").classList.toggle("active", next === "settings");
   $("logBtn").classList.toggle("active", next === "log");
+  // a key revealed the last time this panel was open must not still be revealed
+  // when it is opened again, which is the shape the accident takes
+  hideSecrets();
   if (next === "settings") renderSettings();
   if (next === "onboarding") renderOnboarding();
   else renderChain();
@@ -1239,6 +1242,38 @@ async function claimRoom(): Promise<void> {
     renderFooter();
   } finally {
     btn.disabled = false;
+  }
+}
+
+/**
+ * Show or hide one secret field, and never leave it shown by accident.
+ *
+ * The toggle used to be the only assignment to `.type` in the renderer, so
+ * nothing ever put a field back: reveal a Deepgram key to check a paste, and an
+ * hour later SETTINGS opens with it in plain text, on whatever is being shared.
+ * The button reading HIDE was the only clue, in the corner of a field nobody is
+ * looking at.
+ *
+ * So it re-hides on a timer, and `hideSecrets()` runs whenever the panel is
+ * opened. The viewer link learned the same lesson; these are worth more.
+ */
+const secretTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function revealSecret(btn: HTMLButtonElement, show: boolean): void {
+  const id = btn.dataset.show!;
+  const field = inp(id);
+  field.type = show ? "text" : "password";
+  btn.textContent = show ? "HIDE" : "SHOW";
+  const running = secretTimers.get(id);
+  if (running) clearTimeout(running);
+  secretTimers.delete(id);
+  if (show) secretTimers.set(id, setTimeout(() => revealSecret(btn, false), REVEAL_MS));
+}
+
+/** put every secret back behind its dots - called whenever a panel is opened */
+function hideSecrets(): void {
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-show]")) {
+    if (inp(b.dataset.show!).type !== "password") revealSecret(b, false);
   }
 }
 
@@ -2253,8 +2288,7 @@ function bind(): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-show]")) {
     b.onclick = () => {
       const i = inp(b.dataset.show!);
-      i.type = i.type === "password" ? "text" : "password";
-      b.textContent = i.type === "password" ? "SHOW" : "HIDE";
+      revealSecret(b, i.type === "password");
     };
   }
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-clear]")) {
