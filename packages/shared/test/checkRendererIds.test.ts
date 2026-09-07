@@ -53,6 +53,8 @@ const OK = {
   "apps/standalone/renderer/app.ts": `$("alpha");`,
   "packages/viewer/public/index.html": `<div id="beta"></div>`,
   "packages/viewer/public/app.js": `$("beta");`,
+  // the home page is its own script source - the markup carries an inline script
+  "packages/viewer/public/home.html": `<div id="gamma"></div><script>$("gamma");</script>`,
 };
 
 describe("the id checker", () => {
@@ -102,5 +104,15 @@ describe("the id checker", () => {
       tree({ ...OK, "packages/viewer/public/app.js": `$("beta"); document.querySelectorAll(".row .txt");` }),
     );
     expect(res.code).toBe(0);
+  });
+
+  it("catches an id the home page inline script looks up but the markup lost", () => {
+    // the redesign case: a re-layout drops the element, the script still asks
+    // for it, and the page fails silently in a browser nobody is watching
+    const res = run(
+      tree({ ...OK, "packages/viewer/public/home.html": `<div class="gamma"></div><script>$("gamma");</script>` }),
+    );
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("gamma");
   });
 });

@@ -18,6 +18,15 @@ const PAIRS = [
     html: "packages/viewer/public/index.html",
     scripts: ["packages/viewer/public/app.js"],
   },
+  {
+    // The home page carries its script inline, so the page is its own script
+    // source. It was outside this check until a full redesign made the gap
+    // obvious: nothing caught a re-layout dropping #ver or #stateText, and the
+    // failure is silent - a download button that never learns its version.
+    name: "home page",
+    html: "packages/viewer/public/home.html",
+    scripts: ["packages/viewer/public/home.html"],
+  },
 ];
 
 /** ids the script builds at runtime rather than looking up literally */
