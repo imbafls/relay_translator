@@ -14,7 +14,7 @@
 
 import { Room } from "./room";
 import { newRoomId, parseToken } from "./tokens";
-import { resolveRoute } from "./routes";
+import { insecureRedirect, installerName, resolveRoute } from "./routes";
 
 export { Room };
 
@@ -27,6 +27,41 @@ interface Env {
    * without one; absent means unlimited, which is what production was.
    */
   CLAIM_LIMIT?: RateLimit;
+}
+
+/**
+ * Where builds live. The same release the app's own updater reads, so the
+ * landing page cannot advertise a version the updater does not know about -
+ * one source of truth, not two.
+ */
+const RELEASE_BASE = "https://github.com/imbafls/relay_translator/releases/latest/download";
+const RELEASES_PAGE = "https://github.com/imbafls/relay_translator/releases/latest";
+
+/**
+ * The landing page reads this for the version, and enables its download button
+ * only if it parses. It has to be same-origin: a redirect to GitHub is followed
+ * to an origin that sends no CORS headers, so `fetch` rejects and the page
+ * disables itself exactly as it did when the route 404ed. So the Worker fetches
+ * it and hands the bytes back.
+ */
+async function updateFeed(): Promise<Response> {
+  const res = await fetch(`${RELEASE_BASE}/latest.yml`, { cf: { cacheTtl: 300 } } as RequestInit);
+  if (!res.ok) return new Response("no build published yet", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(await res.text(), {
+    headers: { "Content-Type": "text/yaml; charset=utf-8", "Cache-Control": "public, max-age=300" },
+  });
+}
+
+/**
+ * The installer named by that feed. Resolved rather than hardcoded, because the
+ * filename carries the version and would go stale on every release.
+ */
+async function downloadRedirect(): Promise<Response> {
+  const res = await fetch(`${RELEASE_BASE}/latest.yml`, { cf: { cacheTtl: 300 } } as RequestInit);
+  const name = res.ok ? installerName(await res.text()) : undefined;
+  // the releases page rather than a 404: someone who clicked download should
+  // land somewhere they can get the thing, even if the feed is having a moment
+  return Response.redirect(name ? `${RELEASE_BASE}/${name}` : RELEASES_PAGE, 302);
 }
 
 /** everyone Cloudflare could not name shares one bucket */
@@ -51,11 +86,22 @@ export function claimRateKey(request: Request): string {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // before anything else: a viewer token in a cleartext request line is the
+    // credential handed to the network
+    const secure = insecureRedirect(url, request.headers.get("Upgrade"));
+    if (secure) return Response.redirect(secure, 301);
+
     const route = resolveRoute(url.pathname, request.method);
 
     switch (route.kind) {
       case "home":
         return env.ASSETS.fetch(assetRequest(url, "home.html"));
+
+      case "update-feed":
+        return updateFeed();
+
+      case "download":
+        return downloadRedirect();
 
       case "viewer-page":
         // the page itself is public; the token is checked when its script opens

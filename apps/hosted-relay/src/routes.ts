@@ -1,4 +1,31 @@
 /**
+ * Where a plain-HTTP request should be sent instead, or undefined to serve it.
+ *
+ * A viewer link is `<origin>/watch/<viewerToken>` and that token is the whole
+ * credential - no password, no expiry, no device check - so over HTTP it
+ * crosses the wire in the request line, in clear. Nothing was redirecting: all
+ * three names answered 200 on port 80 with the real page and no HSTS.
+ *
+ * Here rather than in Cloudflare's zone setting, so it travels with the code
+ * and covers every name the Worker answers on, including ones added later.
+ *
+ * Two things are deliberately left alone. A WebSocket upgrade cannot follow a
+ * 301, so redirecting one turns a working socket into a silent failure - and
+ * the app dials `wss://` anyway. And loopback is how `wrangler dev` serves,
+ * where there is no certificate to redirect to.
+ */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+export function insecureRedirect(url: URL, upgrade: string | null): string | undefined {
+  if (url.protocol !== "http:") return undefined;
+  if ((upgrade || "").toLowerCase() === "websocket") return undefined;
+  if (LOOPBACK.has(url.hostname)) return undefined;
+  const secure = new URL(url.toString());
+  secure.protocol = "https:";
+  return secure.toString();
+}
+
+/**
  * Where a request goes, decided from the path alone.
  *
  * Pure on purpose: this is the half of the service that can be wrong in a way
@@ -29,13 +56,37 @@ export type Route =
   | { kind: "claim" }
   | { kind: "viewer-token" }
   | { kind: "rotate-viewer-token" }
+  /** the version the landing page reads, and the installer its button points at */
+  | { kind: "update-feed" }
+  | { kind: "download" }
   | { kind: "not-found" };
+
+/**
+ * The installer filename out of an electron-updater `latest.yml`.
+ *
+ * Line-oriented rather than a YAML parse: the file is four fields written by
+ * electron-builder, and pulling in a parser to read one of them would be the
+ * larger risk. Returns undefined rather than guessing, and the caller sends
+ * people to the releases page when it does.
+ */
+export function installerName(feed: string): string | undefined {
+  for (const line of feed.split(/\r?\n/)) {
+    const m = /^\s*path:\s*(\S+)\s*$/.exec(line);
+    if (m) return m[1];
+  }
+  return undefined;
+}
 
 /** a token is [A-Za-z0-9_-]+ with no dot; a filename always has one */
 const TOKEN_PATH = /^\/watch\/([A-Za-z0-9_-]+)$/;
 
 export function resolveRoute(pathname: string, method = "GET"): Route {
   if (pathname === "/health") return { kind: "health" };
+  // Exactly these two, not a `/updates/` prefix. The Node relay serves a
+  // directory there; the Worker has no directory and should not look as though
+  // it might - a prefix match invites probing for one.
+  if (pathname === "/updates/latest.yml") return { kind: "update-feed" };
+  if (pathname === "/download") return { kind: "download" };
   if (pathname === "/ws/uplink") return { kind: "ws-uplink" };
   if (pathname === "/ws/viewer") return { kind: "ws-viewer" };
 

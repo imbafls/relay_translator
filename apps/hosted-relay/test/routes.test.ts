@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveRoute } from "../src/routes";
+import { insecureRedirect, installerName, resolveRoute } from "../src/routes";
 import { formatToken, newRoomId, newSecret, parseToken, secretsMatch } from "../src/tokens";
 
 /**
@@ -132,5 +132,139 @@ describe("room credentials", () => {
     expect(secretsMatch(secret, secret.slice(0, -1))).toBe(false);
     expect(secretsMatch(secret, undefined)).toBe(false);
     expect(secretsMatch(undefined, secret)).toBe(false);
+  });
+});
+
+/**
+ * A viewer link is `<origin>/watch/<viewerToken>`, and that token is the whole
+ * credential - there is no password, no expiry and no device check. Over plain
+ * HTTP it crosses the wire in the request line, in clear.
+ *
+ * Nothing was redirecting. `http://textrelay.cc/watch/<token>` answered 200
+ * with the real page, on all three names, with no HSTS. The app itself always
+ * builds `https://` (it stores `wss://` and derives the origin), so this is not
+ * how a link is normally produced - but a link retyped without a scheme, or
+ * pasted into something that defaults to http, hands the token to the network.
+ *
+ * Doing it in the Worker rather than with Cloudflare's zone setting means it
+ * travels with the code and covers every name the Worker answers on, including
+ * ones added later.
+ */
+describe("plain HTTP does not carry a viewer token in clear", () => {
+  const at = (raw: string, upgrade: string | null = null): string | undefined =>
+    insecureRedirect(new URL(raw), upgrade);
+
+  it("sends a viewer link to https, keeping the token in the path", () => {
+    const to = at("http://textrelay.cc/watch/v1_abcdef0123456789_0123456789abcdef0123456789abcdef");
+    expect(to).toBe("https://textrelay.cc/watch/v1_abcdef0123456789_0123456789abcdef0123456789abcdef");
+  });
+
+  it("redirects every other page too, not just the one with the token in it", () => {
+    expect(at("http://textrelay.cc/")).toBe("https://textrelay.cc/");
+    expect(at("http://textrelay.cc/health")).toBe("https://textrelay.cc/health");
+    expect(at("http://relay.supr.systems/watch/app.js")).toBe("https://relay.supr.systems/watch/app.js");
+  });
+
+  it("keeps the query string, which is where the room token goes on /health", () => {
+    expect(at("http://textrelay.cc/health?token=v1_abcdef0123456789_0123456789abcdef0123456789abcdef")).toBe(
+      "https://textrelay.cc/health?token=v1_abcdef0123456789_0123456789abcdef0123456789abcdef",
+    );
+  });
+
+  it("leaves https alone", () => {
+    expect(at("https://textrelay.cc/watch/v1_abcdef0123456789_0123456789abcdef0123456789abcdef")).toBeUndefined();
+  });
+
+  it("does not redirect a websocket upgrade, which cannot follow one", () => {
+    // a 301 on an upgrade turns a working socket into a silent failure, and the
+    // app dials wss:// anyway - this would only ever hit a hand-made ws:// client
+    expect(at("http://textrelay.cc/ws/viewer?token=abc", "websocket")).toBeUndefined();
+    expect(at("http://textrelay.cc/ws/viewer?token=abc", "WebSocket")).toBeUndefined();
+  });
+
+  it("leaves local development alone", () => {
+    // `wrangler dev` serves over http on loopback; redirecting it to a
+    // certificate that does not exist would make the thing unrunnable locally
+    expect(at("http://localhost:8787/health")).toBeUndefined();
+    expect(at("http://127.0.0.1:8787/watch/app.js")).toBeUndefined();
+    expect(at("http://[::1]:8787/")).toBeUndefined();
+  });
+});
+
+/**
+ * A visitor who types `textrelay.cc` gets the product page, and its only call to
+ * action was a greyed-out button reading "No build published yet" - for a
+ * product on 0.5.9.
+ *
+ * `home.html` asks `/updates/latest.yml` for the version and links `/download`.
+ * Both are routes the single-tenant Node relay serves from its own data dir
+ * (`server.ts`), and the Worker never inherited them: it answered 404, the fetch
+ * rejected, and the page disabled its own button. It failed soft, which is why
+ * nobody noticed - it advertised the product as unreleased instead of erroring.
+ *
+ * The Worker has no data dir and should not have one. The builds live on the
+ * GitHub release, which is also where the app's own updater reads them, so
+ * these two routes point at the same place rather than inventing a second
+ * source of truth.
+ */
+describe("the landing page can offer the build it is advertising", () => {
+  it("routes the update feed the page asks for", () => {
+    expect(resolveRoute("/updates/latest.yml").kind).toBe("update-feed");
+  });
+
+  it("routes the download the button points at", () => {
+    expect(resolveRoute("/download").kind).toBe("download");
+  });
+
+  it("does not turn /updates/ into a general file server", () => {
+    // the Node relay serves a directory here; the Worker has no directory, and
+    // a path that looked like one would be a way to probe for one
+    expect(resolveRoute("/updates/").kind).toBe("not-found");
+    expect(resolveRoute("/updates/CalloutRelay-Setup-0.5.9.exe").kind).toBe("not-found");
+    expect(resolveRoute("/updates/../secret").kind).toBe("not-found");
+  });
+
+  it("still serves everything it served before", () => {
+    expect(resolveRoute("/").kind).toBe("home");
+    expect(resolveRoute("/health").kind).toBe("health");
+    expect(resolveRoute("/claim", "POST").kind).toBe("claim");
+    expect(resolveRoute("/watch/v1_abcdef0123456789_0123456789abcdef0123456789abcdef").kind).toBe("viewer-page");
+    expect(resolveRoute("/watch/app.js").kind).toBe("asset");
+  });
+});
+
+describe("reading the installer out of the update feed", () => {
+  /** the shape electron-builder writes, taken from the live v0.5.9 feed */
+  const feed = [
+    "version: 0.5.9",
+    "files:",
+    "  - url: CalloutRelay-Setup-0.5.9.exe",
+    "    sha512: abc==",
+    "    size: 88234378",
+    "path: CalloutRelay-Setup-0.5.9.exe",
+    "sha512: abc==",
+    "releaseDate: '2026-09-07T08:31:00.000Z'",
+  ].join("\n");
+
+  it("finds the installer the feed names", () => {
+    expect(installerName(feed)).toBe("CalloutRelay-Setup-0.5.9.exe");
+  });
+
+  it("reads the top-level path, not the indented url that comes before it", () => {
+    // both lines carry the same filename today, but `url:` is nested under
+    // `files:` and matching it would break the day they differ
+    expect(installerName("files:\n  - url: WRONG.exe\npath: RIGHT.exe")).toBe("RIGHT.exe");
+  });
+
+  it("survives the CRLF a Windows build can write", () => {
+    expect(installerName("version: 0.5.9\r\npath: CalloutRelay-Setup-0.5.9.exe\r\n")).toBe(
+      "CalloutRelay-Setup-0.5.9.exe",
+    );
+  });
+
+  it("gives back nothing rather than a guess when the feed is not one", () => {
+    expect(installerName("")).toBeUndefined();
+    expect(installerName("<!doctype html><title>404</title>")).toBeUndefined();
+    expect(installerName("version: 0.5.9")).toBeUndefined();
   });
 });

@@ -78,9 +78,9 @@ Press `OPEN CONSOLE`. Setup is finished.
 Read this before you send anything. Out of the box, the app serves the captions
 from your own PC. That reaches a phone on the same wifi and nothing else — a
 phone on mobile data, or in another house, cannot open it. This is how a fresh
-install behaves, and it is not a fault. The app says so in two places:
-`04 OUTPUT` reads `RELAY NOT SET · LAN ONLY`, and under `SETTINGS` the heading
-`WHO CAN OPEN IT` reads `THIS NETWORK ONLY`.
+install behaves, and it is not a fault. The app says so in two places, in the
+same words: `04 OUTPUT` reads `THIS NETWORK ONLY` and `ONE DEVICE AT A TIME`,
+and under `SETTINGS` the heading `WHO CAN OPEN IT` reads `THIS NETWORK ONLY`.
 
 To get a link that opens anywhere:
 
@@ -181,9 +181,9 @@ much per minute as one.
 
 ## When something goes wrong
 
-**They cannot open the link.** Look at `04 OUTPUT`. If it reads `LAN ONLY`, the
-link only works on your own wifi and that is the entire problem — go back to
-part two and claim an address. If it reads `RELAY OK` or `UPLINK OK`, make sure
+**They cannot open the link.** Look at `04 OUTPUT`. If it reads
+`THIS NETWORK ONLY`, the link only works on your own wifi and that is the entire
+problem — go back to part two and claim an address. If it reads `RELAY OK` or `UPLINK OK`, make sure
 they have the current link: press `COPY` again and resend. If they are on your
 wifi and it still fails, Windows Firewall is most likely blocking the app.
 

@@ -13,7 +13,11 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { Client } = require("ssh2");
 
-// the name resolves to the same box and survives the IP changing
+// RETIRED. The box this talked to was stopped on 2026-09-06, and
+// `relay.supr.systems` now resolves to Cloudflare's edge - so the default below
+// points SSH at a CDN, not a host. Kept because HANDOFF.md still names this
+// file and the doc guard checks that every path a document names exists; set
+// VPS_HOST explicitly if you ever have a box to talk to again.
 const HOST = process.env.VPS_HOST || "relay.supr.systems";
 const USER = process.env.VPS_USER || "root";
 

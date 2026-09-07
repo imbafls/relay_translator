@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEFAULT_CONFIG, FALLBACK_STT } from "@callout-relay/shared";
+import { DEFAULT_CONFIG, FALLBACK_STT, HOSTED_RELAY_URL } from "@callout-relay/shared";
 import type { AppConfig } from "@callout-relay/shared";
 
 /**
@@ -70,7 +70,7 @@ function bridge(config: AppConfig) {
       if (claimFails) return { ok: false, message: claimFails };
       // the real handler stores the room through applyConfig, so the config the
       // renderer reads back afterwards is the one carrying the new room
-      current = { ...current, relayUrl: relayUrl || "wss://relay.supr.systems", publisherToken: "p1_room_secret" };
+      current = { ...current, relayUrl: relayUrl || HOSTED_RELAY_URL, publisherToken: "p1_room_secret" };
       return { ok: true };
     },
     validateKey: async (provider: "deepgram" | "gemini", key: string) => {
@@ -944,7 +944,7 @@ describe("getting a link that works outside this network", () => {
 
     // the same fields a user would have filled in by hand; a claim that left
     // ADVANCED empty would be a second, hidden source of truth
-    expect((document.getElementById("relayUrl") as HTMLInputElement).value).toBe("wss://relay.supr.systems");
+    expect((document.getElementById("relayUrl") as HTMLInputElement).value).toBe(HOSTED_RELAY_URL);
     expect((document.getElementById("publisherToken") as HTMLInputElement).value).toBe("p1_room_secret");
   });
 

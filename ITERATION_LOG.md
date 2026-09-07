@@ -3114,3 +3114,45 @@ The timer is **not** in the suite - twenty seconds is not a thing to wait for in
 a test, and shortening it for testability would be testing a different
 constant. It was driven in a browser instead: revealed, `text` and HIDE;
 twenty-one seconds later, `password` and SHOW.
+
+### Turn 87 - What the cutover audit found
+
+Three agents went over the move independently. Two findings were worth the run.
+
+**textrelay.cc offered no download.** The landing page asks `/updates/latest.yml`
+for the version and links `/download`. Both are routes the single-tenant Node
+relay serves out of its own data dir, and the Worker never inherited them: they
+404ed, the page's `fetch` rejected, and it disabled its own button. So a visitor
+who typed the name the domain was bought for got a product page whose only call
+to action read **"No build published yet"** - for something on 0.5.9. It failed
+soft, which is exactly why nobody had noticed; it advertised the product as
+unreleased rather than erroring.
+
+Both routes now point at the GitHub release the app's own updater reads, so
+there is one source of truth rather than two. The feed is fetched and handed
+back rather than redirected - a redirect is followed to an origin that sends no
+CORS headers, so the page would have disabled itself exactly as before. The
+button now reads DOWNLOAD FOR WINDOWS, VERSION 0.5.9, 84 MB, and the redirect
+resolves to the real installer.
+
+**Plain HTTP served everything in clear.** `http://textrelay.cc/watch/<token>`
+answered 200, on all three names, with no redirect and no HSTS. The token in
+that path is the entire credential. The app always builds `https://`, so this is
+not how a link is normally produced - but one retyped without a scheme hands the
+token to the network. Fixed in the Worker rather than with Cloudflare's zone
+setting, so it travels with the code and covers names added later. WebSocket
+upgrades are left alone, because a 301 turns a working socket into a silent
+failure, and so is loopback, where `wrangler dev` has no certificate.
+
+The rest was staleness the move exposed rather than caused: `deploy/traefik/`
+still described a live route to a machine stopped on 2026-09-06, `scripts/vps.mjs`
+still defaulted to SSHing at what is now a CDN, and `docs/GUIDE.md` and
+`CLAUDE.md` quoted `RELAY NOT SET · LAN ONLY`, a string 0.5.9 replaced one commit
+after the guide was written.
+
+**One test I could not prove.** The `latest.yml` parser has a CRLF case, and no
+revert I could construct makes it fail: the split tolerates the CR, and so does
+every reasonable form of the regex - `.` does not match `` either. It asserts
+real behaviour, so it stays, but it is a behaviour assertion and not a guard,
+and calling it one would be the thing this log exists to stop. The other ten in
+this turn were each proved by breaking exactly the line they cover.

@@ -177,6 +177,15 @@ fix — read the numbered section there before starting.
 
 ### Found while fixing the above, not in the audit
 
+- **The landing page's ON AIR badge can never light.** `home.html` reads a
+  tokenless `/health`, which on a multi-tenant Worker returns a fixed
+  `live: false` because it must wake no object. It meant "someone is streaming"
+  on the single-tenant VPS. Cosmetic, but it is a status light that cannot
+  change state - either give it something real to read or take it out.
+- **`home.html` still says "drop the local one into an OBS browser source",**
+  which means nothing to a visitor who has just typed the domain and has no
+  local link.
+
 - ~~**The viewer page deployed on the hosted relay is stale.**~~ Fixed
   2026-09-07. It had gone out from a dirty tree and was missing four viewer
   fixes; a `wrangler deploy` from a clean tree uploaded exactly one asset,

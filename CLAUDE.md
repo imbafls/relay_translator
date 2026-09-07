@@ -52,9 +52,10 @@ Missing `relayUrl`, missing `publisherToken`, or no embedded relay → it sets
 > **A fresh install has no cloud relay and is LAN-only by construction.**
 > That is not a bug and not a misconfiguration. It is the default.
 
-The renderer says so: `apps/standalone/renderer/app.ts` (~line 853) pushes a
-`LAN ONLY` / `RELAY NOT SET · LAN ONLY` warning chip when `config.relayUrl` is
-unset, and ~line 1415 shows `RELAY SET` vs `LAN ONLY` in the output meta. If a
+The renderer says so: `apps/standalone/renderer/app.ts` pushes a
+`THIS NETWORK ONLY` / `ONE DEVICE AT A TIME` warning chip into `04 OUTPUT` when
+`config.relayUrl` is unset - the same words `SETTINGS → WHO CAN OPEN IT` uses,
+deliberately, so the chip you see and the panel that fixes it agree. If a
 user reports "the phone link doesn't work over the internet", check for that
 chip before touching any code.
 
