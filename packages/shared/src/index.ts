@@ -202,6 +202,43 @@ export function updateFeedAction(configured: string | undefined, applied: string
   return next === applied ? { action: "none" } : { action: "set", url: next };
 }
 
+/**
+ * The relay the app claims a room on when the user asks for a link that works
+ * outside their network. A Cloudflare Worker, one Durable Object per room; it
+ * does no transcription and no translation and holds no keys - it only fans
+ * finished captions out to whoever has the link.
+ */
+export const HOSTED_RELAY_URL = "wss://relay.supr.systems";
+
+/**
+ * Where to POST to get a room, given the relay address the app stores.
+ *
+ * The stored address is a WebSocket url because that is what the uplink dials;
+ * claiming is ordinary HTTP to the same origin. Undefined for anything that is
+ * not a bare `ws://host` or `wss://host` - the same rule `httpOriginOfRelayUrl`
+ * applies in the app, kept identical on purpose, because a half-accepted
+ * address is how the footer ends up quietly handing out the LAN link.
+ */
+export function claimUrlFor(relayUrl: string | undefined): string | undefined {
+  const m = (relayUrl || "").match(/^(wss?):\/\/([^/]+)\/?$/i);
+  if (!m) return undefined;
+  const scheme = m[1].toLowerCase() === "wss" ? "https" : "http";
+  return `${scheme}://${m[2]}/claim`;
+}
+
+/** what POST /claim answers with: one room, two tokens */
+export interface RoomClaim {
+  publisherToken: string;
+  viewerToken: string;
+}
+
+export function isRoomClaim(value: unknown): value is RoomClaim {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.publisherToken === "string" && v.publisherToken.length > 0 &&
+    typeof v.viewerToken === "string" && v.viewerToken.length > 0;
+}
+
 /** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
 export function isLocalStt(id: string): boolean {
   const info = sttModel(id);

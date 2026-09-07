@@ -20,6 +20,8 @@ export interface RendererBridge {
     config: AppConfig;
   }>;
   rotateLink(): Promise<string | undefined>;
+  /** claim a room on the hosted relay so the link works outside this network */
+  claimRelayRoom(relayUrl?: string): Promise<{ ok: boolean; message?: string }>;
   /** test an API key with a cheap request against the provider */
   validateKey(provider: "deepgram" | "gemini", key: string): Promise<KeyValidation>;
   /** ask the update feed right now */
@@ -48,6 +50,7 @@ contextBridge.exposeInMainWorld("cr", {
   setConfig: (patch: Partial<AppConfig>) => ipcRenderer.invoke("config:set", patch),
   prepareSession: (opts: { rotate: boolean }) => ipcRenderer.invoke("runtime:prepare", opts),
   rotateLink: () => ipcRenderer.invoke("link:rotate"),
+  claimRelayRoom: (relayUrl?: string) => ipcRenderer.invoke("relay:claim", relayUrl),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
   writeClipboard: (text: string) => ipcRenderer.invoke("clipboard:write", text),
   appVersion: () => ipcRenderer.invoke("app:version"),

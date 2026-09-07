@@ -14,7 +14,7 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
+import { claimHostedRoom, ConfigStore, defaultDataDir, startControlServer, UplinkClient } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
 import {
   AppConfig,
@@ -28,6 +28,7 @@ import {
   UpdateStatus,
   UsageInfo,
   controlConfigPatch,
+  HOSTED_RELAY_URL,
   RELAY_CONFIG_KEYS,
   relayRollbackPatch,
   viewerLinkFor,
@@ -516,6 +517,30 @@ function registerIpc(): void {
     (_e, req: { provider: "deepgram" | "gemini"; key: string }): Promise<KeyValidation> =>
       validateKey(req?.provider, String(req?.key || "")),
   );
+
+  /**
+   * Claim a room on the hosted relay and store it, so a user who wants to send
+   * someone a link never has to know what a publish token is. This was a curl
+   * command in a README - nothing in the app called /claim at all - which meant
+   * the one thing the hosted relay exists for was reachable only by people who
+   * read the source.
+   *
+   * Returns a result rather than throwing: this sits behind a button, and the
+   * renderer needs a sentence to put on screen when it does not work.
+   */
+  ipcMain.handle("relay:claim", async (_e, relayUrl?: string) => {
+    const url = (relayUrl || "").trim() || HOSTED_RELAY_URL;
+    try {
+      const patch = await claimHostedRoom(url);
+      await applyConfig(patch);
+      log("info", `claimed a room on ${url}`);
+      return { ok: true as const };
+    } catch (err) {
+      const message = String((err as Error)?.message || err);
+      log("error", `could not claim a room: ${message}`);
+      return { ok: false as const, message };
+    }
+  });
 
   ipcMain.handle("link:rotate", async () => {
     await rotateLink();

@@ -29,6 +29,8 @@ interface Calls {
   clipboard: string[];
   /** URLs the renderer asked the OS to open */
   opened: string[];
+  /** relay addresses a room was claimed on; undefined means "the default one" */
+  claimed: (string | undefined)[];
 }
 
 /** the status callback boot() registers, so a test can push a live relay in */
@@ -58,6 +60,14 @@ function bridge(config: AppConfig) {
     },
     prepareSession: async () => ({ viewerUrl: "", localViewerUrl: "", relayUrl: "" }),
     rotateLink: async () => undefined,
+    claimRelayRoom: async (relayUrl?: string) => {
+      calls.claimed.push(relayUrl);
+      if (claimFails) return { ok: false, message: claimFails };
+      // the real handler stores the room through applyConfig, so the config the
+      // renderer reads back afterwards is the one carrying the new room
+      current = { ...current, relayUrl: relayUrl || "wss://relay.supr.systems", publisherToken: "p1_room_secret" };
+      return { ok: true };
+    },
     validateKey: async (provider: "deepgram" | "gemini", key: string) => {
       calls.validateKey.push(provider);
       calls.validated.push({ provider, key });
@@ -106,9 +116,11 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 let fakeDevices: { kind: string; deviceId: string; label: string; groupId: string }[] = [];
 /** make the main process refuse the save, the way a relay that cannot bind does */
 let setConfigFails = false;
+/** when set, claiming a room fails with this message */
+let claimFails: string | null = null;
 
 async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
-  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [] };
+  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [], claimed: [] };
   pushStatus = undefined;
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
@@ -154,6 +166,7 @@ beforeEach(() => {
 afterEach(() => {
   fakeDevices = [];
   setConfigFails = false;
+  claimFails = null;
   for (const t of timers) clearInterval(t);
   timers = [];
   vi.restoreAllMocks();
@@ -881,5 +894,85 @@ describe("the idle panel over a stage that still has captions on it", () => {
     await rerender();
 
     expect(document.querySelectorAll("#lines .row").length, "the transcript was thrown away").toBe(1);
+  });
+});
+
+/**
+ * Getting a link someone outside the network can open used to mean finding
+ * `POST /claim` in a README, running curl, and pasting a token into a panel
+ * called ADVANCED whose own hint says none of it is needed. Nothing in the app
+ * called /claim at all.
+ *
+ * That is the whole reason the hosted relay exists: sending a link to someone
+ * reading captions on a phone - a friend who is deaf or hard of hearing, or
+ * anyone not in the room. It should be one button.
+ */
+describe("getting a link that works outside this network", () => {
+  const reach = (): HTMLElement => document.getElementById("reachStatus") as HTMLElement;
+  const claimBtn = (): HTMLButtonElement => document.getElementById("claimRoom") as HTMLButtonElement;
+  const note = (): HTMLElement => document.getElementById("claimNote") as HTMLElement;
+
+  it("says plainly that the link is local-only until something is done about it", async () => {
+    await bootWith({ setupDone: true });
+
+    expect(reach().textContent, "a fresh install claims a reach it does not have").toMatch(/THIS NETWORK/i);
+    expect(reach().className, "the local-only state is not flagged as needing attention").toContain("warn");
+    expect(claimBtn().hidden, "there is no way to fix it from here").toBe(false);
+  });
+
+  it("claims a room on one press, with no address to type", async () => {
+    await bootWith({ setupDone: true });
+    claimBtn().click();
+    await settle(80);
+
+    // undefined means the app's own default relay - the user is never asked
+    // to know an address, which was the entire barrier
+    expect(calls.claimed, "the button did not claim anything").toEqual([undefined]);
+    expect(reach().textContent, "the room was claimed but the app still says local-only").toMatch(/ANYONE WITH THE LINK/i);
+    expect(reach().className).not.toContain("warn");
+  });
+
+  it("puts the room it claimed where the relay settings live, so it is one thing not two", async () => {
+    await bootWith({ setupDone: true });
+    claimBtn().click();
+    await settle(80);
+
+    // the same fields a user would have filled in by hand; a claim that left
+    // ADVANCED empty would be a second, hidden source of truth
+    expect((document.getElementById("relayUrl") as HTMLInputElement).value).toBe("wss://relay.supr.systems");
+    expect((document.getElementById("publisherToken") as HTMLInputElement).value).toBe("p1_room_secret");
+  });
+
+  it("tells the user why when it fails, instead of a button that does nothing", async () => {
+    claimFails = "could not reach relay.supr.systems - getaddrinfo ENOTFOUND";
+    await bootWith({ setupDone: true });
+    claimBtn().click();
+    await settle(80);
+
+    expect(note().textContent, "the failure was swallowed").toContain("could not reach");
+    expect(reach().textContent, "a failed claim was reported as success").toMatch(/THIS NETWORK/i);
+    expect(claimBtn().disabled, "the button is stuck after a failure").toBe(false);
+  });
+
+  it("stops telling the user their link is local-only once it is not", async () => {
+    await bootWith({ setupDone: true });
+    const hint = document.getElementById("reachHint") as HTMLElement;
+    expect(hint.textContent).toMatch(/only opens on your own network/i);
+
+    claimBtn().click();
+    await settle(80);
+
+    // a hint left saying the opposite of the status reads as "it did not work"
+    expect(hint.textContent, "the hint still contradicts the status it sits under").not.toMatch(
+      /only opens on your own network/i,
+    );
+    expect(hint.textContent).toMatch(/any network|anyone you send/i);
+  });
+
+  it("does not offer to claim a second room when one is already set up", async () => {
+    await bootWith({ setupDone: true, relayUrl: "wss://relay.supr.systems", publisherToken: "p1_already_here" });
+
+    expect(reach().textContent).toMatch(/ANYONE WITH THE LINK/i);
+    expect(claimBtn().hidden, "an extra room would be claimed and the old one orphaned").toBe(true);
   });
 });

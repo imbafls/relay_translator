@@ -2838,3 +2838,52 @@ The lesson is one this log already carries, and it caught me from the outside
 this time: **ask what the observable actually proves.** A server-side count does
 not prove a client-side state, however reliably the two coincide on the machine
 where the test was written.
+
+### Turn 80 - One button instead of a curl command
+
+The hosted relay has existed for two days and nothing in the app has ever
+called `/claim`. Getting a room meant finding the endpoint in
+`apps/hosted-relay/README.md`, running curl, and pasting the token into a panel
+called ADVANCED whose own hint text says *none of this is needed to run Relay*.
+So the single thing the hosted relay exists for was reachable only by people
+who read the source.
+
+That matters more than the streaming case it was built around. The reason to
+send someone a link is that they are reading rather than listening - a friend
+who is deaf or hard of hearing, someone in another room, someone on a phone.
+None of those people are running OBS, and none of them should need the person
+talking to understand what a publish token is.
+
+It is one button in SETTINGS now, next to the link mode it qualifies:
+**WHO CAN OPEN IT - THIS NETWORK ONLY**, and an action that claims a room. No
+address to type: the app carries the default. What comes back is written into
+the same `relayUrl` and `publisherToken` the ADVANCED panel shows, so there is
+one source of truth and not two, and `applyConfig` restarts the relay and
+brings the uplink up exactly as a hand-typed token would have.
+
+**Verified in a browser, not only in the suite.** Pressing it flips the status
+to ANYONE WITH THE LINK, hides the button, and turns block 04 OUTPUT from an
+amber RELAY NOT SET - LAN ONLY into RELAY OK - 38 MS. The failure path was
+driven too: an unreachable relay puts the reason in amber beside the button,
+leaves the status alone and leaves the button pressable.
+
+**Guards - fifteen across three files, and every one watched to fail.** The
+claim itself is nine, run against a real HTTP server speaking the shape the
+deployed Worker speaks: a relay that is down, one that rate-limits, one that
+answers HTML with a 200, one that returns a blank token, and an address that is
+not a relay at all. Each was proved by breaking the implementation in exactly
+that one way and watching only its own test go red.
+
+The renderer's six were proved the same way, and one of them needed it. The
+first - *says plainly that the link is local-only* - passed before the code
+existed, because THIS NETWORK ONLY is also what the markup says when nothing
+has rendered. `renderReach` was not being called at boot at all. Breaking it to
+claim the opposite is what exposed that: this is the trap at the top of this
+file, and it caught me again, in the same shape, on a test I had written
+myself.
+
+**Not fixed here, and it is now the limiting thing:** the viewer page deployed
+at `relay.supr.systems` is 18,272 bytes against 22,010 in the tree, and carries
+none of the recent viewer fixes - it went out from a dirty working tree. A
+phone reaching that room gets the old page however good the app gets. It needs
+a `wrangler deploy` from a clean tree, which is the user's call to make.

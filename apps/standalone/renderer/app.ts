@@ -1109,6 +1109,59 @@ function captionSettingsUrl(): string | undefined {
   return url + (url.includes("?") ? "&" : "?") + "settings=1";
 }
 
+/**
+ * Who can open the viewer link, said in those words rather than in relay terms.
+ *
+ * A room on the hosted relay is the only thing separating "my friend can read
+ * this on their phone" from "only people on my wifi can". That used to be a
+ * curl command in a README and two tokens pasted into ADVANCED, which is to say
+ * it was out of reach for everyone the feature is actually for.
+ */
+function renderReach(): void {
+  const set = !!config.relayUrl && !!config.publisherToken;
+  const el = $("reachStatus");
+  el.className = "field-status";
+  el.textContent = set ? "ANYONE WITH THE LINK" : "THIS NETWORK ONLY";
+  if (!set) el.classList.add("warn");
+  // the hint has to move with the status or it contradicts it: leaving "your
+  // link only opens on your own network" up after a room is claimed tells the
+  // user the thing they just did did not work
+  $("reachHint").textContent = set
+    ? "Anyone you send the link to can open it, on any network. That link is the only thing protecting what is said, so treat it like a password - and it is worth knowing that whoever holds it keeps working until you press NEW."
+    : "Your link only opens on your own network. Getting an address lets someone read your captions from a phone anywhere - a friend who is deaf or hard of hearing, or anyone not in the room. Nothing is transcribed or stored there; it passes the captions on to whoever has the link and nothing else.";
+  // nothing to offer once a room is set up: claiming a second would orphan the
+  // first and quietly invalidate a link that may already have been sent
+  $("claimRoom").hidden = set;
+}
+
+async function claimRoom(): Promise<void> {
+  const btn = $("claimRoom") as HTMLButtonElement;
+  const note = $("claimNote");
+  btn.disabled = true;
+  note.className = "field-status dim";
+  note.textContent = "ASKING FOR A ROOM...";
+  try {
+    const res = await cr.claimRelayRoom();
+    if (!res.ok) {
+      note.className = "field-status warn";
+      note.textContent = res.message || "could not get a room";
+      log(`relay room: ${res.message || "failed"}`, "err");
+      return;
+    }
+    // read it back rather than assuming: the main process stored it through
+    // applyConfig, which is also what restarts the relay and starts the uplink
+    config = await cr.getConfig();
+    note.className = "field-status ok";
+    note.textContent = "READY";
+    log("your link now works outside this network", "ok");
+    renderSettings();
+    renderChain();
+    renderFooter();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderSettings(): void {
   inp("deepgramApiKey").value = config.deepgramApiKey || "";
   inp("geminiApiKey").value = config.geminiApiKey || "";
@@ -1318,6 +1371,7 @@ function renderKeyStatuses(): void {
   // flagging a key they do not need and never will
   fieldStatus("dgStatus", inp("deepgramApiKey").value.trim(), verdictFor("deepgram", inp("deepgramApiKey").value.trim()), !sttIsLocal());
   fieldStatus("gmStatus", inp("geminiApiKey").value.trim(), verdictFor("gemini", inp("geminiApiKey").value.trim()), false);
+  renderReach();
   const relay = inp("relayUrl").value.trim();
   const rs = $("relayStatus");
   rs.className = "field-status";
@@ -2149,6 +2203,8 @@ function bind(): void {
   $("installUpdate").onclick = () => void cr.installUpdate();
   $("openReleases").onclick = () => void cr.openExternal(update?.releaseUrl || "https://github.com/imbafls/relay_translator/releases/latest");
   $("autoUpdate").onclick = () => void saveAndApply({ autoUpdate: config.autoUpdate === false });
+  $("claimRoom").onclick = () => void claimRoom();
+
   $("updateChip").onclick = () => {
     if (update?.state === "ready") void cr.installUpdate();
     else setView("settings");
@@ -2260,6 +2316,9 @@ async function boot(): Promise<void> {
   if (!isLocalStt(config.stt)) lastCloudStt = config.stt;
   bind();
   syncControlsFromConfig();
+  // who can open the link is a fact about the install, not about whether the
+  // settings panel happens to be open, and it is read out on the stage too
+  renderReach();
   setInterval(tickClock, 1000);
   setInterval(renderMeter, 100);
   tickClock();

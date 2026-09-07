@@ -91,6 +91,14 @@
           <p class="hint">New each session kills the old link every time you start. Fixed keeps one link alive, which is what an OBS browser source needs.</p>
         </div>
         <div class="field">
+          <div class="field-label">WHO CAN OPEN IT<span id="reachStatus" class="field-status warn">THIS NETWORK ONLY</span></div>
+          <p id="reachHint" class="hint">Your link only opens on your own network. Getting an address lets someone read your captions from a phone anywhere &mdash; a friend who is deaf or hard of hearing, or anyone not in the room. Nothing is transcribed or stored there; it passes the captions on to whoever has the link and nothing else.</p>
+          <div class="field-row">
+            <button id="claimRoom" class="mono-btn">GET AN ADDRESS THAT WORKS ANYWHERE &rarr;</button>
+            <span id="claimNote" class="field-status dim"></span>
+          </div>
+        </div>
+        <div class="field">
           <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
           <div class="field-row update-row">
             <span id="updateState" class="mono update-state">—</span>

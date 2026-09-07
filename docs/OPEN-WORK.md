@@ -177,6 +177,16 @@ fix — read the numbered section there before starting.
 
 ### Found while fixing the above, not in the audit
 
+- **The viewer page deployed on the hosted relay is stale.** `/watch/app.js`
+  serves 18,272 bytes; `packages/viewer/public/app.js` in a clean tree is
+  22,010, and the deployed copy matches no committed version - it went out from
+  a dirty working tree. It carries none of `0585354` (a dead link says so
+  instead of retrying for ever), `ce74eaf`, `3e23561` or `4ec491c` (the session
+  clock). A phone on a hosted room gets that page however current the app is.
+  One `wrangler deploy` from a clean tree fixes it; nothing in
+  `apps/hosted-relay/src` has changed, so `verify-deploy.cjs` and
+  `verify-isolation.cjs` should both still pass afterwards.
+
 - **`packages/viewer/public/app.js` still decimates if it is ever fed a rate
   above 16 kHz.** Finding 23 stopped the app *asking* it to resample; the
   worklet has no filter of its own. Only matters if something else starts

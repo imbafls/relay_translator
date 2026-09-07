@@ -15,3 +15,4 @@ export { startControlServer } from "./controlServer";
 export type { ControlHandle, ControlHandlers } from "./controlServer";
 export { ControlClient } from "./controlClient";
 export { UplinkClient } from "./uplinkClient";
+export { claimHostedRoom } from "./hostedRoom";
