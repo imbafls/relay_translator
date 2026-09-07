@@ -28,6 +28,25 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.9",
+    date: "2026-09-07",
+    headline: "Warnings before the mistake, not after it",
+    changes: [
+      {
+        kind: "added",
+        text: "04 OUTPUT now tells you that a link on your own network holds ONE DEVICE AT A TIME, before someone finds out by being disconnected. It also stopped saying RELAY NOT SET, which meant nothing to anyone: it says THIS NETWORK ONLY, the same words as the panel that fixes it.",
+      },
+      {
+        kind: "changed",
+        text: "NEW asks before it replaces your link, if anybody is reading. It sits between COPY and OPEN and it disconnects everyone, and it used to do that on one press with no warning. Press it once and it reads SURE? for five seconds, and the log says how many people are on the link. With nobody reading it still goes on the first press, because there is nothing to lose.",
+      },
+      {
+        kind: "fixed",
+        text: "A key you unhid with SHOW does not stay unhidden. Nothing ever put those fields back, so a key revealed to check a paste was still in plain text an hour later when SETTINGS was opened for something else - on screen, in front of whoever was watching. Every key and token now hides itself again when you leave the panel, and after twenty seconds.",
+      },
+    ],
+  },
+  {
     version: "0.5.8",
     date: "2026-09-07",
     headline: "The phone page stops guessing why it lost the link",
