@@ -14,7 +14,70 @@ import unbzip2 from "unbzip2-stream";
 import { LOCAL_VAD, LocalModelStatus, STT_MODELS, SttModelInfo, modelDiskBytes } from "@callout-relay/shared";
 import { localModelReady } from "@callout-relay/relay";
 
+/**
+ * Windows says these when something else still has the file open. A scanner
+ * working through a freshly written model is the ordinary cause; none of them
+ * mean the operation was wrong, only that it was early.
+ */
+const LOCKED = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]);
+
+/**
+ * Remove a folder, waiting out the same locks a publish waits out.
+ *
+ * Node's own `maxRetries` backs off 100 ms a go, so the default three retries
+ * give it about 300 ms - the same order of budget that was too short upstairs.
+ * This is what left an EMPTY `.part` behind after a failed publish: Windows
+ * deleted the files and then could not remove a directory whose handles were
+ * still held, so the folder stayed and the model looked half-installed.
+ */
+function rmDir(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 400 });
+}
+
+/**
+ * Retry a publish while the filesystem says the files are still held.
+ *
+ * A model is published by renaming its staging folder into place, and on
+ * Windows a directory cannot be renamed while ANY file inside it is open by
+ * another process. Defender holds freshly written files while it scans them,
+ * and a model is hundreds of megabytes of ONNX.
+ *
+ * This used to be four attempts at 150/300/450 ms - 900 ms in total. Enough for
+ * a small model, and nowhere near enough for a large one: the two models a user
+ * could not install were the two largest in the catalogue, 651 MB and 989 MB,
+ * while the ones that installed cleanly were 99 MB and 68 MB.
+ *
+ * Half a minute instead, backing off. An error that waiting cannot fix - a full
+ * disk, a missing path - is raised on the first attempt rather than buried
+ * under thirty seconds of pointless retrying.
+ */
+export async function publishRetry(
+  rename: () => void,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<void> {
+  const waits = [200, 400, 800, 1200, 1600, 2000, 3000, 4000, 5000, 6000, 8000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rename();
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (!code || !LOCKED.has(code)) throw err;
+      if (attempt >= waits.length) {
+        throw new Error(
+          `the model downloaded but could not be put in place - its files are still open ` +
+            `${Math.round(waits.reduce((a, b) => a + b, 0) / 1000)}s after unpacking. ` +
+            `An antivirus scanner reading a large model is the usual cause; try again, ` +
+            `or exclude the models folder from real-time scanning (${code})`,
+        );
+      }
+      await sleep(waits[attempt]);
+    }
+  }
+}
+
 /** free bytes on the volume holding `dir`, or -1 if the platform will not say */
+
 function defaultFreeBytes(dir: string): number {
   try {
     const st = fs.statfsSync(dir);
@@ -167,7 +230,7 @@ export class ModelStore {
       if (unpacked) stale.push(path.join(this.dir, id));
       for (const folder of stale) {
         try {
-          fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+          rmDir(folder);
         } catch (rmErr) {
           this.log("warn", `could not clean up ${folder}: ${String((rmErr as Error).message || rmErr)}`);
         }
@@ -195,7 +258,7 @@ export class ModelStore {
     const folder = path.join(this.dir, info.id);
     const staging = `${folder}.part`;
     // a staging folder left by an earlier crash or cancel is never resumable
-    fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3 });
+    rmDir(staging);
     fs.mkdirSync(staging, { recursive: true });
     this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB)`);
 
@@ -294,16 +357,8 @@ export class ModelStore {
     // only now may the model be seen: one rename, after every file is whole.
     // Windows hands out EPERM/EBUSY when a scanner is still holding a new file,
     // so the publish gets the same few retries the removals get.
-    fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
-    for (let attempt = 0; ; attempt++) {
-      try {
-        fs.renameSync(staging, folder);
-        break;
-      } catch (err) {
-        if (attempt === 3) throw err;
-        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
-      }
-    }
+    rmDir(folder);
+    await publishRetry(() => fs.renameSync(staging, folder));
   }
 
   cancel(id: string): void {

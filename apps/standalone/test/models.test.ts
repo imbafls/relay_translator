@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SttModelInfo } from "@callout-relay/shared";
-import { ModelStore } from "../src/models";
+import { ModelStore, publishRetry } from "../src/models";
 
 /**
  * The real ModelStore runs here: its download plan, the staging folder, the
@@ -379,5 +379,94 @@ describe("two models that need the same shared file", () => {
     await Promise.all([s.download("model-a"), s.download("model-b")]);
 
     expect(hits.get(VAD_URL), "the second model never tried for itself").toBeGreaterThan(1);
+  });
+});
+
+/**
+ * A model is published by renaming its staging folder into place. On Windows a
+ * directory cannot be renamed while ANY file inside it is still open by another
+ * process - and Defender holds freshly written files while it scans them.
+ *
+ * The retry budget for that was four attempts, 150/300/450 ms: **900 ms in
+ * total**. That is enough for a small model and nowhere near enough for a
+ * large one. The evidence lines up exactly: `local-whisper-tiny-en` (99 MB on
+ * disk) and `local-zipformer-en` (68 MB) install cleanly on this machine, while
+ * `local-nemotron-streaming` (651 MB) and `local-whisper-turbo` (989 MB) are
+ * the two the user cannot install - and Defender real-time scanning is on.
+ *
+ * It also explains the wreckage. When the publish throws, the catch removes the
+ * staging folder; Windows deletes the files but cannot remove a directory whose
+ * handles are still held, which leaves exactly what was found in the models
+ * directory: an EMPTY `.part`. The warning that says so went to a stdout a
+ * packaged app does not have.
+ *
+ * Not reproduced - a real EPERM needs a real scanner holding a real gigabyte.
+ * What is tested is the budget, because a 900 ms wait for a scanner working
+ * through a gigabyte is wrong whatever finally turns out to be holding it.
+ */
+describe("publishing a model past a scanner holding its files", () => {
+  const eperm = (): NodeJS.ErrnoException => {
+    const e = new Error("EPERM: operation not permitted, rename") as NodeJS.ErrnoException;
+    e.code = "EPERM";
+    return e;
+  };
+
+  /** every wait the helper asked for, without spending it */
+  const spyClock = (): { sleep: (ms: number) => Promise<void>; waits: number[] } => {
+    const waits: number[] = [];
+    return { waits, sleep: async (ms) => void waits.push(ms) };
+  };
+
+  it("keeps trying long enough for a scanner to finish with a large model", async () => {
+    const clock = spyClock();
+    let calls = 0;
+    await publishRetry(
+      () => {
+        calls += 1;
+        if (calls < 9) throw eperm();
+      },
+      clock.sleep,
+    );
+
+    expect(calls, "gave up before the file was released").toBe(9);
+    const budget = clock.waits.reduce((a, b) => a + b, 0);
+    expect(budget, "the whole budget is under ten seconds, which a gigabyte scan outlasts").toBeGreaterThan(10_000);
+  });
+
+  it("returns as soon as it works, without spending the budget", async () => {
+    const clock = spyClock();
+    let calls = 0;
+    await publishRetry(() => {
+      calls += 1;
+    }, clock.sleep);
+
+    expect(calls).toBe(1);
+    expect(clock.waits, "waited even though the first attempt worked").toEqual([]);
+  });
+
+  it("gives up on an error that waiting cannot fix", async () => {
+    // a full disk is not a lock; retrying it for half a minute wastes the
+    // user's time and buries the real reason
+    const clock = spyClock();
+    const enospc = new Error("ENOSPC: no space left on device") as NodeJS.ErrnoException;
+    enospc.code = "ENOSPC";
+    let calls = 0;
+
+    await expect(
+      publishRetry(() => {
+        calls += 1;
+        throw enospc;
+      }, clock.sleep),
+    ).rejects.toThrow(/ENOSPC/);
+    expect(calls, "retried something retrying cannot fix").toBe(1);
+  });
+
+  it("says what is probably holding the files when it finally gives up", async () => {
+    const clock = spyClock();
+    await expect(
+      publishRetry(() => {
+        throw eperm();
+      }, clock.sleep),
+    ).rejects.toThrow(/still open|scanner|antivirus/i);
   });
 });
