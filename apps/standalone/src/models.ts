@@ -56,6 +56,15 @@ export class ModelStore {
     });
   }
 
+  /**
+   * In-flight file fetches, keyed by DESTINATION PATH rather than model id.
+   * The `active` map below is per model, which is the right shape for a
+   * download but the wrong one for the files inside it: two different models
+   * legitimately want the same shared VAD, and only this stops them opening two
+   * truncating streams on the same path.
+   */
+  private fetching = new Map<string, Promise<void>>();
+
   async download(id: string): Promise<void> {
     const info = this.catalogue.find((m) => m.id === id);
     if (!info || info.provider !== "local" || !info.files) throw new Error(`unknown local model ${id}`);
@@ -108,15 +117,40 @@ export class ModelStore {
           doneBytes += file.size;
           continue;
         }
+        // Another model may already be fetching this exact file - every offline
+        // model pulls the same shared VAD, and each row has its own DOWNLOAD
+        // button. Two truncating streams on one .part is not merely wasteful:
+        // the loser's descriptor was opened BEFORE the winner's rename, so it
+        // follows the inode and writes a hole into the PUBLISHED file that
+        // every offline model then depends on.
+        const shared = this.fetching.get(dest);
+        if (shared) {
+          this.log("info", `model download: ${target.id}/${file.name} is already being fetched, waiting`);
+          await shared.catch(() => undefined);
+          if (fs.existsSync(dest) && fs.statSync(dest).size === file.size) {
+            doneBytes += file.size;
+            continue;
+          }
+          // it failed or was cancelled under us; this model still wants the
+          // file, so fall through and fetch it ourselves
+        }
         const part = `${dest}.part`;
         this.log("info", `model download: ${target.id}/${file.name} (${Math.round(file.size / 1e6)} MB)`);
-        const res = await fetch(file.url, { signal: controller.signal, redirect: "follow" });
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${file.name}`);
-        const out = fs.createWriteStream(part);
-        const body = Readable.fromWeb(res.body as never);
-        body.on("data", tick);
-        await pipeline(body, out);
-        fs.renameSync(part, dest);
+        const fetching = (async () => {
+          const res = await fetch(file.url, { signal: controller.signal, redirect: "follow" });
+          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${file.name}`);
+          const out = fs.createWriteStream(part);
+          const body = Readable.fromWeb(res.body as never);
+          body.on("data", tick);
+          await pipeline(body, out);
+          fs.renameSync(part, dest);
+        })();
+        this.fetching.set(dest, fetching);
+        try {
+          await fetching;
+        } finally {
+          this.fetching.delete(dest);
+        }
       }
       if (info.archive && !this.isReady(id)) {
         unpacked = true;

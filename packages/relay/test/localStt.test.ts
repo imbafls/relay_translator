@@ -47,10 +47,17 @@ function stageModel(modelsDir: string, id: string, opts: { vad?: boolean } = {})
   if (opts.vad) stageVad(modelsDir);
 }
 
-function stageVad(modelsDir: string): void {
+/**
+ * Written at its real size, not as a 4-byte stub. The VAD is a fixed released
+ * artifact and the catalogue carries its exact size; a truncated or holed one
+ * is the shape audit finding 25 produced, and readiness has to reject it.
+ */
+function stageVad(modelsDir: string, opts: { truncated?: boolean } = {}): void {
   const dir = path.join(modelsDir, LOCAL_VAD.id);
   fs.mkdirSync(dir, { recursive: true });
-  for (const f of LOCAL_VAD.files!) fs.writeFileSync(path.join(dir, f.name), "stub");
+  for (const f of LOCAL_VAD.files!) {
+    fs.writeFileSync(path.join(dir, f.name), Buffer.alloc(opts.truncated ? f.size - 1024 : f.size, 7));
+  }
 }
 
 /**
@@ -103,6 +110,32 @@ describe("localModelReady", () => {
     expect(localModelReady(models, "local-sense-voice")).toBe(false);
     stageVad(models);
     expect(localModelReady(models, "local-sense-voice")).toBe(true);
+  });
+
+  /**
+   * Audit finding 25's lasting damage. Two models downloading at once opened
+   * two truncating streams on the same `silero_vad.onnx.part`, and the loser's
+   * descriptor followed the inode through the winner's rename - writing into
+   * the PUBLISHED file. Readiness checked existence only, so a holed VAD was
+   * accepted for ever, and `remove()` deliberately never deletes it because it
+   * is shared. The only way out was to find the file by hand.
+   *
+   * The collision is fixed at the source now; this is the second lock, so a
+   * VAD damaged any other way is re-fetched rather than trusted.
+   */
+  it("rejects a VAD that is not the size it should be", () => {
+    const models = tmp();
+    stageModel(models, "local-sense-voice");
+    stageVad(models, { truncated: true });
+
+    expect(localVadReady(models), "a truncated VAD was accepted as ready").toBe(false);
+    expect(localModelReady(models, "local-sense-voice")).toBe(false);
+  });
+
+  it("still accepts one that is exactly right", () => {
+    const models = tmp();
+    stageVad(models);
+    expect(localVadReady(models)).toBe(true);
   });
 });
 

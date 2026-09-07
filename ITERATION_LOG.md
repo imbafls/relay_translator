@@ -2322,3 +2322,50 @@ It also pins the half that is easy to get wrong while fixing the first: whatever
 is returned to the renderer has to be read **after** the rotate, or the app
 hands back a token it has just retired. Watched fail on
 `expected 244 to be less than 165`.
+
+### Turn 65 - Resilience & state (audit finding 25: two downloads, one file)
+
+The in-flight guard is `if (this.active.has(id)) return;` - per **model** id -
+but every `kind: "offline"` model pushes the same shared silero VAD into its
+plan, writing to the same `local-vad-silero/silero_vad.onnx.part`. Every row has
+its own DOWNLOAD button and the IPC handler is fire-and-forget, so two clicks
+inside the second the VAD takes is all it needs.
+
+Both open a **truncating** stream on that one path. The winner renames it, the
+loser's `renameSync` hits ENOENT, that becomes the model's error and the row
+reads FAILED - and because the throw lands before the archive fetch, that model
+downloads nothing at all.
+
+The part that makes it more than untidy: the loser's descriptor was opened
+**before** the rename, so it follows the inode into the published VAD and writes
+a hole inside the file every offline model depends on.
+
+**Two locks, because one was not enough.**
+
+`fetching`, keyed by **destination path** rather than model id, so a second
+model waits for a file already being fetched instead of opening a second stream
+on it. If that shared fetch fails or is cancelled, the follower falls through
+and tries once itself - it still wants the file, and inheriting someone else's
+cancellation would be a new bug in place of the old one.
+
+And `localVadReady` checks the **size**, not just existence. That is what let a
+holed VAD be accepted for ever: `remove()` deliberately never deletes the VAD
+because it is shared, so the only way out was finding the file by hand. The
+collision is fixed at the source; this is the second lock, for a VAD damaged any
+other way.
+
+**Guards - six, two watched fail against their own reverts** (the single flight
+removed: `expected 2 to be 1`; the size check back to existence). The rest are
+the invariants: both models finish, the published file is whole with no `.part`
+left behind, a failed shared fetch does not poison the follower, and a
+correctly-sized VAD is still accepted.
+
+**A test asserting the wrong thing, caught.** The first version checked
+`status().downloaded` for both models - which goes through `localModelReady`,
+which looks the id up in the **real catalogue**. These two models are invented,
+so it could never be true and the test failed for a reason that had nothing to
+do with the fix. It asserts what is on disk now.
+
+`stageVad` also had to start writing a real 644 KB file instead of a 4-byte
+stub, or the new size check would have failed every existing test - which is the
+honest cost of checking something the helpers were only pretending to produce.

@@ -30,8 +30,30 @@ export function localModelReady(modelsDir: string, id: string): boolean {
   return true;
 }
 
+/**
+ * The shared voice detector, present AND the size it should be.
+ *
+ * Existence alone was not enough. Two models downloading at once used to open
+ * two truncating streams on the same `.part`, and the loser's descriptor
+ * followed the inode through the winner's rename - writing a hole into the
+ * published file. This check accepted that for ever, and `remove()` never
+ * deletes the VAD because it is shared, so the only way out was finding the
+ * file by hand.
+ *
+ * The collision itself is fixed in `apps/standalone/src/models.ts`; this is the
+ * second lock, so a VAD damaged any other way is re-fetched rather than
+ * trusted. The catalogue carries the exact size of a fixed released artifact,
+ * so the two move together.
+ */
 export function localVadReady(modelsDir: string): boolean {
-  return LOCAL_VAD.files!.every((f) => fs.existsSync(path.join(modelsDir, LOCAL_VAD.id, f.name)));
+  return LOCAL_VAD.files!.every((f) => {
+    const at = path.join(modelsDir, LOCAL_VAD.id, f.name);
+    try {
+      return fs.statSync(at).size === f.size;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** the default worker location for a plain (non-bundled) relay build */

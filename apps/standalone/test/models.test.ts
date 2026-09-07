@@ -275,3 +275,109 @@ describe("an archive that does not hold what the catalogue promised", () => {
     expect(fs.existsSync(`${modelDir()}.part`)).toBe(false);
   });
 });
+
+describe("two models that need the same shared file", () => {
+  /**
+   * Audit finding 25. The in-flight guard is `if (this.active.has(id)) return;`
+   * - per MODEL id - but every `kind: "offline"` model pushes the same shared
+   * silero VAD into its plan, writing to the same
+   * `local-vad-silero/silero_vad.onnx.part`. Every row has its own DOWNLOAD
+   * button and the IPC handler is fire-and-forget, so two clicks inside the
+   * second the VAD takes is all it needs.
+   *
+   * Both open a truncating write stream on that one path. The winner renames
+   * it; the loser's renameSync hits ENOENT, that becomes the model's error and
+   * the row shows FAILED - and because the throw lands before the archive
+   * fetch, that model downloads nothing at all.
+   *
+   * Worse, and the reason this is not merely untidy: the loser's stream was
+   * opened BEFORE the rename, so its file descriptor follows the inode into the
+   * published VAD. Writing on after the rename puts a hole inside the file every
+   * offline model depends on - which localVadReady's existence-only check then
+   * accepts for ever, and which remove() deliberately never deletes.
+   */
+  const VAD_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
+  const VAD_SIZE = 643854;
+
+  /** an offline model, so its plan also pulls the shared VAD */
+  const offline = (id: string): SttModelInfo =>
+    model({ id, kind: "offline", engine: "whisper", archive: { url: ARCHIVE_URL, size: FIXTURE.length, pick: { "encoder.onnx": "src-encoder.onnx", "tokens.txt": "src-tokens.txt" } } });
+
+  /** counts hits per URL and answers the VAD slowly enough for a second click */
+  function serveShared(opts: { vadDelayMs?: number; failVad?: boolean } = {}): { hits: Map<string, number> } {
+    const hits = new Map<string, number>();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      hits.set(url, (hits.get(url) ?? 0) + 1);
+      if (url === VAD_URL) {
+        if (opts.failVad) return new Response("nope", { status: 500 });
+        const body = Buffer.alloc(VAD_SIZE, 7);
+        const stream = new ReadableStream({
+          async start(c) {
+            c.enqueue(new Uint8Array(body.subarray(0, 1024)));
+            await new Promise((r) => setTimeout(r, opts.vadDelayMs ?? 60));
+            c.enqueue(new Uint8Array(body.subarray(1024)));
+            c.close();
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "content-length": String(VAD_SIZE) } });
+      }
+      const stream = new ReadableStream({
+        start(c) {
+          c.enqueue(new Uint8Array(FIXTURE));
+          c.close();
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "content-length": String(FIXTURE.length) } });
+    }) as typeof fetch;
+    return { hits };
+  }
+
+  const twoStore = (): ModelStore =>
+    new ModelStore(dir, () => {}, (level, message) => logs.push({ level, message }), [offline("model-a"), offline("model-b")], () => 10e9);
+
+  const vadFile = (): string => path.join(dir, "local-vad-silero", "silero_vad.onnx");
+
+  it("fetches the shared file once, not twice", async () => {
+    const { hits } = serveShared();
+    const s = twoStore();
+    await Promise.all([s.download("model-a"), s.download("model-b")]);
+
+    expect(hits.get(VAD_URL), "both downloads fetched the shared VAD").toBe(1);
+  });
+
+  it("lets both models finish, instead of one failing on a file the other took", async () => {
+    serveShared();
+    const s = twoStore();
+    await Promise.all([s.download("model-a"), s.download("model-b")]);
+
+    expect(logs.filter((l) => l.level === "error").map((l) => l.message)).toEqual([]);
+    // status().downloaded goes through localModelReady, which looks the id up
+    // in the real catalogue - these two are invented, so it can never be true.
+    // What actually matters is on disk.
+    for (const id of ["model-a", "model-b"]) {
+      expect(fs.existsSync(path.join(dir, id, "encoder.onnx")), `${id} did not unpack`).toBe(true);
+    }
+  });
+
+  it("leaves the shared file whole, with no hole written into it after the rename", async () => {
+    serveShared();
+    const s = twoStore();
+    await Promise.all([s.download("model-a"), s.download("model-b")]);
+
+    const written = fs.readFileSync(vadFile());
+    expect(written.length, "the published VAD is the wrong size").toBe(VAD_SIZE);
+    expect(written.every((b) => b === 7), "something wrote a hole into the published VAD").toBe(true);
+    expect(fs.existsSync(`${vadFile()}.part`), "a .part was left behind").toBe(false);
+  });
+
+  it("does not leave a failed shared fetch poisoning the next model", async () => {
+    // the follower must not inherit the leader's failure and give up: it has
+    // its own reason to want the file
+    const { hits } = serveShared({ failVad: true });
+    const s = twoStore();
+    await Promise.all([s.download("model-a"), s.download("model-b")]);
+
+    expect(hits.get(VAD_URL), "the second model never tried for itself").toBeGreaterThan(1);
+  });
+});
