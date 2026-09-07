@@ -166,7 +166,15 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
         if (received > 0 && res.status !== 206) skip = received;
 
         for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-          let buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+          // A COPY, and it has to stay one. Buffer.from(chunk.buffer, off, len)
+          // is a view over memory undici owns and reuses for the next socket
+          // read, and this stream is demand-driven: chunks sit queued here and
+          // in the decoder's input while the socket keeps going, so an aliasing
+          // view gets rewritten underneath them. It surfaced as "Error in
+          // bzip2: crc32 do not match" part-way through a large archive that
+          // was never corrupt on the server - the old Readable.fromWeb copied,
+          // and hand-rolling this loop for Range support lost that quietly.
+          let buf = Buffer.from(chunk);
           if (skip > 0) {
             if (buf.length <= skip) {
               skip -= buf.length;

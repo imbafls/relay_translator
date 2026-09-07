@@ -552,6 +552,51 @@ describe("a download that survives the connection dropping", () => {
     return Buffer.concat(parts);
   };
 
+  it("copies each chunk out of memory the fetch implementation may reuse", async () => {
+    /**
+     * undici hands back Uint8Arrays that are views over buffers it is free to
+     * reuse for the next socket read. The archive pipeline is demand-driven, so
+     * chunks sit queued in this stream and in the decoder's input while the
+     * socket keeps going - and a view that ALIASES that memory is rewritten
+     * underneath them.
+     *
+     * It surfaces a long way from here, as "Error in bzip2: crc32 do not match"
+     * on an archive that was never corrupt on the server, part-way through a
+     * download big enough for the reuse to catch up with the queue. Small models
+     * finish first and look fine.
+     *
+     * The stand-in reuses ONE buffer for every chunk, which is the worst case a
+     * pooling implementation can present and is exactly what the real bug is.
+     */
+    const payload = Buffer.alloc(64 * 1024);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i % 251;
+
+    const SIZE = 4096;
+    const pool = new ArrayBuffer(SIZE);
+    const scratch = new Uint8Array(pool);
+    const fetchImpl = (async () => ({
+      ok: true,
+      status: 200,
+      body: (async function* () {
+        for (let off = 0; off < payload.length; off += SIZE) {
+          const part = payload.subarray(off, off + SIZE);
+          scratch.set(part);
+          yield new Uint8Array(pool, 0, part.length);
+        }
+      })(),
+    })) as unknown as typeof fetch;
+
+    const got = await drain(
+      resumableBody("http://example.invalid/pooled", {
+        signal: new AbortController().signal,
+        fetchImpl,
+      }),
+    );
+
+    expect(got.length, "the wrong number of bytes came out").toBe(payload.length);
+    expect(got.equals(payload), "chunks aliased memory the caller went on to reuse").toBe(true);
+  });
+
   it("delivers the whole file even though the socket died mid-way", async () => {
     const payload = Buffer.alloc(400_000, 7);
     for (let i = 0; i < payload.length; i += 1) payload[i] = i % 251;
