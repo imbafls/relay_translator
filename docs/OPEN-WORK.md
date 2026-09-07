@@ -182,12 +182,10 @@ fix — read the numbered section there before starting.
   fixes; a `wrangler deploy` from a clean tree uploaded exactly one asset,
   `/app.js`, and the deployed copy is now byte-identical to the tree by sha256.
   `verify-deploy.cjs` 14/14 and `verify-isolation.cjs` 9/9 afterwards.
-- **A kicked viewer is told the wrong reason.** `server.ts` sends
-  `{type:"kicked", reason}` and for the LAN single-viewer limit that reason is
-  `another device opened this link`, but `packages/viewer/public/app.js`
-  discards `msg.reason` and always shows "The session was stopped, or a new link
-  was made." The most confusing thing about a LAN setup - two people being
-  disconnected in turn - is reported as two causes that are both false.
+- ~~**A kicked viewer is told the wrong reason.**~~ Fixed 2026-09-07. The
+  reason now reaches the panel: another device reads as such and says TRY AGAIN
+  takes it back, a rotated link says a new one was made, and no reason at all
+  falls back without inventing a cause.
 - **Nothing warns about the one-viewer limit before it bites.** While the reach
   reads `THIS NETWORK ONLY` there is no chip anywhere saying only one device can
   watch at a time; it is discovered by two people kicking each other.

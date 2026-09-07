@@ -3011,3 +3011,37 @@ one-viewer limit that reason is `another device opened this link` - and the
 viewer discards `msg.reason` and always prints "The session was stopped, or a
 new link was made." So the most confusing thing about a LAN setup is reported
 as two causes that are both false. Written into `docs/OPEN-WORK.md`.
+
+### Turn 84 - Telling a viewer the true reason they were disconnected
+
+The relay has always said WHY it kicked a viewer - `{type:"kicked", reason}` -
+and the page threw the reason away and printed one hardcoded sentence: *The
+session was stopped, or a new link was made.*
+
+For the reason that happens most, that is false twice over. The app's own relay
+allows exactly one viewer per link, so a second phone - or a phone and an OBS
+overlay - kick each other with `another device opened this link`. Nothing was
+stopped and no new link was made. The person reading was sent to go and ask for
+a link they were already holding, and the one fact that would have helped them
+was the one thrown away.
+
+The distinction earns its keep because the ACTION differs. Another device took
+it: TRY AGAIN works and takes it back. Link rotated: TRY AGAIN cannot help and
+they need a new link. One panel was telling both of them the same wrong thing.
+
+The label above the title moved too. Leaving `THIS LINK HAS ENDED` over
+*Someone else opened this link* prints a contradiction - the link has not ended,
+somebody else is on it - so that case now reads `SOMEONE ELSE IS READING`.
+
+**Verified against a real relay in a real browser**, both paths, not just in the
+suite: two tabs on one link, the first kicked and reading *Someone else opened
+this link*; then `POST /admin/rotate-viewer-token` on the live relay, and the
+same page reading *A new link was made*. The mock relay had to be restarted
+first - a process started before the rebuild serves the old page, which is the
+fourth time that has caught something in this run.
+
+**Guards - four, three watched fail** (the stopped-session claim, the missing
+hint that trying again works, and the label contradicting the title). The
+fourth is the one that keeps the fix honest: given no reason at all - which is
+what the hosted relay does, closing with a code and no frame - the panel must
+still say something, and must not invent a specific cause.

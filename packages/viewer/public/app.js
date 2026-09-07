@@ -430,11 +430,53 @@
    * applied to relayClient and uplinkClient.
    */
   /** the panel a viewer gets when the link is finished, however it finished */
-  function showEnded() {
+  /**
+   * What the panel says, given the reason the relay sent with the kick.
+   *
+   * The reason used to be thrown away and one sentence printed for every case:
+   * "The session was stopped, or a new link was made." For the reason that
+   * happens most that is false twice over - the app's own relay allows exactly
+   * one viewer per link, so a second phone, or a phone and an OBS overlay, kick
+   * each other with "another device opened this link". Nothing was stopped and
+   * no new link was made, and the reader was sent to ask for a link they were
+   * already holding.
+   *
+   * The distinction is worth drawing because the ACTION differs. Another device
+   * took it: trying again works, and takes it back. Link rotated: trying again
+   * cannot help and they need a new one.
+   */
+  function endedWords(reason) {
+    if (/another device/i.test(reason || "")) {
+      return {
+        // not "THIS LINK HAS ENDED" - it has not, someone else is using it,
+        // and printing that above "someone else opened this link" contradicts
+        // the sentence under it
+        label: "SOMEONE ELSE IS READING",
+        title: "Someone else opened this link.",
+        text: "Only one device at a time can read a link on this network. TRY AGAIN takes it back - and disconnects them.",
+      };
+    }
+    if (/rotat/i.test(reason || "")) {
+      return {
+        title: "A new link was made.",
+        text: "This one will not work again. Ask whoever sent it for the current one - your display settings are kept.",
+      };
+    }
+    return {
+      title: "The session was stopped, or a new link was made.",
+      text: "Ask whoever sent it for the current one. Your display settings are kept.",
+    };
+  }
+
+  function showEnded(reason) {
     const d = new Date();
     $("endedAt").textContent = `ENDED ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     const n = rows.size;
     $("savedCount").textContent = `${n} LINE${n === 1 ? "" : "S"} SAVED`;
+    const words = endedWords(reason);
+    $("endedLabel").textContent = words.label || "THIS LINK HAS ENDED";
+    $("endedTitle").textContent = words.title;
+    $("endedText").textContent = words.text;
     showScreen("ended");
   }
 
@@ -500,7 +542,7 @@
           break;
         case "kicked": {
           closedByKick = true;
-          showEnded();
+          showEnded(msg.reason);
           try {
             sock.close();
           } catch {

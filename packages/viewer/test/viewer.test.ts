@@ -605,3 +605,70 @@ describe("the session clock on a viewer whose clock is wrong", () => {
     expect(clock()).toBe("00:00:00");
   });
 });
+
+/**
+ * The relay says WHY it kicked a viewer - `{type:"kicked", reason}` - and the
+ * page threw the reason away and printed one hardcoded sentence: "The session
+ * was stopped, or a new link was made."
+ *
+ * For the reason that actually happens most, that sentence is false twice over.
+ * The app's own relay allows exactly one viewer per link, so a second phone -
+ * or a phone and an OBS overlay - kicks the first with "another device opened
+ * this link". Nothing was stopped and no new link was made. The person reading
+ * is told to go and ask for a link they already have, and the one thing that
+ * would help them - that someone else has it open - is the thing they are not
+ * told. It is the most confusing behaviour in a home setup, reported as two
+ * causes that are both wrong.
+ *
+ * TRY AGAIN differs too, and that is the point of separating them: when another
+ * device took the link, trying again works and takes it back. When the link was
+ * rotated, trying again cannot help and the reader needs a new one.
+ */
+describe("a viewer is told why they were disconnected", () => {
+  const title = (): string => ($("endedTitle") as HTMLElement).textContent || "";
+  const text = (): string => ($("endedText") as HTMLElement).textContent || "";
+  const live = (): void => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+  };
+
+  it("says another device has it, rather than blaming a stopped session", () => {
+    live();
+    push({ type: "kicked", reason: "another device opened this link" });
+
+    expect(title(), "the reader is told the session stopped when it did not").not.toMatch(/session was stopped/i);
+    expect(title() + text(), "nothing on screen mentions the other device").toMatch(/another device|someone else|one device/i);
+    // the label sits directly above the title; leaving it on ENDED prints a
+    // contradiction - the link has not ended, someone else is on it
+    expect(
+      ($("endedLabel") as HTMLElement).textContent,
+      "the panel still says the link has ended, above a line saying it has not",
+    ).not.toMatch(/HAS ENDED/i);
+  });
+
+  it("tells them trying again takes it back, because it does", () => {
+    live();
+    push({ type: "kicked", reason: "another device opened this link" });
+
+    expect(text(), "no hint that TRY AGAIN is the fix for this one").toMatch(/again/i);
+  });
+
+  it("still says a new link was made when that is what happened", () => {
+    live();
+    push({ type: "kicked", reason: "link was rotated" });
+
+    expect(title() + text(), "a rotated link is reported as something else").toMatch(/new link|rotated/i);
+    expect(($("endedLabel") as HTMLElement).textContent, "a rotated link no longer reads as ended").toMatch(/HAS ENDED/i);
+    expect(title(), "a rotated link now blames another device").not.toMatch(/another device/i);
+  });
+
+  it("falls back to something true when it is given no reason at all", () => {
+    // the hosted relay closes with a code and no `kicked` frame, and an older
+    // relay may send none either - the panel still has to say something, and it
+    // must not invent a cause
+    live();
+    push({ type: "kicked" });
+
+    expect(title(), "no reason left the panel blank").toBeTruthy();
+    expect(title(), "a missing reason was reported as a specific one").not.toMatch(/another device/i);
+  });
+});
