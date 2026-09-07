@@ -28,6 +28,25 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.7",
+    date: "2026-09-07",
+    headline: "One button for a link that works outside your network",
+    changes: [
+      {
+        kind: "added",
+        text: "SETTINGS now has WHO CAN OPEN IT. Until you press it, your link only opens on your own network - so a phone on mobile data, or anyone not in the house, cannot read your captions at all. One press gets you a private address and the link works anywhere. Nothing to type, no account, and whoever you send it to just opens it in a browser: no app, no install, nothing to sign into.",
+      },
+      {
+        kind: "added",
+        text: "That address is worth having even at home. The app's own relay only lets one device watch at a time - a second phone, or a phone and an OBS overlay, kick each other off. On the shared address as many people can read along as you like.",
+      },
+      {
+        kind: "changed",
+        text: "The viewer link is no longer written out in full at the bottom of the window. Anyone who can read that link can read your captions, and it sat on screen for the whole session, which is a problem if you share your screen or someone is standing behind you. Click it when you want to see it; COPY still copies the real one either way.",
+      },
+    ],
+  },
+  {
     version: "0.5.6",
     date: "2026-09-07",
     headline: "Captions that keep up, and links that tell the truth",
