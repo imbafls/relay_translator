@@ -188,9 +188,8 @@ fix — read the numbered section there before starting.
   feeding it.
 - ~~**Idle rooms on the hosted relay are never reaped.**~~ Fixed 2026-09-07,
   lopsidedly and on purpose. A room **nobody ever published to** is removed
-  after 30 days by a Durable Object alarm - those are tests, measurements and
-  abuse, and no working link points at one. A room that **has been used** is
-  kept for ever: its viewer token may be in somebody's messages, age is not
+  after 30 days by a Durable Object alarm. A room **anybody has touched** - by
+  publishing, viewing, or reading or rotating its token - is kept for ever: its viewer token may be in somebody's messages, age is not
   evidence it stopped mattering, and an idle room costs nothing because the
   billing is per request. The alarm also declines to fire while a socket is
   open, since `shouldReap` takes a record and cannot see a live connection.

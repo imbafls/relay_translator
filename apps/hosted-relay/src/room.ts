@@ -27,7 +27,8 @@
  */
 
 import { formatToken, newSecret, secretsMatch } from "./tokens";
-import { nextReapCheck, shouldReap } from "./reap";
+import { markUsed, nextReapCheck, reapTick } from "./reap";
+import type { ReapableRoom, RoomIo } from "./reap";
 
 /** what a room is, between messages */
 interface RoomState {
@@ -43,8 +44,10 @@ interface RoomState {
   lastSegId: number;
   createdAt: number;
   /**
-   * epoch ms a publisher first connected. Absent means nobody ever streamed
-   * here, which is what makes a room safe to remove - see `reap.ts`.
+   * epoch ms somebody first proved they were using this room, by ANY
+   * authenticated route - publishing, viewing, or managing the link. Absent
+   * means nobody ever has, which is what makes a room safe to remove. See
+   * `reap.ts` for why "a publisher connected" was the wrong definition.
    */
   usedAt?: number;
 }
@@ -94,27 +97,36 @@ export class Room {
     return fresh;
   }
 
+  /** everything `reap.ts` needs, so the mechanism can be run against a fake */
+  private io(): RoomIo {
+    return {
+      load: () => this.load() as Promise<ReapableRoom | undefined>,
+      save: (room) => this.save(room as RoomState),
+      deleteAll: () => this.ctx.storage.deleteAll(),
+      setAlarm: (at) => this.ctx.storage.setAlarm(at),
+      deleteAlarm: () => this.ctx.storage.deleteAlarm(),
+      openSockets: () => this.ctx.getWebSockets().length,
+    };
+  }
+
+  /** somebody proved they are using this room; stop the clock. Cheap after the first. */
+  private async touch(): Promise<void> {
+    await markUsed(this.io(), Date.now());
+  }
+
   /**
    * The alarm set at claim. Fires once, a month later, on a room that may have
-   * been used since - which is exactly the case it has to get right.
+   * been touched since - which is exactly the case it has to get right.
+   *
+   * The whole tick runs under `blockConcurrencyWhile` because a Durable Object
+   * can run its alarm concurrently with a request: without it, a publisher
+   * connecting during this handler can write `usedAt` between the decision and
+   * the delete, and lose it.
    */
   async alarm(): Promise<void> {
-    const room = await this.load();
-    if (!room) return;
-    if (!shouldReap(room, Date.now())) return;
-    // Somebody is on it right now. `shouldReap` cannot see this - it takes a
-    // record, not a runtime - and a room being connected to is not junk
-    // whatever its record says. Deleting under a live socket would answer the
-    // next message with "no such room", which the viewer renders as a dead
-    // link, at a moment nobody chose. Wait a day and look again.
-    if (this.ctx.getWebSockets().length > 0) {
-      await this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
-      return;
-    }
-    // deleteAll rather than a flag: the tokens are the state, so removing it is
-    // what makes them stop working, and a room with no state answers "no such
-    // room" through the path that already exists
-    await this.ctx.storage.deleteAll();
+    await this.ctx.blockConcurrencyWhile(async () => {
+      await reapTick(this.io(), Date.now());
+    });
   }
 
   // ------------------------------------------------------------------ fetch
@@ -150,6 +162,8 @@ export class Room {
     }
 
     if (op === "viewer-token" || op === "rotate-viewer-token") {
+      // the owner is managing a link they intend to use
+      await this.touch();
       if (!secretsMatch(secret, room.publisherSecret)) return json({ error: "forbidden" }, 403);
       if (op === "rotate-viewer-token") {
         room.viewerSecret = newSecret();
@@ -176,16 +190,15 @@ export class Room {
         return closedSocket(CLOSE_UNAUTHORISED, "bad token");
       }
 
+      // A viewer counts as much as a publisher. The viewer branch above checks
+      // the viewer secret and nothing else, so a link works from the moment the
+      // room is claimed - somebody reading it is exactly the person whose link
+      // must not be deleted.
+      await this.touch();
+
       if (op === "uplink") {
         // one publisher per room; the newcomer wins, as the old relay did
         this.closeAll(TAG_UPLINK, CLOSE_REPLACED, "replaced by new publisher");
-        // the room is somebody's now. Recorded on the FIRST publisher only, so
-        // this is one write in a room's life rather than one per reconnect, and
-        // the alarm goes with it - a kept room never needs waking again.
-        if (room.usedAt === undefined) {
-          await this.save({ ...room, usedAt: Date.now() });
-          await this.ctx.storage.deleteAlarm();
-        }
       }
 
       this.ctx.acceptWebSocket(server, [op === "uplink" ? TAG_UPLINK : TAG_VIEWER]);

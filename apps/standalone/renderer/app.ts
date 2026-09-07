@@ -1201,10 +1201,16 @@ function captionSettingsUrl(): string | undefined {
  * it was out of reach for everyone the feature is actually for.
  */
 function renderReach(): void {
-  const set = !!config.relayUrl && !!config.publisherToken;
+  // A stored room can stop being accepted - the hosted relay removes rooms
+  // nobody ever touched, and a refused token arrives as an uplink error. The
+  // config still carries the address either way, so trusting it alone printed
+  // ANYONE WITH THE LINK over a link that no longer worked, with the one
+  // control that fixes it hidden. A rejected token is exactly when to offer it.
+  const refused = status?.relay.uplinkState === "error";
+  const set = !!config.relayUrl && !!config.publisherToken && !refused;
   const el = $("reachStatus");
   el.className = "field-status";
-  el.textContent = set ? "ANYONE WITH THE LINK" : "THIS NETWORK ONLY";
+  el.textContent = refused ? "ADDRESS NOT ACCEPTED" : set ? "ANYONE WITH THE LINK" : "THIS NETWORK ONLY";
   if (!set) el.classList.add("warn");
   // the hint has to move with the status or it contradicts it: leaving "your
   // link only opens on your own network" up after a room is claimed tells the
@@ -2414,6 +2420,8 @@ function bind(): void {
     if (s.localModels) setLocalModels(s.localModels);
     else renderChain();
     renderFooter();
+    // the uplink state decides it, and that only ever arrives here
+    renderReach();
     if (s.update) setUpdate(s.update);
     if (view === "settings") renderKeyStatuses();
   });

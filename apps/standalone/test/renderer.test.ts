@@ -1302,3 +1302,49 @@ describe("a revealed key does not stay revealed", () => {
     }
   });
 });
+
+/**
+ * A room on the hosted relay can now be removed - only one nobody ever touched,
+ * but it can happen. When it does, the relay answers the uplink with 4401, and
+ * `uplinkClient` treats that as final and stops, correctly: it means the token
+ * is not accepted, and retrying cannot change that.
+ *
+ * The app then had no way out. `renderReach` hides the claim button whenever
+ * config carries a relay URL and a token - which it still does, because a
+ * deleted room leaves the config untouched - and prints ANYONE WITH THE LINK,
+ * which is now false. The only escape was knowing to open ADVANCED and clear
+ * the publish token by hand.
+ *
+ * A rejected token is exactly when the button is worth offering.
+ */
+describe("recovering when the relay stops accepting the stored room", () => {
+  const claimBtn = (): HTMLButtonElement => document.getElementById("claimRoom") as HTMLButtonElement;
+  const reach = (): HTMLElement => document.getElementById("reachStatus") as HTMLElement;
+
+  const withUplink = async (state: string): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: { localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1", remoteViewerUrl: "", uplinkState: state },
+      usage: undefined,
+    });
+    await settle(50);
+  };
+
+  it("offers the button again when the stored token is refused", async () => {
+    await bootWith({ setupDone: true, relayUrl: "wss://textrelay.cc", publisherToken: "p1_gone_away" });
+    await withUplink("error");
+
+    expect(claimBtn().hidden, "the only way back is hidden, so the app is a dead end").toBe(false);
+    expect(reach().textContent, "the app still claims the link works").not.toMatch(/ANYONE WITH THE LINK/i);
+  });
+
+  it("keeps it hidden while the relay is working", async () => {
+    await bootWith({ setupDone: true, relayUrl: "wss://textrelay.cc", publisherToken: "p1_fine" });
+    await withUplink("connected");
+
+    // offering to claim a second room while the first works would orphan a link
+    expect(claimBtn().hidden, "a working relay is being told to claim another room").toBe(true);
+    expect(reach().textContent).toMatch(/ANYONE WITH THE LINK/i);
+  });
+});

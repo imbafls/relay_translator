@@ -3237,3 +3237,54 @@ that no longer exists.
 `CLAUDE.md` and `apps/streamdeck/...` paths in three documents all went red the
 moment the files went. `scripts/diag-renderer.mjs` drove the control API to
 press START and could no longer work at all, so it went too.
+
+### Turn 90 - The reaping was wrong, and the review is why I know
+
+I asked an agent to attack turn 88 because it deletes user data. It found the
+premise false, and it was right.
+
+**"Nobody holds a link to it that works, because a link is only worth something
+once captions flow."** That sentence is in `reap.ts`, justifying the whole
+design, and the viewer branch three files away disproves it: it checks the
+viewer secret and nothing else. A link works from the moment the room is
+claimed. A friend can open it and sit on OFF AIR waiting - which is the ordinary
+way to use this, and exactly what the guide tells people to do. Under the old
+rule that room read as never used, and day thirty took a link its owner had
+already handed out.
+
+Sharpest version, also theirs: **`POST /admin/rotate-viewer-token` is an
+authenticated action by the owner that proves the room is alive, and it did not
+stop the clock.** Rotate a mis-sent link, re-share it, lose the room anyway.
+
+So "used" is now any authenticated touch - publishing, viewing, reading or
+rotating the token. Each one proves a person is on the other end. Recorded once,
+so a reconnect loop is not a write loop.
+
+**Three more, all real:**
+
+The alarm held proof of use and threw it away: an open socket only bought
+another day, so a room could survive day thirty and die on day thirty-one
+because a phone locked inside a two-second reconnect gap. It records the use it
+witnessed now.
+
+A Durable Object can run its alarm concurrently with a request, so a publisher
+connecting mid-handler could have `usedAt` written and then erased - leaving a
+publisher streaming into a room with no state, captions dropped on the floor,
+the app showing connected and nothing logged. The tick re-reads before deleting
+and the whole thing runs under `blockConcurrencyWhile`.
+
+And the app was a dead end afterwards: a deleted room leaves the config intact,
+so `renderReach` printed ANYONE WITH THE LINK and kept the claim button hidden,
+while the uplink sat in a terminal 4401. A refused token is exactly when to
+offer that button.
+
+**The finding that should sting most.** They copied the app, made three
+mutations to the deleting code - never record use, drop the socket guard, never
+arm the alarm - and got `45 passed` each time, identical to baseline. The tests
+covered two pure functions whose bodies were four lines; the part that destroys
+data was untestable, because there is no workers pool in this suite to build a
+Durable Object in. Against this repo's own standard that is below the bar, on
+the one change in it that deletes anything.
+
+The mechanism takes its storage as an argument now and runs against a fake.
+**All three of their mutations go red.**
