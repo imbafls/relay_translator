@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/relay",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "private": true,
   "description": "WebSocket relay: audio in -> Deepgram STT -> Gemini translate -> viewer broadcast",
   "main": "dist/index.js",
