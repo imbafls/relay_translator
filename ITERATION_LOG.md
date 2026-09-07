@@ -2437,3 +2437,28 @@ final dropped again; interims not cleared on `hello`; an empty final rendered as
 a row). The rest are the invariants that keep the fix honest: an empty *partial*
 is still ignored, a real final still renders, a live `hello` does not wipe an
 interim mid-sentence, and a non-Results frame is still ignored.
+
+### Turn 68 - Client UI (audit finding 36: a clock that belongs to somebody else)
+
+`since` is the **streamer's** `Date.now()`, forwarded verbatim, and the HUD
+computed `Date.now() - since` on the **viewer's** clock. Every bit of skew
+between the two machines was displayed as duration error - and a phone whose
+clock runs behind produces a negative difference, which `Math.max(0, ...)`
+clamps, so the session timer sat frozen at **00:00:00** for as long as the skew
+lasted. Phones drift; minutes of it is ordinary.
+
+Elapsed milliseconds do not care whose clock produced them. The relay stamps
+`elapsedMs` as the message goes out and the viewer anchors it against its own
+`Date.now()`; `since` stays as the fallback for a viewer talking to an older
+relay, which is an invariant with its own test.
+
+**Three sites, not one.** `stamp()` covers the broadcast path, but the connect
+`hello` and the `sync` reply are built by hand and bypass it entirely - and the
+connect hello is precisely the one a viewer joining an in-progress stream reads.
+The relay-side test caught that: the fix was in, and `elapsedMs` still came back
+`undefined`.
+
+**Guards - six, three watched fail against their own reverts** (the viewer
+anchor removed, twice over, and the relay stamp removed). The invariants: a
+relay that sends only `since` still works, and a stream that is not live sends
+no elapsed time at all, so a viewer does not start a clock for nothing.

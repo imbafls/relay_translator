@@ -891,11 +891,25 @@ export interface SpeakerTag {
   color?: string;
 }
 
+/**
+ * How long the stream has been live, stamped by the relay as it sends.
+ *
+ * `since` is the STREAMER's `Date.now()`, forwarded verbatim, and a viewer
+ * computing `Date.now() - since` on its own clock showed every bit of skew
+ * between the two machines as duration error - and a viewer whose clock ran
+ * behind clamped to a session timer frozen at 00:00:00. Elapsed milliseconds do
+ * not care whose clock produced them. `since` stays for older viewers.
+ */
+export interface SessionElapsed {
+  since?: number;
+  elapsedMs?: number;
+}
+
 export type ServerToViewer =
-  | { type: "hello"; languages: Languages; live: boolean; translates: boolean; since?: number }
+  | ({ type: "hello"; languages: Languages; live: boolean; translates: boolean } & SessionElapsed)
   | ({ type: "partial"; id: number; source: string } & SpeakerTag)
   | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
-  | { type: "status"; live: boolean; message?: string; since?: number }
+  | ({ type: "status"; live: boolean; message?: string } & SessionElapsed)
   | { type: "kicked"; reason: string }
   | { type: "pong" };
 

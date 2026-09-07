@@ -281,3 +281,72 @@ describe("a peer that stops answering", () => {
     expect(own.viewerCount(), "a half-open socket held its place for ever").toBe(0);
   });
 });
+
+describe("what the relay tells a viewer about how long it has been live", () => {
+  /**
+   * Audit finding 36, from the relay's side. `since` is the streamer's
+   * `Date.now()` forwarded verbatim; a viewer subtracting it from its own clock
+   * showed every bit of skew between the two machines as duration error, and a
+   * viewer running behind froze the timer at zero. `elapsedMs` is stamped here,
+   * as the message goes out, so it does not matter whose clock produced it.
+   */
+  let own: Awaited<ReturnType<typeof startRelay>>;
+  let ownDir: string;
+
+  beforeEach(async () => {
+    ownDir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-elapsed-"));
+    own = await startRelay({ port: 0, dataDir: ownDir, mockStt: true, mockGemini: true });
+  });
+
+  afterEach(async () => {
+    await own.close();
+    try {
+      fs.rmSync(ownDir, { recursive: true, force: true });
+    } catch {
+      /* disposable */
+    }
+  });
+
+  /** capture the connect hello, which is sent the instant the socket opens */
+  const firstHello = (): Promise<Record<string, unknown>> =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${own.port}/ws/viewer?token=${own.state.viewerToken}`);
+      const timer = setTimeout(() => reject(new Error("no hello")), 4000);
+      ws.on("message", (data: Buffer) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.type !== "hello") return;
+        clearTimeout(timer);
+        ws.close();
+        resolve(msg);
+      });
+    });
+
+  it("sends an elapsed time a viewer can use without trusting anyone's clock", async () => {
+    const pub = new WebSocket(`ws://127.0.0.1:${own.port}/ws/publisher?token=${own.state.publisherToken}`);
+    await new Promise((r) => pub.once("open", r));
+    // a `since` two minutes in the publisher's past, as the app sends it
+    pub.send(
+      JSON.stringify({
+        type: "hello",
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        channels: 1,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 120));
+
+    const hello = await firstHello();
+    expect(hello.live).toBe(true);
+    expect(typeof hello.elapsedMs, "no elapsed time was sent, so the viewer must guess").toBe("number");
+    expect(hello.elapsedMs as number).toBeLessThan(60_000);
+    pub.close();
+  });
+
+  it("sends none when nothing is live, so a viewer does not start a clock", async () => {
+    const hello = await firstHello();
+    expect(hello.live).toBe(false);
+    expect(hello.elapsedMs).toBeUndefined();
+  });
+});

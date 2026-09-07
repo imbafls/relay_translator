@@ -545,3 +545,63 @@ describe("an interim that never resolves", () => {
     expect(lineTexts()).toEqual(["enemy mid"]);
   });
 });
+
+describe("the session clock on a viewer whose clock is wrong", () => {
+  /**
+   * Audit finding 36. `since` is the STREAMER's `Date.now()`, forwarded
+   * verbatim, and the HUD computed `Date.now() - since` on the VIEWER's clock.
+   * Any skew between the two machines was displayed as duration error - and
+   * negative skew (a phone whose clock is behind) clamps at
+   * `Math.max(0, ...)`, so the clock sat frozen at 00:00:00 for as long as the
+   * skew lasted. Phones drift; a few minutes is ordinary.
+   *
+   * Elapsed milliseconds do not care whose clock they came from.
+   */
+  const clock = (): string => (document.getElementById("hudClock") as HTMLElement).textContent || "";
+
+  it("reads the elapsed time even when the two clocks disagree", () => {
+    // the streamer's clock is five minutes AHEAD of this viewer's
+    const skewMs = 5 * 60_000;
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      since: Date.now() + skewMs - 90_000,
+      elapsedMs: 90_000,
+    });
+
+    expect(clock(), "the streamer's epoch was subtracted from the viewer's").toBe("00:01:30");
+  });
+
+  it("does not freeze at zero when the viewer's clock is behind", () => {
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      // `since` in this viewer's future, which is what froze it
+      since: Date.now() + 10 * 60_000,
+      elapsedMs: 42_000,
+    });
+
+    expect(clock(), "a viewer clock behind the streamer's froze the session clock").toBe("00:00:42");
+  });
+
+  it("still works against a relay that sends only `since`", () => {
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      since: Date.now() - 65_000,
+    });
+
+    expect(clock()).toBe("00:01:05");
+  });
+
+  it("shows nothing running when the stream is not live", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: false, translates: true });
+    expect(clock()).toBe("00:00:00");
+  });
+});

@@ -392,9 +392,23 @@
     return msg.translates === false ? src : `${src} → ${tgt}`;
   }
 
-  function applyLive(live, since) {
+  /**
+   * `since` is the STREAMER's Date.now(), and this clock ticks on the VIEWER's.
+   * Any skew between the two machines was shown as duration error, and a phone
+   * whose clock is behind clamped at Math.max(0, ...) - a session clock frozen
+   * at 00:00:00 for as long as the skew lasted. Phones drift; minutes is
+   * ordinary.
+   *
+   * `elapsedMs` is stamped by the relay at send time and does not care whose
+   * clock it came from, so it is anchored against ours. `since` remains the
+   * fallback for a relay that has not been updated.
+   */
+  function applyLive(live, since, elapsedMs) {
     isLive = !!live;
-    if (live) liveSince = since || liveSince || Date.now();
+    if (live) {
+      liveSince =
+        typeof elapsedMs === "number" ? Date.now() - elapsedMs : since || liveSince || Date.now();
+    }
     setHud(live ? "on" : "off", live ? "ON AIR" : "OFF AIR");
     tick();
   }
@@ -467,7 +481,7 @@
           serverTranslates = msg.translates !== false;
           applyStyle();
           $("hudLangs").textContent = langsLabel(msg);
-          applyLive(msg.live, msg.since);
+          applyLive(msg.live, msg.since, msg.elapsedMs);
           // same as `status` below. A viewer disconnected while status
           // live:false went out reconnects onto THIS branch, and without it
           // keeps a blinking half-caption under an OFF AIR badge for ever -
@@ -475,7 +489,7 @@
           if (!msg.live) clearInterims();
           break;
         case "status":
-          applyLive(msg.live, msg.since);
+          applyLive(msg.live, msg.since, msg.elapsedMs);
           if (!msg.live) clearInterims();
           break;
         case "partial":

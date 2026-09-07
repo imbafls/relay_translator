@@ -121,7 +121,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 33 | `runtime:prepare` rotates the viewer link before checking the relay | `afd2156` |
 | 25 | Two concurrent model downloads collide on the shared VAD | `f3ee3a9` |
 | 11c | The heartbeat pinged and dropped nothing, so a half-open peer held on | `3a45667` |
-| 35 | Ghost interim rows that never resolve | *(this commit)* |
+| 35 | Ghost interim rows that never resolve | `47d7ade` |
+| 36 | The session clock subtracts the streamer's epoch from the viewer's | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -137,7 +138,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | 30 | low | The Deepgram key validator repaints the live console as a setup placeholder. | `apps/standalone/renderer/app.ts` |
 | 32 | low | The error overlay paints on top of the previous transcript. | `apps/standalone/renderer/app.ts` |
 | 34 | low | A successful local-STT probe is discarded when the session already stopped. | `packages/relay/src/localStt.ts` |
-| 36 | low | The session clock subtracts the streamer's epoch from the viewer's. | `packages/viewer/public/app.js` |
 
 Each entry in the audit carries a reproduced failure scenario and a suggested
 fix — read the numbered section there before starting.

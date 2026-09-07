@@ -228,6 +228,15 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   /** false once the speech pipeline has gone away under a connected publisher */
   let sttLive = true;
 
+  /**
+   * How long the stream has been live, as of right now.
+   *
+   * Sent beside `since` because `since` is the STREAMER's clock and the viewer
+   * subtracted it from its own - so skew between the two machines read as
+   * duration error, and a viewer clock running behind froze the timer at zero.
+   */
+  const elapsed = (): number | undefined => (liveSince ? Math.max(0, Date.now() - liveSince) : undefined);
+
   /** track live-since and attach it to status/hello messages */
   const stamp = (msg: ServerToViewer): ServerToViewer => {
     if (msg.type === "status") {
@@ -237,12 +246,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       } else {
         liveSince = undefined;
       }
-      return { ...msg, since: liveSince };
+      return { ...msg, since: liveSince, elapsedMs: elapsed() };
     }
     if (msg.type === "hello") {
       if (msg.live && msg.since) liveSince = msg.since;
       if (msg.live && !liveSince) liveSince = Date.now();
-      return { ...msg, since: msg.live ? liveSince : undefined };
+      return { ...msg, since: msg.live ? liveSince : undefined, elapsedMs: msg.live ? elapsed() : undefined };
     }
     return msg;
   };
@@ -684,6 +693,11 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         live: isLive(),
         translates: currentTranslates,
         since: isLive() ? liveSince : undefined,
+        // these two hellos are built by hand rather than through stamp(), so
+        // they have to carry the elapsed time as well or a viewer joining an
+        // in-progress stream falls straight back to subtracting the streamer's
+        // clock from its own
+        elapsedMs: isLive() ? elapsed() : undefined,
       } satisfies ServerToViewer),
     );
 
@@ -699,6 +713,11 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
               live: isLive(),
               translates: currentTranslates,
               since: isLive() ? liveSince : undefined,
+        // these two hellos are built by hand rather than through stamp(), so
+        // they have to carry the elapsed time as well or a viewer joining an
+        // in-progress stream falls straight back to subtracting the streamer's
+        // clock from its own
+        elapsedMs: isLive() ? elapsed() : undefined,
             } satisfies ServerToViewer),
           );
         }
