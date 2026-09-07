@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/hosted-relay",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "description": "Multi-tenant hosted relay: one Durable Object per streamer, pure caption fan-out.",
   "scripts": {

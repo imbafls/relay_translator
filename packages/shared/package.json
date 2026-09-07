@@ -1,6 +1,6 @@
 {
   "name": "@callout-relay/shared",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
