@@ -28,6 +28,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.11",
+    date: "2026-09-07",
+    headline: "A failed model download now tells you why",
+    changes: [
+      {
+        kind: "fixed",
+        text: "When a speech model fails to download, 02 TRANSCRIBE now shows the reason rather than the words DOWNLOAD FAILED. The app knew why the whole time and had nowhere to put it.",
+      },
+      {
+        kind: "added",
+        text: "The app keeps a log file, relay.log, next to your settings in the callout-relay folder. If something fails and you want help with it, that file is the thing to send. Nothing in it leaves your PC on its own.",
+      },
+      {
+        kind: "changed",
+        text: "The Stream Deck plugin has been removed. It is no longer part of this product, and the local port it used to listen on is closed - which also means a web page you happen to have open can no longer start or stop your session, change your settings, or replace your viewer link. Nothing else used that port.",
+      },
+      {
+        kind: "fixed",
+        text: "If the relay stops accepting your saved address, SETTINGS says ADDRESS NOT ACCEPTED and offers to get you a new one. It used to insist the link still worked and hide the only button that would have fixed it.",
+      },
+    ],
+  },
+  {
     version: "0.5.10",
     date: "2026-09-07",
     headline: "Relay has its own address: textrelay.cc",
