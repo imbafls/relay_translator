@@ -78,6 +78,135 @@ export async function publishRetry(
 
 /** free bytes on the volume holding `dir`, or -1 if the platform will not say */
 
+/**
+ * The archive body, as one continuous stream, across as many connections as it
+ * takes.
+ *
+ * The two models people actually fail on are the two big ones - Whisper Turbo
+ * unpacks from a 564 MB archive, Nemotron from 372 MB - and until now a single
+ * dropped connection at any point threw all of it away and started again from
+ * byte zero. On a flaky line that is not a slow download, it is one that never
+ * finishes, because each attempt has to win a ninety-second race outright.
+ *
+ * So on a transport failure this reconnects and asks for `bytes=<received>-`.
+ * GitHub's release asset host answers 206 with a Content-Range, which is what
+ * makes it possible; a host that ignores the header and replays from the start
+ * is handled by discarding the bytes already delivered, because the decoder
+ * downstream is mid-archive and cannot be rewound.
+ *
+ * **Only transport failures resume.** A body that ends cleanly but short raises
+ * nothing to catch and is indistinguishable, at this layer, from a complete
+ * one; `fetchArchive` still reports that case from the byte count. Nor is this
+ * a resume across app restarts - the bytes are decoded as they arrive and never
+ * stored, so there is nothing on disk to continue from.
+ *
+ * **Parallel range requests were considered and rejected.** They would be
+ * faster, and the host supports them. But chunks arrive out of order, and the
+ * pipeline here decodes bz2 and untars *while* downloading - so out-of-order
+ * chunks mean buffering the whole archive to disk first, which takes peak usage
+ * for Whisper Turbo from 989 MB to about 1.55 GB and adds a second failure mode
+ * (assembly) to the path already suspected of being the broken one. Resuming
+ * fixes the failure; parallelism only shortens the window it happens in.
+ */
+export interface ResumeOpts {
+  signal: AbortSignal;
+  /** attempts allowed with no byte delivered between them */
+  tries?: number;
+  /**
+   * a ceiling on attempts however well it is going. Progress resets `tries`,
+   * so without this a host that hands over a few bytes and dies, for ever,
+   * would be retried for ever.
+   */
+  maxAttempts?: number;
+  fetchImpl?: typeof fetch;
+  onRetry?: (received: number, detail: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * How long to wait before each retry that has made no progress. Short, and
+ * deliberately so: the budget below is reset by any byte that arrives, so this
+ * bounds a connection that is STUCK, not a download that is going badly.
+ */
+const RESUME_WAITS = [400, 900, 1800, 3500];
+
+export function resumableBody(url: string, opts: ResumeOpts): Readable {
+  const call = opts.fetchImpl ?? fetch;
+  const tries = opts.tries ?? RESUME_WAITS.length + 1;
+  const maxAttempts = opts.maxAttempts ?? 30;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  async function* pull(): AsyncGenerator<Buffer> {
+    let received = 0;
+    /** `received` when this run of failures started; -1 before the first one */
+    let mark = -1;
+    /** consecutive failures with no byte delivered between them */
+    let stuck = 0;
+    /** connections opened, however they went */
+    let opened = 0;
+    for (;;) {
+      let skip = 0;
+      opened += 1;
+      try {
+        const res = await call(url, {
+          signal: opts.signal,
+          redirect: "follow",
+          ...(received > 0 ? { headers: { Range: `bytes=${received}-` } } : {}),
+        });
+        // asked for the tail of a file we already hold all of
+        if (received > 0 && res.status === 416) return;
+        if (!res.ok || !res.body) {
+          // a 404 is a stale catalog URL, not a flaky line. Retrying one wastes
+          // twenty seconds and then reports the timeout instead of the 404.
+          const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+          throw Object.assign(new Error(`HTTP ${res.status}`), { noResume: permanent });
+        }
+        // a host that ignored the Range and started over. Not an error - just
+        // bytes the decoder has already seen, so drop them and carry on
+        if (received > 0 && res.status !== 206) skip = received;
+
+        for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+          let buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+          if (skip > 0) {
+            if (buf.length <= skip) {
+              skip -= buf.length;
+              continue;
+            }
+            buf = buf.subarray(skip);
+            skip = 0;
+          }
+          received += buf.length;
+          yield buf;
+        }
+        return;
+      } catch (err) {
+        // a cancelled download is not a broken one
+        if (opts.signal.aborted) throw err;
+        if ((err as { noResume?: boolean }).noResume) throw err;
+        const detail = String((err as Error).message || err);
+        // a failure that arrives after new bytes is a fresh problem, not the
+        // same one repeating, and earns the full budget again
+        if (received > mark) stuck = 0;
+        mark = received;
+        stuck += 1;
+        if (stuck >= tries || opened >= maxAttempts) {
+          const why = stuck >= tries ? `${stuck} attempts with no progress` : `${opened} connections`;
+          // tagged, because this carries no errno of its own and the caller
+          // classifies by errno - untagged it reads as a corrupt archive,
+          // which is the wrong half of the problem to go looking at
+          throw Object.assign(new Error(`${detail} (gave up after ${why}, ${received} bytes)`), {
+            transport: true,
+          });
+        }
+        opts.onRetry?.(received, detail);
+        await sleep(RESUME_WAITS[Math.min(stuck - 1, RESUME_WAITS.length - 1)]);
+      }
+    }
+  }
+
+  return Readable.from(pull(), { objectMode: false });
+}
+
 function defaultFreeBytes(dir: string): number {
   try {
     const st = fs.statfsSync(dir);
@@ -200,10 +329,16 @@ export class ModelStore {
         const part = `${dest}.part`;
         this.log("info", `model download: ${target.id}/${file.name} (${Math.round(file.size / 1e6)} MB)`);
         const fetching = (async () => {
-          const res = await fetch(file.url, { signal: controller.signal, redirect: "follow" });
-          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${file.name}`);
           const out = fs.createWriteStream(part);
-          const body = Readable.fromWeb(res.body as never);
+          // the biggest single file in the catalog is a 652 MB encoder, and a
+          // dropped connection anywhere in it used to mean starting over
+          const body = resumableBody(file.url, {
+            signal: controller.signal,
+            onRetry: (at, detail) => {
+              const pct = file.size > 0 ? Math.floor((at / file.size) * 100) : 0;
+              this.log("warn", `model download: ${target.id}/${file.name} lost the connection at ${pct}% - resuming from byte ${at} (${detail})`);
+            },
+          });
           body.on("data", tick);
           await pipeline(body, out);
           fs.renameSync(part, dest);
@@ -262,8 +397,6 @@ export class ModelStore {
     fs.mkdirSync(staging, { recursive: true });
     this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB)`);
 
-    const res = await fetch(archive.url, { signal, redirect: "follow" });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${info.id}`);
     // entry name inside the archive -> the local name the worker wants
     const wanted = new Map<string, string>();
     for (const [local, entry] of Object.entries(archive.pick)) wanted.set(entry, local);
@@ -283,10 +416,18 @@ export class ModelStore {
     // body raises is tagged, so whichever one `pipeline` surfaces first can be
     // attributed. A server that ends cleanly but short raises nothing, so the
     // byte count still earns its place - as the second question, not the first.
-    const declared = Number(res.headers.get("content-length")) || archive.size || 0;
+    // the catalog's size, not the response's: the body arrives over however
+    // many connections it takes now, so there is no single content-length
+    const declared = archive.size || 0;
     let received = 0;
     let sourceEnded = false;
-    const body = Readable.fromWeb(res.body as never);
+    const body = resumableBody(archive.url, {
+      signal,
+      onRetry: (at, detail) => {
+        const pct = declared > 0 ? Math.floor((at / declared) * 100) : 0;
+        this.log("warn", `model download: ${info.id} lost the connection at ${pct}% - resuming from byte ${at} (${detail})`);
+      },
+    });
     body.on("data", (chunk: Buffer) => {
       received += chunk.length;
       tick(chunk);
@@ -325,6 +466,7 @@ export class ModelStore {
       // the byte count says - and that is the case this was getting wrong.
       const code = (err as NodeJS.ErrnoException).code;
       const transportish =
+        (err as { transport?: boolean }).transport === true ||
         code === "ERR_STREAM_PREMATURE_CLOSE" ||
         code === "ECONNRESET" ||
         code === "ETIMEDOUT" ||

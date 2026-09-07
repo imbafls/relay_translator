@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SttModelInfo } from "@callout-relay/shared";
-import { ModelStore, publishRetry } from "../src/models";
+import * as http from "node:http";
+import { ModelStore, publishRetry, resumableBody } from "../src/models";
 
 /**
  * The real ModelStore runs here: its download plan, the staging folder, the
@@ -218,6 +219,28 @@ describe("a download that stops early", () => {
 
     expect(failure()).toMatch(/stopped early/);
     expect(failure()).toMatch(/120 of 190/);
+  });
+
+  it("blames the transport when the connection kept breaking, not the archive", async () => {
+    // Running the shipped code against a proxy that killed the socket once at
+    // 40% of the real 118 MB Whisper Tiny archive reported "the archive would
+    // not unpack (47241984 bytes read) - terminated". The archive was perfect.
+    // The give-up error carries no errno of its own, so unless it says it is a
+    // transport failure it falls through to blaming the file - and that is the
+    // message that has been sending this bug to the wrong half all along.
+    globalThis.fetch = (async () => {
+      const stream = new ReadableStream({
+        start(c) {
+          c.error(new Error("terminated"));
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "content-length": String(FIXTURE.length) } });
+    }) as typeof fetch;
+
+    await store().download("test-archive-model");
+
+    expect(failure(), "a connection that kept dropping was called a corrupt archive").not.toMatch(/would not unpack/);
+    expect(failure()).toMatch(/stopped early/);
   });
 
   it("blames the archive only when every announced byte did arrive", async () => {
@@ -468,5 +491,194 @@ describe("publishing a model past a scanner holding its files", () => {
         throw eperm();
       }, clock.sleep),
     ).rejects.toThrow(/still open|scanner|antivirus/i);
+  });
+});
+
+/**
+ * A 564 MB archive is streamed straight through bz2 and tar onto disk, so it is
+ * never stored twice. That is the right shape - but it had no answer to the
+ * connection dropping. One reset at 90% threw the whole download away and
+ * started again from zero, and the two largest models take a minute and a half
+ * on a good line, which is a lot of exposure.
+ *
+ * The fix keeps the stream. The source reconnects on a transport failure and
+ * asks for `bytes=<received>-`, so the decoder downstream sees one continuous
+ * byte stream and never learns that the socket underneath it changed. GitHub's
+ * asset host answers 206 with a Content-Range, which is what makes it possible.
+ *
+ * Parallel chunks were considered and not built: chunks arrive out of order, so
+ * the whole archive would have to land on disk before decoding could start,
+ * taking peak usage from 989 MB to 1.55 GB for Whisper Turbo, and adding that
+ * complexity to the one path already suspected of failing.
+ */
+describe("a download that survives the connection dropping", () => {
+  let server: http.Server | null = null;
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((r) => server!.close(() => r()));
+    server = null;
+  });
+
+  /** serves `payload`, cutting the socket after `cutAfter` bytes, `drops` times */
+  const flakyHost = async (payload: Buffer, cutAfter: number, drops: number): Promise<string> => {
+    let dropped = 0;
+    server = http.createServer((req, res) => {
+      const range = /bytes=(\d+)-/.exec(req.headers.range || "");
+      const from = range ? Number(range[1]) : 0;
+      const slice = payload.subarray(from);
+      res.writeHead(from > 0 ? 206 : 200, {
+        "Content-Length": String(slice.length),
+        "Accept-Ranges": "bytes",
+        ...(from > 0 ? { "Content-Range": `bytes ${from}-${payload.length - 1}/${payload.length}` } : {}),
+      });
+      if (dropped < drops) {
+        dropped += 1;
+        // the bytes have to REACH the client before the socket dies, or it
+        // retries from zero and the resume this is testing never happens
+        res.write(slice.subarray(0, cutAfter), () => {
+          setTimeout(() => res.socket?.destroy(), 25);
+        });
+        return;
+      }
+      res.end(slice);
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    return `http://127.0.0.1:${(server!.address() as { port: number }).port}/archive`;
+  };
+
+  const drain = async (stream: NodeJS.ReadableStream): Promise<Buffer> => {
+    const parts: Buffer[] = [];
+    for await (const c of stream) parts.push(c as Buffer);
+    return Buffer.concat(parts);
+  };
+
+  it("delivers the whole file even though the socket died mid-way", async () => {
+    const payload = Buffer.alloc(400_000, 7);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i % 251;
+    const url = await flakyHost(payload, 120_000, 1);
+
+    const got = await drain(resumableBody(url, { signal: new AbortController().signal }));
+
+    expect(got.length, "the download stopped where the socket did").toBe(payload.length);
+    expect(got.equals(payload), "the resumed half did not line up with the first").toBe(true);
+  });
+
+  it("resumes from where it stopped instead of starting again", async () => {
+    const payload = Buffer.alloc(300_000, 3);
+    const ranges: (string | undefined)[] = [];
+    const url = await flakyHost(payload, 100_000, 1);
+    const wrapped = new Proxy(globalThis.fetch, {
+      apply(target, thisArg, args: Parameters<typeof fetch>) {
+        ranges.push((args[1]?.headers as Record<string, string>)?.Range);
+        return Reflect.apply(target, thisArg, args);
+      },
+    });
+
+    const got = await drain(resumableBody(url, { signal: new AbortController().signal, fetchImpl: wrapped }));
+
+    expect(got.length).toBe(payload.length);
+    expect(ranges[0], "the first request should ask for the whole thing").toBeUndefined();
+    expect(ranges[1], "the retry asked for the whole file again, not the rest of it").toBe("bytes=100000-");
+  });
+
+  it("survives more than one drop", async () => {
+    const payload = Buffer.alloc(250_000, 9);
+    const url = await flakyHost(payload, 60_000, 3);
+
+    const got = await drain(resumableBody(url, { signal: new AbortController().signal }));
+    expect(got.length).toBe(payload.length);
+  });
+
+  it("keeps going through more drops than its retry budget, because each one made progress", async () => {
+    // the budget bounds a connection that is STUCK, not a download that is
+    // going badly. Every resume that delivers bytes is progress, and progress
+    // earns a fresh budget - otherwise a long download on a bad line dies at
+    // the same fixed number of drops however much of it has arrived.
+    const payload = Buffer.alloc(240_000, 5);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i % 251;
+    const url = await flakyHost(payload, 30_000, 5);
+
+    const got = await drain(resumableBody(url, { signal: new AbortController().signal, tries: 2 }));
+
+    expect(got.length, "gave up while it was still making headway").toBe(payload.length);
+    expect(got.equals(payload)).toBe(true);
+  });
+
+  it("does not deliver the same bytes twice when a host ignores the Range", async () => {
+    // an origin that answers 200 with the whole file however you ask. The
+    // decoder downstream is mid-archive and cannot be rewound, so the bytes it
+    // has already seen have to be dropped rather than replayed.
+    const payload = Buffer.alloc(180_000, 0);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i % 251;
+    let dropped = false;
+    server = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Length": String(payload.length) });
+      if (!dropped) {
+        dropped = true;
+        res.write(payload.subarray(0, 90_000), () => {
+          setTimeout(() => res.socket?.destroy(), 25);
+        });
+        return;
+      }
+      res.end(payload);
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    const url = `http://127.0.0.1:${(server!.address() as { port: number }).port}/archive`;
+
+    const got = await drain(resumableBody(url, { signal: new AbortController().signal }));
+
+    expect(got.length, "the replayed prefix was passed on a second time").toBe(payload.length);
+    expect(got.equals(payload)).toBe(true);
+  });
+
+  it("does not sit through seven retries on a URL that is simply wrong", async () => {
+    let calls = 0;
+    server = http.createServer((_req, res) => {
+      calls += 1;
+      res.writeHead(404).end("no such asset");
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    const url = `http://127.0.0.1:${(server!.address() as { port: number }).port}/gone`;
+
+    await expect(drain(resumableBody(url, { signal: new AbortController().signal }))).rejects.toThrow(/404/);
+    expect(calls, "a stale catalog URL was retried as though the network were flaky").toBe(1);
+  });
+
+  it("stops even when every attempt delivers a few bytes and then dies", async () => {
+    // progress resets the retry budget, so a host that hands over a little and
+    // drops - for ever - would be retried for ever. Real hosts honour Range
+    // and this cannot happen; a ceiling costs nothing and bounds it anyway.
+    const payload = Buffer.alloc(100_000, 4);
+    let served = 0;
+    server = http.createServer((_req, res) => {
+      served += 1;
+      res.writeHead(200, { "Content-Length": String(payload.length) });
+      res.write(payload.subarray(0, 1000), () => {
+        setTimeout(() => res.socket?.destroy(), 15);
+      });
+    });
+    await new Promise<void>((r) => server!.listen(0, "127.0.0.1", () => r()));
+    const url = `http://127.0.0.1:${(server!.address() as { port: number }).port}/archive`;
+
+    await expect(
+      drain(resumableBody(url, { signal: new AbortController().signal, maxAttempts: 4 })),
+    ).rejects.toThrow(/4 connections/);
+    expect(served, "the ceiling did not hold").toBe(4);
+  });
+
+  it("gives up rather than retrying a dead host for ever", async () => {
+    await expect(
+      drain(resumableBody("http://127.0.0.1:9/nothing", { signal: new AbortController().signal, tries: 2 })),
+    ).rejects.toThrow();
+  });
+
+  it("stops immediately when the download is cancelled", async () => {
+    const payload = Buffer.alloc(200_000, 1);
+    const url = await flakyHost(payload, 50_000, 99);
+    const ac = new AbortController();
+    const stream = resumableBody(url, { signal: ac.signal });
+    ac.abort();
+
+    await expect(drain(stream)).rejects.toThrow();
   });
 });
