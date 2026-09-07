@@ -215,3 +215,69 @@ describe("the broadcast bus", () => {
     expect(got.filter((m) => m.type === "hello")).toHaveLength(1);
   });
 });
+
+describe("a peer that stops answering", () => {
+  /**
+   * The last piece of audit finding 11. The heartbeat is commented "drop dead
+   * sockets" and drops nothing: it pings every 30 s, tracks no pongs and never
+   * calls `terminate()`. A TCP connection whose peer has vanished without a FIN
+   * - a laptop lid, a dropped wifi, a NAT timeout - stays `OPEN` on this side
+   * indefinitely, so a half-open publisher holds the session and its viewer
+   * count for minutes, and `/health` goes on reporting it.
+   *
+   * A client that has stopped reading its socket cannot parse a ping, so it
+   * never sends the pong - which is exactly what a half-open peer looks like
+   * from here.
+   */
+  let own: Awaited<ReturnType<typeof startRelay>>;
+  let ownDir: string;
+
+  beforeEach(async () => {
+    ownDir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-heartbeat-"));
+    own = await startRelay({
+      port: 0,
+      dataDir: ownDir,
+      mockStt: true,
+      mockGemini: true,
+      // the real one is 30 s; the shape is what is under test, not the number
+      heartbeatMs: 60,
+    });
+  });
+
+  afterEach(async () => {
+    await own.close();
+    try {
+      fs.rmSync(ownDir, { recursive: true, force: true });
+    } catch {
+      /* disposable */
+    }
+  });
+
+  const openViewer = (): Promise<WebSocket> =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${own.port}/ws/viewer?token=${own.state.viewerToken}`);
+      ws.once("open", () => resolve(ws));
+      ws.once("error", reject);
+    });
+
+  const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  it("keeps a viewer that is answering", async () => {
+    const ws = await openViewer();
+    await settle(400);
+
+    expect(own.viewerCount(), "a healthy viewer was dropped by the heartbeat").toBe(1);
+    ws.close();
+  });
+
+  it("drops one that has gone silent", async () => {
+    const ws = await openViewer();
+    expect(own.viewerCount()).toBe(1);
+
+    // stop reading: the client can no longer parse a ping, so no pong goes back
+    (ws as unknown as { _socket: { pause(): void } })._socket.pause();
+    await settle(500);
+
+    expect(own.viewerCount(), "a half-open socket held its place for ever").toBe(0);
+  });
+});

@@ -86,6 +86,8 @@ export interface RelayOptions {
   localStt?: LocalSttOptions;
   /** stand in for the STT socket (tests, and embedders bringing their own) */
   makeStt?: SessionDeps["makeStt"];
+  /** how often to ping every socket and drop the ones that stopped answering */
+  heartbeatMs?: number;
   log?: (level: "info" | "warn" | "error", message: string) => void;
   /** called whenever the number of attached viewers changes */
   onViewers?: (count: number) => void;
@@ -554,7 +556,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         socket.destroy();
         return;
       }
-      wss.handleUpgrade(req, socket, head, (ws) => onPublisher(ws));
+      wss.handleUpgrade(req, socket, head, (ws) => onPublisher(track(ws)));
       return;
     }
 
@@ -574,7 +576,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         wss.handleUpgrade(req, socket, head, (ws) => ws.close(4401, "uplink token rejected"));
         return;
       }
-      wss.handleUpgrade(req, socket, head, (ws) => onUplink(ws));
+      wss.handleUpgrade(req, socket, head, (ws) => onUplink(track(ws)));
       return;
     }
 
@@ -587,7 +589,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         // what a viewer who was kicked has always got.
         return void wss.handleUpgrade(req, socket, head, (ws) => ws.close(4401, "viewer token rejected"));
       }
-      wss.handleUpgrade(req, socket, head, (ws) => onViewer(ws, token));
+      wss.handleUpgrade(req, socket, head, (ws) => onViewer(track(ws), token));
       return;
     }
 
@@ -814,17 +816,45 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     return state.viewerToken;
   }
 
-  // heartbeat: drop dead sockets
+  /**
+   * Sockets that have answered since the last sweep.
+   *
+   * The heartbeat below said "drop dead sockets" and dropped nothing: it
+   * pinged, tracked no pongs and never called terminate(). A TCP connection
+   * whose peer vanished without a FIN - a laptop lid, dropped wifi, a NAT
+   * timeout - stays OPEN on this side indefinitely, so a half-open publisher
+   * held the session and its viewer count for minutes while /health went on
+   * reporting it. Audit finding 11.
+   */
+  const answered = new WeakSet<WebSocket>();
+  /** every accepted socket, marked alive now and again on each pong */
+  const track = (ws: WebSocket): WebSocket => {
+    answered.add(ws);
+    ws.on("pong", () => answered.add(ws));
+    return ws;
+  };
+
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (ws.readyState !== WebSocket.OPEN) continue;
+      if (!answered.has(ws)) {
+        // a whole round with no pong. close() waits for a handshake the peer
+        // will never send, which is the state we are trying to leave.
+        try {
+          ws.terminate();
+        } catch {
+          /* already gone */
+        }
+        continue;
+      }
+      answered.delete(ws);
       try {
         ws.ping();
       } catch {
         /* noop */
       }
     }
-  }, 30000);
+  }, opts.heartbeatMs ?? 30000);
 
   const port = opts.port ?? Number(process.env.RELAY_PORT || 8787);
   const host = opts.host || "0.0.0.0";

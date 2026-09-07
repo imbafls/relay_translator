@@ -119,7 +119,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 24 | The uplink fights a 4409 kick for ever; the 4401 branch was dead | `7aef02c` |
 | — | A phone that loads a dead link retried for ever instead of saying so *(found here, not in the audit)* | `0585354` |
 | 33 | `runtime:prepare` rotates the viewer link before checking the relay | `afd2156` |
-| 25 | Two concurrent model downloads collide on the shared VAD | *(this commit)* |
+| 25 | Two concurrent model downloads collide on the shared VAD | `f3ee3a9` |
+| 11c | The heartbeat pinged and dropped nothing, so a half-open peer held on | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -129,7 +130,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 |------|------|---------|------------------|
 | 3 | high | Control API: no credential, `Origin: null` admitted, `GET /link` unredacted. *(Also B5.)* | `packages/companion/src/controlServer.ts` |
 | 8 | high | Offline local STT has no backpressure and can never catch up: partials are gated on buffered samples rather than wall clock, and the worker queue is unbounded. **Cannot be verified on this machine** - both archive models in the models dir are `.part` files, which is B6's symptom, so the local engine has never run here. | `packages/relay/src/localSttWorker.ts` |
-| 11c | medium | **The last of finding 11.** The heartbeat pings without tracking pongs or calling `terminate()`, so a half-open publisher holds a session for minutes. The reconnect half is done. | `packages/relay/src/server.ts` |
 | 17 | medium | The flat 4 s kill timer discards the local STT worker's flush finals, so the last utterance before STOP never reaches viewers. | `packages/relay/src/localStt.ts` |
 | 27 | low | Changing `updateFeedUrl` has no effect until restart. | `apps/standalone/src/updater.ts` |
 | 28 | low | An unguarded `await startControl()` aborts startup before the tray and window exist. | `apps/standalone/src/main.ts` |

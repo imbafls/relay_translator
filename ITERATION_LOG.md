@@ -2369,3 +2369,34 @@ do with the fix. It asserts what is on disk now.
 `stageVad` also had to start writing a real 644 KB file instead of a 4-byte
 stub, or the new size check would have failed every existing test - which is the
 honest cost of checking something the helpers were only pretending to produce.
+
+### Turn 66 - Resilience & state (the last of finding 11: a heartbeat that dropped nothing)
+
+The comment said `// heartbeat: drop dead sockets`. It pinged every 30 s,
+tracked no pongs, and called `terminate()` never.
+
+That matters because a TCP connection whose peer has gone **without a FIN** - a
+laptop lid, dropped wifi, a NAT timeout - stays `OPEN` on this side
+indefinitely. So a half-open publisher held the session and its viewer count for
+minutes, and `/health` went on reporting it. The two earlier halves of finding
+11 made a *dead* pipeline honest; this one is about a peer that never says
+goodbye at all.
+
+Pongs are tracked in a `WeakSet` now, marked on accept and on every pong. A
+socket that misses a whole round is `terminate()`d, not `close()`d - `close()`
+waits for a closing handshake from a peer that has already gone, which is the
+state being escaped.
+
+**Simulating a half-open peer without a real network.** A client that stops
+reading its socket cannot parse a ping, so it never sends the pong - which is
+exactly what this looks like from the relay. `_socket.pause()` on the test
+client, and the sweep does the rest. `heartbeatMs` is a new option because the
+real interval is 30 s and the shape is what is under test, not the number.
+
+**Guards - two, one watched fail against its revert** (`expected 1 to be +0`).
+The other is the invariant that a client which *is* answering survives the
+sweep - a heartbeat that dropped everyone would pass the first test and be a
+far worse bug.
+
+**Finding 11 is now closed in all three parts:** the death is surfaced, the
+stream reconnects, and a peer that stopped answering is dropped.
