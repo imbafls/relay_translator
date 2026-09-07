@@ -4,6 +4,7 @@
   "private": true,
   "description": "Callout Relay desktop app: translated game comms to your friend's phone",
   "author": "Callout Relay",
+  "license": "MIT",
   "main": "dist/main.js",
   "scripts": {
     "build": "node build.mjs",

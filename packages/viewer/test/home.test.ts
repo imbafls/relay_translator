@@ -157,8 +157,15 @@ describe("the landing page", () => {
   });
 
   it("claims no licence the repository does not carry", () => {
-    // there is no LICENSE file and no license field anywhere in the workspace,
-    // so "MIT" on a public page would be a licensing statement we cannot back
-    expect(html).not.toMatch(/\bMIT\b/);
+    // The redesign said MIT in three places when there was no LICENSE file and
+    // no license field anywhere - a licensing statement nothing backed. There
+    // is a LICENSE now, so the page is allowed to say it; what still must not
+    // happen is the page claiming it while the file says otherwise or is gone.
+    const claimed = /\bMIT\b/.test(html);
+    const licensePath = path.resolve(__dirname, "..", "..", "..", "LICENSE");
+    const carried =
+      fs.existsSync(licensePath) && /^MIT License/.test(fs.readFileSync(licensePath, "utf8"));
+
+    expect(claimed && !carried).toBe(false);
   });
 });

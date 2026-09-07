@@ -2,6 +2,7 @@
   "name": "callout-relay",
   "version": "0.5.11",
   "private": true,
+  "license": "MIT",
   "description": "Real-time game comms relay: audio -> Deepgram STT -> Gemini translation -> phone/OBS subtitles",
   "engines": {
     "node": ">=20"
