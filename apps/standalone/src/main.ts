@@ -275,6 +275,9 @@ function bridgeBroadcasts(): void {
         latency: msg.latency,
         channel: msg.channel,
         speaker: msg.speaker,
+        // see the same note in relay/src/server.ts: this is `& SpeakerTag` and
+        // leaving `color` out is legal, silent, and invisible on the LAN
+        color: msg.color,
       });
     } else if (msg.type === "status") {
       uplink.sendStatus(msg.live, msg.message, msg.since);

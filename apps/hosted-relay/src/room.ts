@@ -30,6 +30,17 @@ import { formatToken, newSecret, secretsMatch } from "./tokens";
 import { markUsed, nextReapCheck, reapTick } from "./reap";
 import type { ReapableRoom, RoomIo } from "./reap";
 
+/**
+ * A six-digit hex colour, or nothing. A local copy of shared's
+ * safeSpeakerColor: this Worker takes no dependencies on purpose, and one
+ * regex is a smaller price than the first import into a bundle that has none.
+ */
+function safeColor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(v) ? v : undefined;
+}
+
 /** what a room is, between messages */
 interface RoomState {
   publisherSecret: string;
@@ -290,6 +301,17 @@ export class Room {
         latency: msg.latency,
         channel: msg.channel,
         speaker: msg.speaker,
+        // The whole SpeakerTag, or none of it. Dropping `color` here was
+        // invisible: the literal is typed `& SpeakerTag`, an absent optional
+        // field compiles, and LAN viewers - the ones anyone tests with - go
+        // nowhere near this hop, so colours worked everywhere they were looked at.
+        //
+        // Sanitised here rather than trusted. safeColor is a local copy of
+        // shared's safeSpeakerColor because this Worker deliberately carries no
+        // dependencies; the viewer sets it with style.setProperty and would
+        // ignore junk anyway, but the two relays should agree about what they
+        // pass on rather than one of them checking.
+        color: safeColor(msg.color),
       });
     }
   }

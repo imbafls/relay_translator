@@ -789,6 +789,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           latency: msg.latency,
           channel: msg.channel,
           speaker: msg.speaker,
+          // the whole SpeakerTag, or none of it. This literal is typed
+          // `& SpeakerTag`, so omitting `color` compiled cleanly and quietly
+          // dropped every speaker colour bound for an internet viewer.
+          color: msg.color,
         });
         return;
       }

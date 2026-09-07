@@ -223,3 +223,45 @@ describe("when the uplink drops", () => {
     expect(status.message).toBeTruthy();
   });
 });
+
+describe("what survives the hop to an internet viewer", () => {
+  /**
+   * A subtitle is re-emitted by hand at every hop, field by field, and each of
+   * those literals is typed `& SpeakerTag` - which HAS `color`. Two of the three
+   * simply did not copy it, so per-speaker colour worked on the LAN and silently
+   * did nothing for anyone watching over the internet. No error, no log, and
+   * TypeScript content throughout, because omitting an optional field is legal.
+   *
+   * This drives the real relay over real sockets: an uplink publishes a tagged
+   * caption, a viewer on that relay reads it back.
+   */
+  it("carries the speaker's colour, not just their name", async () => {
+    const phone = await connect(url(remote, "/ws/viewer", remote.state.viewerToken));
+    const up = await connect(url(remote, "/ws/uplink", remote.state.publisherToken));
+    await up.until(isType("ready"), "ready");
+
+    up.ws.send(
+      JSON.stringify({
+        type: "hello",
+        languages: { source: "en", target: "vi" },
+        translates: true,
+        since: 1_788_000_000_000,
+      }),
+    );
+    up.ws.send(
+      JSON.stringify({
+        type: "subtitle",
+        id: 1,
+        source: "rotate A, spike is down",
+        final: true,
+        channel: 1,
+        speaker: "OMER",
+        color: "#e0a43a",
+      }),
+    );
+
+    const line = await phone.until(isType("subtitle"), "the caption");
+    expect(line.speaker, "the name did not survive either").toBe("OMER");
+    expect(line.color, "the colour was dropped on the way to the viewer").toBe("#e0a43a");
+  });
+});
