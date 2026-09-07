@@ -120,7 +120,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | — | A phone that loads a dead link retried for ever instead of saying so *(found here, not in the audit)* | `0585354` |
 | 33 | `runtime:prepare` rotates the viewer link before checking the relay | `afd2156` |
 | 25 | Two concurrent model downloads collide on the shared VAD | `f3ee3a9` |
-| 11c | The heartbeat pinged and dropped nothing, so a half-open peer held on | *(this commit)* |
+| 11c | The heartbeat pinged and dropped nothing, so a half-open peer held on | `3a45667` |
+| 35 | Ghost interim rows that never resolve | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -136,7 +137,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | 30 | low | The Deepgram key validator repaints the live console as a setup placeholder. | `apps/standalone/renderer/app.ts` |
 | 32 | low | The error overlay paints on top of the previous transcript. | `apps/standalone/renderer/app.ts` |
 | 34 | low | A successful local-STT probe is discarded when the session already stopped. | `packages/relay/src/localStt.ts` |
-| 35 | low | Ghost interim rows that never resolve. | `packages/viewer/public/app.js` |
 | 36 | low | The session clock subtracts the streamer's epoch from the viewer's. | `packages/viewer/public/app.js` |
 
 Each entry in the audit carries a reproduced failure scenario and a suggested

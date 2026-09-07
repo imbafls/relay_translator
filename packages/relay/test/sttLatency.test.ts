@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { finalAudioEndSec, SAMPLE_RATE } from "../src/deepgram";
+import { finalAudioEndSec, SAMPLE_RATE, dispatchDeepgramMessage } from "../src/deepgram";
 
 /**
  * A real user's session log carried "[stt 0ms]" on roughly 120 consecutive
@@ -77,4 +77,52 @@ describe("what the badge would report", () => {
     expect(SAMPLE_RATE).toBe(16000);
   });
 
+});
+
+describe("an utterance that came to nothing", () => {
+  /**
+   * Audit finding 35(b). `if (!text) return;` ran before the `is_final` branch,
+   * so an EMPTY FINAL never reached `onFinal`. The session reserves a segment
+   * id when a channel's first partial arrives and only clears it on a final, so
+   * that id was never released - and the viewer kept a blinking half-caption
+   * for ever, because `trimRows` excludes `.interim` and nothing ages it out.
+   *
+   * An empty final is Deepgram saying "that came to nothing", which is exactly
+   * the message the reservation was waiting for.
+   */
+  const results = (over: Record<string, unknown>): Parameters<typeof dispatchDeepgramMessage>[0] => ({
+    type: "Results",
+    channel: { alternatives: [{ transcript: "", words: [] }] },
+    ...over,
+  });
+
+  it("passes an empty final through, so the reserved id is released", () => {
+    const finals: { text: string; channel: number }[] = [];
+    dispatchDeepgramMessage(results({ is_final: true, channel_index: [1, 2] }), {
+      onFinal: (text, meta) => finals.push({ text, channel: meta.channel }),
+    });
+    expect(finals, "an empty final was swallowed and the interim left hanging").toHaveLength(1);
+    expect(finals[0]).toEqual({ text: "", channel: 1 });
+  });
+
+  it("still ignores an empty partial, which is only silence between words", () => {
+    const partials: string[] = [];
+    dispatchDeepgramMessage(results({ is_final: false }), { onPartial: (text) => partials.push(text) });
+    expect(partials).toEqual([]);
+  });
+
+  it("still carries a real final", () => {
+    const finals: string[] = [];
+    dispatchDeepgramMessage(
+      { type: "Results", is_final: true, channel: { alternatives: [{ transcript: " rush B ", words: [] }] } },
+      { onFinal: (text) => finals.push(text) },
+    );
+    expect(finals).toEqual(["rush B"]);
+  });
+
+  it("ignores a frame that is not a result at all", () => {
+    let called = false;
+    dispatchDeepgramMessage({ type: "Metadata", is_final: true }, { onFinal: () => (called = true) });
+    expect(called).toBe(false);
+  });
 });

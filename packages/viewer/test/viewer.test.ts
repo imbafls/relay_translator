@@ -491,3 +491,57 @@ describe("a link that is no longer valid", () => {
     expect(shown("live")).toBe(false);
   });
 });
+
+describe("an interim that never resolves", () => {
+  /**
+   * Audit finding 35(a). Two paths stranded a blinking half-caption.
+   *
+   * Only the `status` branch cleared interims when the stream was not live;
+   * the `hello` branch did not. So a viewer disconnected while
+   * `status live:false` went out reconnects onto `hello live:false` and keeps
+   * a half-finished line under an OFF AIR badge - and `trimRows` excludes
+   * `.interim`, so it never ages out.
+   *
+   * And an empty final - Deepgram saying "that utterance came to nothing" -
+   * now reaches the page, where it has to remove the interim without leaving
+   * an empty row in its place.
+   */
+  const interims = (): number => document.querySelectorAll("#lines .row.interim").length;
+  const rows = (): number => document.querySelectorAll("#lines .row:not(.interim)").length;
+
+  it("clears a half-caption when a reconnect lands on a dead stream", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "partial", id: 1, source: "enemy mid", channel: 0 });
+    expect(interims(), "no interim was created, so this proves nothing").toBe(1);
+
+    // the reconnect: hello, not status, and the stream is no longer live
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: false, translates: true });
+    expect(interims(), "a blinking half-caption survived under an OFF AIR badge").toBe(0);
+  });
+
+  it("keeps the interim while the stream is still live", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "partial", id: 1, source: "enemy mid", channel: 0 });
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    expect(interims()).toBe(1);
+  });
+
+  it("removes the interim on an empty final without leaving an empty row", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "partial", id: 1, source: "enemy m", channel: 0 });
+    push({ type: "subtitle", id: 1, source: "", final: true, channel: 0 });
+
+    expect(interims(), "the reserved interim was left behind").toBe(0);
+    expect(rows(), "an empty caption was rendered").toBe(0);
+  });
+
+  it("still renders a final that has something in it", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "partial", id: 1, source: "enemy m", channel: 0 });
+    push({ type: "subtitle", id: 1, source: "enemy mid", final: true, channel: 0 });
+
+    expect(interims()).toBe(0);
+    expect(rows()).toBe(1);
+    expect(lineTexts()).toEqual(["enemy mid"]);
+  });
+});

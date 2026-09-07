@@ -338,6 +338,12 @@
     markOverlayLine();
   }
 
+  /** drop every in-progress line; the stream that was producing them is gone */
+  function clearInterims() {
+    for (const r of interims.values()) r.remove();
+    interims.clear();
+  }
+
   function showSubtitle(msg) {
     let el = rows.get(msg.id);
     if (!el) {
@@ -347,6 +353,10 @@
         interim.remove();
         interims.delete(ch);
       }
+      // an EMPTY final is the engine saying that utterance came to nothing. It
+      // exists to release the reserved id and retire the interim above -
+      // rendering it would leave a blank row where the half-caption was.
+      if (!msg.source && !msg.target) return;
       el = makeRowEl(stamp(), msg.source, msg.target, msg.speaker, msg.color);
       rows.set(msg.id, el);
       linesEl.appendChild(el);
@@ -458,13 +468,15 @@
           applyStyle();
           $("hudLangs").textContent = langsLabel(msg);
           applyLive(msg.live, msg.since);
+          // same as `status` below. A viewer disconnected while status
+          // live:false went out reconnects onto THIS branch, and without it
+          // keeps a blinking half-caption under an OFF AIR badge for ever -
+          // trimRows excludes .interim, so nothing ages it out.
+          if (!msg.live) clearInterims();
           break;
         case "status":
           applyLive(msg.live, msg.since);
-          if (!msg.live) {
-            for (const r of interims.values()) r.remove();
-            interims.clear();
-          }
+          if (!msg.live) clearInterims();
           break;
         case "partial":
           showPartial(msg);

@@ -84,6 +84,43 @@ export function finalAudioEndSec(msg: {
   return undefined;
 }
 
+/**
+ * Turn one Deepgram frame into an event.
+ *
+ * Extracted from the socket handler so it can be reached at all: everything
+ * here is parsing and dispatch, and standing up a real connection to test it
+ * would be testing Deepgram.
+ *
+ * An empty transcript used to return before the `is_final` branch, so an EMPTY
+ * FINAL never reached `onFinal`. The session had already reserved a segment id
+ * for that channel's interim and only clears it on a final, so the id was never
+ * released and the viewer kept a blinking half-caption for ever - `trimRows`
+ * excludes `.interim`, so it never aged out either. An empty final is Deepgram
+ * saying "that utterance came to nothing", which is exactly the message the
+ * reservation was waiting for.
+ */
+export interface DeepgramResult {
+  type?: unknown;
+  is_final?: unknown;
+  start?: unknown;
+  channel_index?: unknown;
+  channel?: { start?: unknown; alternatives?: { transcript?: unknown; words?: { end?: unknown }[] }[] };
+}
+
+export function dispatchDeepgramMessage(msg: DeepgramResult, events: SttEvents): void {
+  if (msg?.type !== "Results") return;
+  const alt = msg.channel?.alternatives?.[0];
+  const text: string = String(alt?.transcript ?? "").trim();
+  const channel = Array.isArray(msg.channel_index) ? Number(msg.channel_index[0]) || 0 : 0;
+  if (msg.is_final) {
+    events.onFinal?.(text, { audioEndSec: finalAudioEndSec(msg), channel });
+    return;
+  }
+  // an empty PARTIAL is just silence between words and says nothing
+  if (!text) return;
+  events.onPartial?.(text, channel);
+}
+
 export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStream {
   const channels = cfg.channels && cfg.channels > 1 ? cfg.channels : 1;
   const params = dgParams(cfg.model, cfg.language, channels);
@@ -97,17 +134,7 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
   ws.on("open", () => events.onOpen?.());
   ws.on("message", (data: RawData) => {
     try {
-      const msg = JSON.parse(data.toString());
-      if (msg.type !== "Results") return;
-      const alt = msg.channel?.alternatives?.[0];
-      const text: string = (alt?.transcript || "").trim();
-      if (!text) return;
-      const channel = Array.isArray(msg.channel_index) ? Number(msg.channel_index[0]) || 0 : 0;
-      if (msg.is_final) {
-        events.onFinal?.(text, { audioEndSec: finalAudioEndSec(msg), channel });
-      } else {
-        events.onPartial?.(text, channel);
-      }
+      dispatchDeepgramMessage(JSON.parse(data.toString()), events);
     } catch {
       // ignore malformed frames
     }

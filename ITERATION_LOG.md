@@ -2400,3 +2400,40 @@ far worse bug.
 
 **Finding 11 is now closed in all three parts:** the death is surfaced, the
 stream reconnects, and a peer that stopped answering is dropped.
+
+### Turn 67 - Client UI (audit finding 35: a caption that never finishes)
+
+Two paths stranded a blinking half-caption on a phone, and `trimRows` excludes
+`.interim`, so neither ever aged out.
+
+**(a) The reconnect lands on the wrong branch.** Only `status` cleared interims
+when the stream was not live; `hello` did not. A viewer disconnected while
+`status live:false` went out reconnects onto `hello live:false` and keeps a
+half-finished line under an OFF AIR badge, indefinitely.
+
+**(b) An empty final never arrived.** `if (!text) return;` ran *before* the
+`is_final` branch in the Deepgram handler, so an empty final was dropped. The
+session reserves a segment id when a channel's first partial arrives and clears
+it only on a final - so that id was never released, and the interim it belonged
+to had nothing coming to retire it. An empty final is the engine saying "that
+utterance came to nothing", which is precisely the message the reservation was
+waiting for.
+
+An empty **partial** is still ignored; that really is just silence between
+words.
+
+**Three changes for two paths.** The relay passes empty finals through; the
+viewer clears interims on a dead `hello` too; and `showSubtitle` retires the
+interim and then returns without rendering, because an empty final that drew a
+row would leave a blank line where the half-caption was.
+
+**Reaching the relay half at all.** `dispatchDeepgramMessage` came out of the
+socket handler - it is entirely parsing and dispatch, and standing up a real
+connection to test it would be testing Deepgram, not this. The extraction is
+what makes "an empty final reaches onFinal" assertable.
+
+**Guards - eight, three watched fail against their own reverts** (the empty
+final dropped again; interims not cleared on `hello`; an empty final rendered as
+a row). The rest are the invariants that keep the fix honest: an empty *partial*
+is still ignored, a real final still renders, a live `hello` does not wipe an
+interim mid-sentence, and a non-Results frame is still ignored.
