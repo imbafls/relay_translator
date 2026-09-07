@@ -2779,3 +2779,32 @@ What this turn produced is evidence, and it is written into `docs/OPEN-WORK.md`
 with the runtime versions and the numbers. The Electron trap is written into
 `CLAUDE.md`, because the next session would otherwise reach the same wrong
 conclusion the same way.
+
+### Turn 78 - The finding 8 guards were flaky, and CI caught it
+
+Turn 76's two backpressure guards fed their frames in a plain loop, yielding to
+the event loop every hundred. That hands six thousand messages to the port as
+fast as the loop allows, and on a machine under load the worker thread has not
+been scheduled by the time the loop is sixty seconds of audio ahead - so a
+perfectly healthy worker trips the backlog bound and the test fails for a
+reason with nothing to do with what it is checking.
+
+It passed on this desktop and went red on the Linux runner. That is the worst
+version of a bad test: green where it is written, red where it is read.
+
+The pace is now set by the worker, not by the box - the stand-in reports each
+frame it took, and the feeder stays within twenty seconds of that. A live
+session cannot get further ahead than this either, because audio arrives from a
+microphone in real time; the loop was the only thing that ever could.
+
+Two smaller things came out of fixing it. The wait is bounded and gives up
+after one stall, because an unbounded one turns every real failure into a
+twenty-second timeout that names nothing - the first attempt did exactly that.
+And the assertions are ordered so the pointed one fires first: the sanity check
+that the worker took anything at all was firing before the assertion about
+silence, and reporting the wrong thing.
+
+**Re-proved after the change** - both reverts still go red, now in about two
+seconds and with the message that names the defect. Then run five times over,
+and once more with four busy cores alongside it, which is the condition the
+runner failed under.

@@ -656,6 +656,43 @@ describe("a speech engine that cannot keep up", () => {
   /** 100 ms frames; 16 kHz mono 16-bit */
   const secondsOf = (n: number): number => Math.round(n * 10);
 
+  /**
+   * Feed frames the way a session does - fast, but never getting further ahead
+   * of the worker than a live microphone could.
+   *
+   * A plain `for` loop cannot do this. It hands 6000 messages to the port as
+   * fast as the event loop allows, and on a loaded machine the worker thread
+   * has not been scheduled by the time the loop is 60 s of audio ahead - so a
+   * worker that is perfectly healthy trips the backlog bound, and the test
+   * fails for a reason that has nothing to do with what it is checking. It
+   * passed on a fast desktop and failed on CI, which is the worst version of
+   * that. `consumed` is whatever the stand-in worker reports back, so the pace
+   * is set by the worker rather than by how quick the box is.
+   */
+  async function feedPaced(
+    stream: { sendAudio(b: Buffer): boolean },
+    total: number,
+    consumed: () => number,
+  ): Promise<number> {
+    let refused = 0;
+    /** the worker stopped taking frames; waiting for it again just burns the timeout */
+    let stalled = false;
+    for (let i = 0; i < total; i += 1) {
+      if (!stream.sendAudio(frame())) refused += 1;
+      if (!stalled && i % 50 === 0) {
+        // 20 s of audio of slack: well inside the 60 s bound, and enough that
+        // the pacing itself never becomes the thing under test. Bounded, so a
+        // worker that has stopped taking anything ends the feed and lets the
+        // assertion below say what went wrong - an unbounded wait here turns
+        // every failure into a timeout that names nothing.
+        const until = Date.now() + 2000;
+        while (i - consumed() > 200 && Date.now() < until) await new Promise((r) => setTimeout(r, 1));
+        if (i - consumed() > 200) stalled = true;
+      }
+    }
+    return refused;
+  }
+
   it("stops taking audio once the decoder is minutes behind, and says so", async () => {
     const models = tmp();
     stageModel(models, "local-sense-voice", { vad: true });
@@ -704,7 +741,12 @@ const { parentPort } = require("worker_threads");
 let sec = 0;
 parentPort.on("message", (msg) => {
   if (msg.type === "init") parentPort.postMessage({ type: "ready" });
-  else if (msg.type === "audio") { sec += 0.1; parentPort.postMessage({ type: "progress", fedSec: sec }); }
+  else if (msg.type === "audio") {
+    sec += 0.1;
+    parentPort.postMessage({ type: "progress", fedSec: sec });
+    // nothing to transcribe, but the test needs to see the frame was taken
+    parentPort.postMessage({ type: "partial", text: "", channel: 0 });
+  }
   else if (msg.type === "close") process.exit(0);
 });
 `,
@@ -715,22 +757,27 @@ parentPort.on("message", (msg) => {
     const isOpen = new Promise<void>((r) => {
       opened = r;
     });
+    let taken = 0;
     const stream = createLocalSttStream(
       { modelsDir: models, workerPath: file },
       { model: "local-moonshine-tiny", language: "en", channels: 1 },
-      { onOpen: () => opened(), onError: (m) => errors.push(m), onClose: () => {} },
+      {
+        onOpen: () => opened(),
+        onPartial: () => {
+          taken += 1;
+        },
+        onError: (m) => errors.push(m),
+        onClose: () => {},
+      },
     );
     await isOpen;
 
-    let refused = 0;
-    for (let i = 0; i < secondsOf(600); i += 1) {
-      if (!stream.sendAudio(frame())) refused += 1;
-      if (i % 100 === 0) await new Promise((r) => setImmediate(r));
-    }
+    const refused = await feedPaced(stream, secondsOf(600), () => taken);
     await new Promise((r) => setTimeout(r, 50));
     stream.close();
 
     expect(refused, "ten minutes of silence was read as ten minutes of backlog").toBe(0);
+    expect(taken, "the worker never took a frame, so this test proves nothing").toBeGreaterThan(secondsOf(500));
     expect(errors, "a silent room was reported as an engine that cannot catch up").toEqual([]);
   }, 20000);
 
@@ -756,6 +803,7 @@ parentPort.on("message", (msg) => {
     );
 
     const errors: string[] = [];
+    let answered = 0;
     let opened!: () => void;
     const isOpen = new Promise<void>((r) => {
       opened = r;
@@ -763,20 +811,24 @@ parentPort.on("message", (msg) => {
     const stream = createLocalSttStream(
       { modelsDir: models, workerPath: file },
       { model: "local-zipformer-en-20m", language: "en", channels: 1 },
-      { onOpen: () => opened(), onFinal: () => {}, onError: (m) => errors.push(m), onClose: () => {} },
+      {
+        onOpen: () => opened(),
+        onFinal: () => {
+          answered += 1;
+        },
+        onError: (m) => errors.push(m),
+        onClose: () => {},
+      },
     );
     await isOpen;
 
     // ten minutes of speech, answered as fast as it arrives
-    let refused = 0;
-    for (let i = 0; i < secondsOf(600); i += 1) {
-      if (!stream.sendAudio(frame())) refused += 1;
-      if (i % 100 === 0) await new Promise((r) => setImmediate(r));
-    }
+    const refused = await feedPaced(stream, secondsOf(600), () => answered);
     await new Promise((r) => setTimeout(r, 50));
     stream.close();
 
     expect(refused, "a healthy engine had its audio thrown away").toBe(0);
+    expect(answered, "the worker answered nothing, so this test proves nothing").toBeGreaterThan(secondsOf(500));
     expect(errors, "a healthy engine was reported as falling behind").toEqual([]);
   }, 20000);
 });
