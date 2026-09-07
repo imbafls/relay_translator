@@ -28,6 +28,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.10",
+    date: "2026-09-07",
+    headline: "Relay has its own address: textrelay.cc",
+    changes: [
+      {
+        kind: "changed",
+        text: "The link you send people is now textrelay.cc, which says what it is when it arrives in somebody's messages. Press GET AN ADDRESS THAT WORKS ANYWHERE and that is where you get one.",
+      },
+      {
+        kind: "added",
+        text: "There is a page at textrelay.cc now, with the Windows download on it, so you can point someone at one address instead of explaining where to get the app.",
+      },
+      {
+        kind: "fixed",
+        text: "A link opened over plain http is sent to https before anything is served. The link is the only thing protecting what is being said, and over http it crossed the network in the clear. The app has always made https links; this covers one retyped or pasted without it.",
+      },
+      {
+        kind: "changed",
+        text: "If you already have an address, nothing changes and nothing needs doing. The old one keeps working, and links you have handed out keep working.",
+      },
+    ],
+  },
+  {
     version: "0.5.9",
     date: "2026-09-07",
     headline: "Warnings before the mistake, not after it",
