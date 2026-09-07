@@ -28,6 +28,25 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.13",
+    date: "2026-09-07",
+    headline: "The download fix in 0.5.12 was corrupting the thing it downloaded",
+    changes: [
+      {
+        kind: "fixed",
+        text: "0.5.12 changed the way a model download is read so it could carry on after a dropped connection, and got it wrong: on a large model the data could be altered while it was still arriving. The model then failed with a message about the archive not unpacking, even though nothing was wrong with the file being downloaded. Downloads are correct again. If a model would not install on 0.5.12, it is worth trying once more on this version.",
+      },
+      {
+        kind: "fixed",
+        text: "This only ever affected 0.5.12. If you updated from 0.5.11 straight to this version you never had it. Nothing you already have is damaged either: the archive a model arrives in is checksummed as it unpacks, so altered data fails the unpack rather than being installed quietly. That is why the symptom was a model that would not install, and not a model that behaved oddly afterwards.",
+      },
+      {
+        kind: "fixed",
+        text: "The log no longer claims a download lost its connection when what really happened was a bad archive. Those are two different faults with two different answers, and the log was naming the wrong one directly above the line that named the right one.",
+      },
+    ],
+  },
+  {
     version: "0.5.12",
     date: "2026-09-07",
     headline: "A model download that loses its connection carries on where it stopped",
