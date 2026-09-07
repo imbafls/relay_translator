@@ -1,13 +1,22 @@
 # Callout Relay
 
-Real-time translated comms for games. Capture your mic, the game audio, or both
-at once, transcribe it in the cloud (Deepgram) or on your own PC (local
-sherpa-onnx models), translate it with Gemini, and your friend reads the
-subtitles on their phone or as a transparent OBS overlay - while you never leave
-the game.
+Live captions of what is being said, on someone else's phone. Capture your mic,
+the system audio, or up to three sources at once; transcribe in the cloud
+(Deepgram) or on your own PC (local sherpa-onnx models); optionally translate
+with Gemini. Whoever you send the link to reads it in a browser, or you put it
+on a stream as a transparent OBS overlay.
+
+Two things people use it for:
+
+- **Reading rather than listening.** Someone who is deaf or hard of hearing,
+  or in another room, or on a call they cannot hear well - they open a link on
+  a phone and read what is being said. No app, no account, no install on their
+  side.
+- **Translated game comms.** Your callouts in English, your friend reading
+  Vietnamese, neither of you leaving the game.
 
 ```
- mic + system audio (PCM 16 kHz, 1 or 2 channels)
+ up to 3 audio sources (PCM 16 kHz, interleaved 1-3 channels)
         │  WebSocket (token-authed)
         ▼
 ┌───────────────────┐      ┌──────────────────────────────┐
@@ -19,7 +28,7 @@ the game.
         ▲                  └──────────────────────────────┘
         │
 ┌───────┴───────────┐
-│  companion        │◀──── Stream Deck plugin (toggle key + PI wizard)
+│  companion        │◀──── Stream Deck plugin (toggle key + settings panel)
 │  (standalone app) │      local control API on 127.0.0.1:47477
 └───────────────────┘
 ```
@@ -28,9 +37,11 @@ the game.
 
 ```
 apps/standalone/     Electron app: settings UI, audio picker, copy-link, tray
-apps/streamdeck/     @elgato/streamdeck plugin: toggle key + 3-step PI wizard
+apps/streamdeck/     @elgato/streamdeck plugin: toggle key + settings panel
+apps/hosted-relay/   Cloudflare Worker: one room per user, pure caption fan-out
 packages/companion/  shared capture + relay client + local control API
-packages/relay/      Node server: audio in -> Deepgram -> Gemini -> WS out
+packages/relay/      the relay: audio in -> Deepgram or local sherpa-onnx ->
+                     Gemini -> WS out, and serves the viewer page
 packages/viewer/     phone page, token-gated, OBS transparent mode
 packages/shared/     types, config schema, wire protocol
 ```
@@ -40,7 +51,7 @@ packages/shared/     types, config schema, wire protocol
 | Stage | Target |
 | --- | --- |
 | Deepgram streaming (endpointing 300 ms) | ~300 ms |
-| Gemini 2.5 Flash (thinkingBudget 0) | ~400–900 ms |
+| Gemini 3.1 Flash-Lite (thinkingBudget 0) | ~400–900 ms |
 | Network + render | ~300 ms |
 | **Total (utterance end -> subtitle)** | **< 1.5 s** |
 
@@ -51,15 +62,22 @@ patches the same segment id when Gemini returns.
 
 ### Ready-made executables (no toolchain needed)
 
-Prebuilt installers live in `release/`:
+Every release attaches its own binaries:
+**[github.com/imbafls/relay_translator/releases/latest](https://github.com/imbafls/relay_translator/releases/latest)**
 
-| File | What it is |
+| Asset | What it is |
 | --- | --- |
-| `CalloutRelay-Setup-0.4.0.exe` | Windows installer (desktop + Start Menu shortcuts, updates itself) |
-| `CalloutRelay-Portable-0.4.0.exe` | Portable single exe - run from anywhere, nothing installed |
-| `callout-relay-server.exe` | Standalone relay server (for a VPS / second PC) |
-| `latest.yml` | Update feed the installed app reads - keep it next to the installer |
-| `SHA256SUMS.txt` | Checksums for the above |
+| `CalloutRelay-Setup-<version>.exe` | Windows installer (desktop + Start Menu shortcuts, updates itself) |
+| `CalloutRelay-Portable-<version>.exe` | Portable single exe - run from anywhere, nothing installed |
+| `callout-relay-server.exe` | Standalone relay server, Windows |
+| `callout-relay-server-linux` | The same relay, Linux |
+| `latest.yml` | Update feed the installed app reads |
+| `*.blockmap` | Lets an update download only the changed bytes |
+| `SHA256SUMS.txt` | Checksums for the binaries |
+
+Windows will warn about an unknown publisher: the installer is not code-signed
+yet. The sha512 in `latest.yml` is what the app checks before applying an
+update.
 
 The desktop apps embed the relay, the viewer page, the control API and the
 local speech engine - there are no dev servers, no Node.js install, no terminal.
@@ -70,7 +88,8 @@ you're done. The relay server exe is cloud-only (no local models).
 
 ```powershell
 pnpm install
-pnpm dist        # -> release/ (installer + portable + callout-relay-server.exe)
+pnpm dist        # installer + portable -> apps/standalone/release/
+                 # relay server exe     -> packages/relay/sea/
 ```
 
 API keys - either put them in `.env` at the repo root (gitignored, dev only):
@@ -80,42 +99,32 @@ DEEPGRAM_API_KEY=...
 GEMINI_API_KEY=...
 ```
 
-or paste them into the desktop app once (KEYS in the app footer). Keys are
-stored in `%APPDATA%\callout-relay\config.json` on Windows.
+or paste them into the desktop app once (**SETTINGS** in the app footer, or
+Ctrl and comma). Keys are stored in `%APPDATA%\callout-relay\config.json` on
+Windows.
 
 ## Updates
 
 The installed app checks for a new version 15 seconds after launch and every six
 hours after that, downloads it in the background, and installs it on the next
-restart - a live session is never interrupted. `KEYS → UPDATES` shows the running
-version, the last check, a manual **CHECK**, and a switch to turn the background
-checks off. When an update is staged, an amber chip appears in the footer and in
+restart - a live session is never interrupted. `SETTINGS → UPDATES` shows the
+running version, the last check, a manual **CHECK**, and a switch to turn the
+background checks off. When an update is staged, an amber chip appears in the footer and in
 the tray menu; clicking it restarts into the new version.
 
 The portable exe cannot replace itself, so it reports "portable build" and links
 to the releases page instead.
 
-By default the app reads the GitHub release for each tag. **That only works
-once the repo is public** - GitHub answers 404 on a private release feed, and
-the app reports "no release feed found" and offers the releases page instead.
+The app reads the GitHub release for each tag. The repo is public, so that feed
+answers without a token and needs no configuration.
 
-While it is private, or to host builds yourself, set `updateFeedUrl` in
-`KEYS → UPDATES` to any static directory serving `latest.yml` next to the
+To host builds yourself instead, set `updateFeedUrl` under
+`SETTINGS → ADVANCED` to any static directory serving `latest.yml` next to the
 installer. The relay can be that directory: it serves `<dataDir>/updates` at
 `/updates/`, and `/download` redirects to whatever `latest.yml` names, which
-gives you one stable link to hand out.
-
-> **The box at `relay.supr.systems` is dormant and out of date.** It still
-> answers, and `/download` still hands out **0.5.1** - the build with the
-> whisper crash. Nothing points at it: the app ships with `updateFeedUrl`
-> empty and takes updates from GitHub Releases, which always has the current
-> version. Do not give anyone that download link. Either refresh the box
-> (below) or shut it down - no code depends on it.
-
-To publish a build there, copy the installer, its `.blockmap` and `latest.yml`
-from the GitHub release into `/opt/callout-relay/data/updates/` on the box.
-Upload `latest.yml` last - it is what tells installed apps a new version exists.
-Nothing needs restarting.
+gives you one stable link to hand out. Only `https:` is accepted, or `http:` on
+loopback - the installer is unsigned, so the feed is the only thing deciding
+which binary runs.
 
 ## Releasing
 
@@ -123,25 +132,32 @@ Tagging is the whole release process - the `Release` workflow builds the
 installers, the update feed and both relay-server binaries, then attaches them to
 the GitHub release:
 
+Write the changelog entry **first** - `packages/shared/src/changelog.ts`, newest
+first, with a `version` matching the tag. A guard test fails the gate without
+it, and the same entry becomes both the in-app "what's new" panel and the
+GitHub release notes, so the two cannot drift.
+
 ```powershell
-pnpm version-bump 0.3.1
-git commit -am "Release v0.3.1"
-git tag -a v0.3.1 -m "v0.3.1"
-git push origin master v0.3.1
+pnpm version-bump 0.5.7
+git commit -am "Release v0.5.7"
+git tag -a v0.5.7 -m "v0.5.7"
+git push origin master v0.5.7
 ```
 
 The workflow refuses to build when the tag and `apps/standalone/package.json`
-disagree, which is what `pnpm version-bump` keeps in step. `CI` runs a build, a
-typecheck and a renderer element-id check on every push and pull request.
+disagree, which is what `pnpm version-bump` keeps in step - so an `rc` tag can
+never build, and `workflow_dispatch` is the way to re-run one.
 
-Once the repo is public that is the whole release. If you are mirroring builds
-to a relay box (see Updates), copy them across afterwards:
+`CI` runs the whole gate on every push and pull request: `pnpm -r build`,
+`pnpm -r typecheck`, `pnpm typecheck:test`, `pnpm test`,
+`node scripts/check-renderer-ids.mjs` and `pnpm smoke`, plus a second job that
+builds and tests the Linux relay binary on Linux.
+
+The publish job attaches a bare compare link as the release notes. Replace it
+with the prose from the changelog:
 
 ```powershell
-gh release download v0.3.2 -p "CalloutRelay-Setup-*.exe" -p "*.blockmap" -p latest.yml -D out
-node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.2.exe /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.2.exe
-node scripts/vps.mjs put out\CalloutRelay-Setup-0.3.2.exe.blockmap /opt/callout-relay/data/updates/CalloutRelay-Setup-0.3.2.exe.blockmap
-node scripts/vps.mjs put out\latest.yml /opt/callout-relay/data/updates/latest.yml
+node scripts/release-notes.mjs 0.5.7 | gh release edit v0.5.7 --notes-file -
 ```
 
 ## Run
@@ -158,30 +174,38 @@ every control sits in one signal-chain strip underneath it
   = a Deepgram key, checked as you paste; **Local** = pick a model and download
   it), a Gemini key (optional - skip it for English-only captions), and your
   audio source(s) plus where captions go. Run it again any time from
-  `KEYS → RUN SETUP AGAIN` or the tray menu.
+  `SETTINGS → RUN SETUP AGAIN` or the tray menu.
 - **01 SOURCE** picks `Default microphone` or `System audio (game + comms)`
   (system audio uses Windows loopback capture - no stereo mix fiddling). The
-  `+` row adds a **second source**: mic + system audio captions your own
-  callouts *and* the voice chat, and every line is tagged `YOU` / `CHAT` (two
-  mics: `A` / `B`). Each source is transcribed on its own channel - with
-  Deepgram that is `multichannel=true` and both channels are billed. While live
-  the block turns into an input level meter.
+  `+` rows add a second and third source: mic + system audio captions your own
+  voice *and* everyone else's. Each source is transcribed on its own channel -
+  with Deepgram that is `multichannel=true` and every channel is billed. While
+  live the block turns into an input level meter.
+
+  With two or more sources every caption carries a tag: `YOU` and `CHAT` by
+  default, and `CH3` for a third. Rename them and pick their colours under
+  `SETTINGS → SPEAKER NAMES` - useful when the sources are two people rather
+  than you and the room.
 - **02 TRANSCRIBE** lists the cloud models and the local ones. Local models run
   on your CPU through sherpa-onnx, cost nothing, and never send audio anywhere;
   pick one and hit `DOWNLOAD` in the meta line (or manage them under
-  `KEYS → LOCAL SPEECH MODELS`). Models live in
+  `SETTINGS → LOCAL SPEECH MODELS`). Models live in
   `%APPDATA%\callout-relay\models\<model-id>\`.
 - **03 TRANSLATE** holds the language pair and the on/off toggle. It starts
   **off** - a fresh install captions what it hears and nothing else. Add a Gemini
   key and switch it on to get a second column; with no key it greys out and the
   stage stays a single caption column.
 - **04 OUTPUT** chooses Phone, OBS, or Both. OBS is served entirely from this PC
-  and never needs a relay; phone links need one to leave your LAN.
-- Hit **START SESSION**, then **COPY** the link in the footer and send it to your
-  friend. `unique` link mode mints a fresh link per session; rotate any time with
-  **NEW**.
-- **KEYS** opens keys & relay settings, **LOG** shows the detailed session log
-  with per-line latency. `Esc` returns to the stage.
+  and never needs a relay; phone links need one to leave your network - see
+  **Sending someone the link** below.
+- Hit **START SESSION**, then **COPY** the link in the footer and send it to
+  whoever is reading. The link is masked on screen - click it to read it - and
+  COPY still copies the real one. `unique` link mode mints a fresh link per
+  session; **Fixed** keeps one alive, which is what an OBS browser source
+  needs. **NEW** rotates it and kicks whoever is on the old one.
+- **SETTINGS** (or Ctrl and comma) opens everything you can change, **LOG**
+  shows the detailed session log with per-line latency. `Esc` returns to the
+  stage.
 - Closing the window hides to tray - capture keeps running mid-game. The tray
   menu can start/stop and rotate the link without opening the app.
 - Settings changes (model / language / audio source) apply live: the session
@@ -190,55 +214,83 @@ every control sits in one signal-chain strip underneath it
 The phone viewer, OBS overlay and Stream Deck property inspector share the same
 design; `DESIGN.md` is the spec they are all built against.
 
-### Relay standalone (VPS / remote friend)
+### Sending someone the link
 
-Optional, and currently unused. The relay runs fine embedded in the app -
-that is what serves LAN and OBS viewers - and a VPS only adds phone viewers
-reachable from outside your network. A single relay also serves exactly ONE
-streamer: a second publisher evicts the first, so it cannot be shared.
-`apps/hosted-relay` is the multi-tenant answer if that is what you want.
+**A fresh install is LAN-only by construction.** The app runs its own relay on
+port 8787; that serves anyone on the same wifi, and an OBS browser source on the
+same PC. A phone on mobile data cannot reach it. That is the default, not a
+misconfiguration.
 
-The existing box, for reference:
+To get a link that opens anywhere:
 
-- **Public name:** `relay.supr.systems` (TLS via the Traefik already on the box)
-- **Host:** `187.124.87.202` (Hostinger, Ubuntu 24.04)
-- **Service:** `systemctl status callout-relay` (auto-starts on boot, restarts on crash)
-- **Install dir:** `/opt/callout-relay/` - binary + `.env` (keys) + `data/relay-state.json` (tokens)
-- **Viewer link:** `https://relay.supr.systems/watch/<viewerToken>`
-- **Logs:** `journalctl -u callout-relay -f`
+> `SETTINGS` → **WHO CAN OPEN IT** → **GET AN ADDRESS THAT WORKS ANYWHERE**
 
-Set `relayUrl` to `wss://relay.supr.systems` in `KEYS`; the phone link derives its
-`https://` base from it, so nothing else needs configuring. Link mode is `fixed`,
-so the viewer link is stable across sessions - rotate only when you want to kick
-everyone off.
+One press. It claims a private room on the hosted relay, stores the address and
+token for you, and the chip changes from `THIS NETWORK ONLY` to `ANYONE WITH THE
+LINK`. Nothing to type, no account, and the button disappears afterwards -
+claiming a second room would orphan a link you may already have sent.
 
-**How the TLS is wired.** Traefik terminates on 443 and forwards to the relay on
-`127.0.0.1:8787`, including WebSocket upgrades. The route is a file-provider
-rule in `/docker/traefik/dynamic/relay.yml`; Traefik watches that directory, so
-editing it needs no restart. Port 8787 is still open directly for plain HTTP,
-which is what makes a LAN fallback work.
+The person reading needs nothing at all: they open the URL in a phone browser.
+No app, no install, no sign-in. They can set their own text size, font, colours
+and theme with the `AA` button; those belong to their device, so your OBS overlay
+and their phone can look completely different.
 
-To redeploy after a rebuild:
+**What the hosted relay is.** A Cloudflare Worker, one room per user, in
+`apps/hosted-relay/`. It does **no transcription and no translation** and holds
+no API keys - the transcript is made on your PC, and the relay only passes
+finished captions on to whoever holds the link. One publisher per room: a second
+copy of the app on the same token evicts the first.
+
+**The link is the only credential.** Anyone who has it can read the captions -
+no password, no expiry, no device check. Treat it like one. The app masks it on
+screen for that reason; click it to read it, or use COPY. **NEW** mints a fresh
+link and disconnects everyone on the old one.
+
+**On the local relay only one device can watch at a time.** The viewer socket map
+is keyed by the token, so a second device opening the same link kicks the first
+(`another device opened this link`). The OBS browser source counts as a viewer on
+that same token, so a phone and an overlay fight each other on a LAN-only setup.
+Claiming a room fixes it: the hosted relay broadcasts to as many viewers as you
+like, so phones go there while OBS keeps the local link to itself.
+
+### Running your own relay
+
+Optional. The app already carries a relay, and the button above covers the remote
+case - this is for pointing the app at a relay you control instead.
+
+`packages/relay` is that server, shipped as `callout-relay-server.exe` and
+`callout-relay-server-linux` on every release. Unlike the hosted Worker it does
+the real work, so it needs the keys:
+
+- Set `DEEPGRAM_API_KEY` and `GEMINI_API_KEY` in its environment, plus
+  `RELAY_PUBLISHER_TOKEN` and `RELAY_VIEWER_TOKEN`. Without those last two it
+  mints random tokens that exist only on that machine, and you cannot point the
+  app at it without reading them off the box.
+- Open `RELAY_PORT` (default 8787).
+- In the app, `SETTINGS → ADVANCED`: **RELAY URL** `ws://your-server:8787` and
+  **PUBLISH TOKEN** to match. `Public base URL` is for tunnels
+  (`ngrok` / `cloudflared`).
+- It serves exactly ONE streamer - a second publisher evicts the first - so it
+  cannot be shared. `apps/hosted-relay` is the multi-tenant answer, and is what
+  the button uses.
+
+Tokens persist in `relay-state.json` in its data dir (`%APPDATA%\callout-relay\`
+on Windows, next to the exe otherwise), so the viewer link survives restarts.
+
+Rotate the viewer link remotely on either relay:
+`POST /admin/rotate-viewer-token` with `Authorization: Bearer <publisher token>`.
+
+To deploy the hosted relay yourself (it is pinned to one Cloudflare account):
 
 ```powershell
-pnpm dist:relay                                  # rebuild + re-inject SEA binaries
-node scripts/vps.mjs put packages\relay\sea\callout-relay-server-linux /opt/callout-relay/callout-relay-server
-node scripts/vps.mjs exec "systemctl restart callout-relay"
+pnpm deploy:hosted
+node apps/hosted-relay/scripts/verify-deploy.cjs https://relay.supr.systems
+node apps/hosted-relay/scripts/verify-isolation.cjs https://relay.supr.systems
 ```
 
-`scripts/vps.mjs` wraps SSH (exec/put) using the credentials in
-`F:\Ai\_projects\_secrets\hostinger_vps.*`.
-
-- Tokens persist in `%APPDATA%\callout-relay\relay-state.json` (or the platform
-  equivalent - on the server: `relay-state.json` next to the exe if `%APPDATA%`
-  is missing), so the viewer link is stable across restarts.
-- For a hosted relay, set `DEEPGRAM_API_KEY` + `GEMINI_API_KEY` and
-  `RELAY_PUBLISHER_TOKEN` / `RELAY_VIEWER_TOKEN` in the environment, open
-  `RELAY_PORT` (default 8787), then point the desktop app at it via
-  **Relay URL** (`ws://your-server:8787`) and paste the matching tokens into
-  the app settings. `Public base URL` is for tunnels (`ngrok`/`cloudflared`).
-- Rotate the viewer link remotely:
-  `POST /admin/rotate-viewer-token` with `Authorization: Bearer <publisher token>`.
+Run both verify scripts after any deploy. The Worker serves the viewer page from
+`packages/viewer/public`, so deploying from a dirty tree publishes whatever is
+in it - which is how the live page once ended up four fixes behind the repo.
 
 ### Stream Deck plugin
 
@@ -246,8 +298,8 @@ node scripts/vps.mjs exec "systemctl restart callout-relay"
 2. Copy `apps/streamdeck/com.callout-relay.sdPlugin/` into
    `%appdata%\Elgato\StreamDeck\Plugins\`
 3. Restart Stream Deck. Drop **Callout Relay → Toggle Relay** on a key.
-4. The property inspector is the 3-step wizard: **Model → Audio → Link**
-   (copy / rotate the viewer link right from the PI).
+4. The property inspector is one panel: the viewer link with COPY and NEW, then
+   `01 SOURCE`, `02 TRANSCRIBE`, `03 TRANSLATE` and `04 MODEL`.
 5. The key goes green **LIVE** whenever a session is running - regardless of
    whether it was started from the app, tray, or the key itself.
 
@@ -261,8 +313,15 @@ the tray anyway).
 
 - Mobile-friendly dark UI with the last few callout lines.
 - `?obs=1` - transparent background, only the latest subtitle pair, sized for
-  OBS browser sources (add it as a Browser source, 1920x1080).
-- The link is the token: whoever has it can watch. Rotate to kill old viewers.
+  OBS browser sources (add it as a Browser source, 1920x1080). The OBS link is
+  the same token with this appended.
+- `?settings=1` - pins the display-settings bar, which in OBS otherwise only
+  appears on hover. This is what `SETTINGS → OPEN CAPTION VIEW` uses. Add
+  `&bar=0` to drop the amber marker.
+- The link is the token: whoever has it can watch, and there is nothing else
+  checked. **NEW** rotates it and kicks everyone on the old one.
+- On the app's own relay only one device can be connected at a time; the
+  hosted relay has no such limit. See **Sending someone the link**.
 
 ## Config schema
 
@@ -270,15 +329,26 @@ the tray anyway).
 {
   "stt": "deepgram-nova-3",
   "translation": "gemini-3.1-flash-lite",
-  "audioSource": "default-mic",
-  "audioSource2": "system-loopback",
+  "sources": ["default-mic", "system-loopback"],
+  "sourceLabels": ["", ""],
+  "sourceColors": ["#e0a43a", "#7fb6d9"],
   "languages": { "source": "en", "target": "vi" },
   "translationEnabled": false,
+  "profanityFilter": true,
+  "showLatency": true,
   "linkMode": "unique",
   "output": "phone",
+  "autoUpdate": true,
+  "relayPort": 8787,
   "setupDone": true
 }
 ```
+
+`sources` is the authoritative list, up to three entries; `audioSource` and
+`audioSource2` still exist for older configs and are deprecated. `relayUrl`,
+`publisherToken`, `publicBaseUrl` and `updateFeedUrl` are only present once set.
+`profanityFilter` masks the source line for viewers, not the translation, and
+its word list is English only - it is a courtesy, not a guarantee.
 
 Notes on models:
 - `deepgram-nova-3` - fastest, best for English comms.
@@ -292,9 +362,19 @@ Hugging Face mirrors, downloaded file by file by the app):
 | id | what | size |
 | --- | --- | --- |
 | `local-zipformer-en-20m` | streaming English, word-by-word partials, lowest latency | 44 MB |
-| `local-parakeet-tdt-0.6b-v3` | NVIDIA Parakeet TDT 0.6B v3 - best accuracy, English + 24 European languages | 670 MB |
+| `local-zipformer-en` | streaming English, larger | 68 MB |
+| `local-nemotron-streaming` | Nemotron streaming 0.6B - live words, heavy | 651 MB |
+| `local-moonshine-tiny` | English utterances, very small | 118 MB |
+| `local-moonshine-base` | English utterances, more accurate | 274 MB |
+| `local-whisper-tiny-en` | Whisper Tiny, English | 99 MB |
+| `local-whisper-turbo` | Whisper Turbo - ~100 languages, slowest | 989 MB |
 | `local-sense-voice` | SenseVoice Small - zh / en / ja / ko / yue | 240 MB |
-| `local-whisper-small` | Whisper Small - ~100 languages incl. Vietnamese, slowest | 375 MB |
+| `local-parakeet-tdt-0.6b-v3` | NVIDIA Parakeet TDT 0.6B v3 - best accuracy, English + 24 European languages | 670 MB |
+| `local-parakeet-tdt-0.6b-v2` | the previous Parakeet | 631 MB |
+
+The app groups these into LIGHT / MEDIUM / HEAVY and recommends a tier from the
+machine it is running on. `packages/shared/src/index.ts` is the catalogue of
+record - the table above will drift before that does.
 
 Streaming models decode as you speak; the others segment speech with silero
 VAD (1 MB, fetched alongside) and decode each utterance, re-decoding the open
@@ -304,32 +384,72 @@ never stalls. Parakeet decodes a 6 s utterance in ~0.6 s on a desktop CPU.
 ## Testing
 
 ```powershell
-pnpm smoke      # full relay e2e without API keys (mock STT + mock Gemini, 1 and 2 channels)
+pnpm -r build                      # do this first on a clean checkout - shared
+                                   # emits the .d.ts everything else reads
+pnpm test                          # the whole suite
+pnpm typecheck:test                # tests live outside each package's rootDir,
+                                   # so `pnpm -r typecheck` does not see them
+node scripts/check-renderer-ids.mjs
+pnpm smoke                         # full relay e2e without API keys
+```
+
+Those six, in that order, are what CI runs and what a release has to pass.
+
+Deeper, against real services or a real model:
+
+```powershell
 node packages/relay/scripts/real-pipeline.mjs <wav>   # real Deepgram + Gemini
 node packages/relay/scripts/local-stt-test.mjs local-parakeet-tdt-0.6b-v3 <16k-mono.wav> --stereo
                 # local model through the worker; --stereo fakes a second source
 ```
 
+The relay tests stand up a real `startRelay` on an ephemeral port and talk to it
+over real WebSockets; the renderer and viewer tests run under happy-dom against
+the real markup. Nothing mocks the relay or the translation state machine, and
+it is worth keeping that way.
+
 ## Troubleshooting
 
-- **Friend can't open the link** - same Wi-Fi? Check Windows Firewall for the
-  Node/Electron inbound rule on port 8787. Different network → run the relay
-  on a VPS or tunnel it.
+- **They can't open the link** - on the same wifi, check Windows Firewall for
+  the Node/Electron inbound rule on port 8787. On a different network the LAN
+  link cannot reach them at all: `SETTINGS → WHO CAN OPEN IT → GET AN ADDRESS
+  THAT WORKS ANYWHERE`, then send the new link.
+- **Two people can't watch at once** - on the app's own relay only one device
+  can, and the second kicks the first. Claim an address (above); the hosted
+  relay has no such limit.
+- **The OBS overlay went blank after a restart** - the default link mode mints
+  a new link on every START, which kicks the browser source. `SETTINGS →
+  VIEWER LINK → Fixed` keeps one link alive. The overlay deliberately shows
+  nothing rather than painting THIS LINK HAS ENDED onto a broadcast.
 - **No system audio option works** - loopback capture needs the Electron app
   running on Windows; it auto-approves the capture prompt. Loopback follows the
   *default* output device, so route the voice chat there (or to the device you
   also game on) if you want it captioned.
 - **Local model won't start** - `02 TRANSCRIBE` says `NOT DOWNLOADED` until
   every file is on disk; a failed download shows `DOWNLOAD FAILED`, retry from
-  `KEYS → LOCAL SPEECH MODELS`. The standalone relay server exe has no local
-  engine - local models only work in the desktop app.
+  `SETTINGS → LOCAL SPEECH MODELS`. The standalone relay server exe has no
+  local engine - local models only work in the desktop app.
 - **`replaced by another session`** - a second publisher (e.g. a second app
   instance) took over; only one publisher connection is allowed.
 - **Kicked viewers** - someone opened the same link on another device, or the
   link was rotated. Send them the fresh link.
 
+## The other docs
+
+- `CLAUDE.md` - architecture, commands, the release process, and the traps.
+  Read it before debugging anything network-shaped.
+- `docs/OPEN-WORK.md` - the consolidated backlog, including the known-open
+  risks: the installer is unsigned, and the local control API on
+  `127.0.0.1:47477` has no credential, so a page you visit can start and stop
+  your session and rotate your link.
+- `ITERATION_LOG.md` - what was found and fixed, and how each fix was proved.
+- `apps/hosted-relay/README.md` - the Worker, what it costs, and what it does
+  not do.
+- `DESIGN.md` - the UI spec the app, the phone page and the Stream Deck panel
+  are all built against. It predates the SETTINGS rework, so read it as intent.
+
 ## Done when
 
-You and your friend run a real Valorant session, they read Vietnamese on their
-phone - your callouts tagged `YOU`, the voice chat tagged `CHAT` - and you never
-touch audio settings mid-game.
+Someone who cannot hear what is being said reads it on their phone, a few
+hundred milliseconds later, without installing anything - and whoever is
+talking never leaves what they were doing.

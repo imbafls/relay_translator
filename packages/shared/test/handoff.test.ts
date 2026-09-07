@@ -21,7 +21,12 @@ const scripts = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf
   string
 >;
 
-const DOCS = ["HANDOFF.md", "CLAUDE.md", "docs/OPEN-WORK.md"] as const;
+// README.md is in here because it is the one document a new person reads,
+// and it was the one nothing checked: it spent a day telling people to SSH
+// into a server that had been powered off, and to look in a directory that
+// is gitignored. A guard cannot catch a stale claim, only a dangling
+// pointer - but it would have caught several of those.
+const DOCS = ["HANDOFF.md", "CLAUDE.md", "docs/OPEN-WORK.md", "README.md"] as const;
 const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
 
 /**

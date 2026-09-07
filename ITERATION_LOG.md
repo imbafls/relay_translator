@@ -2927,3 +2927,45 @@ decision - confirmed in the browser, not just asserted: the footer reads
 title, and a new link arriving already revealed). The third revert had to be
 redone: `if (false)` narrowed a timer handle to `never` and would not compile,
 which proves nothing, so it became a one-line deletion of the reset instead.
+
+### Turn 82 - The README stops describing a machine that was switched off
+
+It still ran a VPS runbook: an IP address, `systemctl status callout-relay`,
+`/opt/callout-relay/`, a Traefik file-provider rule, and `scripts/vps.mjs`
+reading SSH credentials from a path that does not exist on this machine. The
+host was powered off on 2026-09-06. It also said `relay.supr.systems` was
+"dormant" and that "no code depends on it" - which is now exactly backwards,
+since `HOSTED_RELAY_URL` is what the new claim button targets.
+
+Alongside that: `KEYS` in six places for a panel renamed to SETTINGS two
+releases ago; `release/`, which is gitignored and absent from a clone, given as
+where to find the installers; `pnpm dist` pointed at the wrong output
+directory; `local-whisper-small` in the model table, a model deliberately
+removed for aborting the process on load; four local models listed where the
+catalogue has ten; "two mics: A / B", a tagging scheme that has never existed
+(`speakerTags` gives YOU / CHAT, then CH3); "3-step PI wizard" for a property
+inspector that is one panel; and "only works once the repo is public" three
+times, for a repo that is public.
+
+The important part is not the corrections. It is that the file never answered
+**"how do I send this to someone?"** - the only thing it said about a friend on
+another network was "run the relay on a VPS or tunnel it". There is a section
+for that now, written around the person reading rather than the person talking,
+and it says the three things that actually catch people out: a fresh install is
+LAN-only by construction, the local relay serves exactly ONE viewer at a time so
+a phone and an OBS overlay fight each other, and the link is the only
+credential.
+
+**Two things that would have broken quietly.** The app's DEPLOY GUIDE button
+links to a GitHub anchor built from a README heading - renaming
+`Relay standalone (VPS / remote friend)` would have silently dropped it at the
+top of the file, and `check-renderer-ids.mjs` checks ids, not `data-open` URLs.
+The button now points at `#running-your-own-relay`, and there is a check that
+the anchor still resolves against the headings.
+
+And `README.md` was covered by no test at all. It is in `handoff.test.ts`'s
+`DOCS` now. It caught something immediately: `pnpm --filter ... deploy` names a
+script the root package does not have, which is why there is now a
+`deploy:hosted`. Proved the usual way, by pointing the README at a script that
+does not exist and watching it fail. A guard cannot catch a stale claim - only a
+dangling pointer - but this file had plenty of both.
