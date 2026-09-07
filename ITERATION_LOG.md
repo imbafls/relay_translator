@@ -3288,3 +3288,67 @@ the one change in it that deletes anything.
 
 The mechanism takes its storage as an argument now and runs against a fake.
 **All three of their mutations go red.**
+
+### Turn 91 - Two reasons a large model download fails, and a folder I read backwards
+
+The user has been unable to install `local-nemotron-streaming` and
+`local-whisper-turbo` for weeks. Both are the biggest archives in the catalogue;
+everything smaller installs. I could not reproduce it - both downloaded into
+their real models directory, on this machine, with Defender live, in 71 s and
+95 s. So this turn is two candidate causes found by reading, one of which is
+proved end to end, and one factual correction that matters more than either.
+
+**The correction first, because it sent two previous turns the wrong way.**
+`docs/OPEN-WORK.md` said the two `.part` folders in the models directory were
+"per-file models, abandoned when the app was closed mid-download, and neither
+goes near the bz2 path". Both halves are wrong. Both models carry an `archive:`
+block, so both go through bz2 and tar and nothing else. And the per-file path
+never creates a directory like that: it writes `<dest>.part` as a FILE inside
+the model folder, while `models/<id>.part` as a directory is created in exactly
+one place, `fetchArchive`. Those folders were archive staging. They were
+evidence about the archive path all along, and were filed as evidence that the
+archive path was untouched.
+
+**Candidate one: the publish had 900 ms.** A model is published by renaming its
+staging folder into place, and on Windows a directory cannot be renamed while
+any file inside it is open - which is what Defender does to freshly written
+files while it scans them. The budget was four attempts at 150/300/450 ms. It
+fits the split exactly: the models that install here are 99 MB and 68 MB, the
+two that fail are 651 MB and 989 MB. It also explains the debris, which is the
+part I find convincing - when the publish throws, the cleanup deletes the files
+but cannot remove a directory whose handles are held, which leaves precisely
+what was found: `.part` folders, empty. Now ~32 s of backoff, and only for the
+four codes that mean something else holds the file.
+
+**Candidate two, and this one is demonstrated.** A dropped connection restarted
+the download from byte zero. To test it I put a proxy in front of the real
+GitHub asset that forwards Range headers honestly and kills the socket once at
+40%. The shipped code loses 47 MB of a 118 MB archive and reports **"the archive
+would not unpack (47241984 bytes read) - terminated"**. The archive was
+untouched. That misclassification is its own finding and probably the reason
+this has been so hard to place: finding 26 taught this code to stop blaming the
+transport for decode failures, and it now does the opposite wherever the give-up
+error carries no errno to classify by. The same proxy against the new code
+unpacks all three files byte-exact across two connections.
+
+**What resuming changed about retrying.** The first version had a fixed attempt
+budget, and it broke a test three describes away - a failing shared fetch now
+took 20 s per model. That was the design telling me something: with resume, an
+attempt is not a restart. A count that does not reset punishes a download that
+is making headway. The budget resets on any byte delivered, which bounds a
+connection that is STUCK rather than one that is going badly, with a ceiling on
+total connections for the pathological case. A 4xx is not retried at all - a
+stale catalogue URL was costing seven attempts and 20 s before reporting the
+timeout instead of the 404.
+
+**Parallel chunks: asked for, and not built.** The host does support ranges. But
+this pipeline decodes bz2 and untars *while* downloading, so out-of-order chunks
+mean buffering the whole archive to disk first - peak usage for Whisper Turbo
+goes from 989 MB to about 1.55 GB - and it adds an assembly failure mode to the
+one path already suspected of being broken. Resuming fixes the failure;
+parallelism only shortens the window in which it happens.
+
+Nine guards across the two commits, every one proved by reverting. **Still not
+reproduced**, and both candidates are the strongest reading of the evidence
+rather than a confirmed cause. The thing that will actually settle it is
+`relay.log`, which turn 90 added and which nobody has sent yet.

@@ -52,7 +52,8 @@ wire signing into `electron-builder`.
 
 ### B6 — In-app archive model downloads corrupt at ~28%
 **Band: medium. Status: still failing for the user, still not reproducible
-here. Instrumented 2026-09-07 so the next failure leaves evidence.**
+here. Instrumented 2026-09-07 so the next failure leaves evidence; two
+candidate causes fixed the same day, one of them demonstrated end to end.**
 
 > **Reported again 2026-09-07**, on `local-nemotron-streaming` and
 > `local-whisper-turbo` - the two largest archives. Both left an EMPTY `.part`
@@ -94,6 +95,50 @@ network, and this path has changed since: finding 25's `.part` collision fix
 and the single-flight keyed by destination path both landed in it. If it
 recurs, finding 26's rework means the message will now name the right half
 instead of blaming the transport for a decode failure.
+
+> **Correction 2026-09-07: the `.part` reading below was wrong, twice.** It said
+> `local-nemotron-streaming.part` and `local-whisper-turbo.part` were "per-file
+> models ... neither goes near the bz2 path". Both models carry an `archive:`
+> block in the catalogue, so both go through bz2 and tar and nothing else. And
+> the per-file path cannot produce a folder like that: it writes `<dest>.part`
+> as a FILE inside the model directory, while `models/<id>.part` as a DIRECTORY
+> is created in exactly one place - `fetchArchive`. Those were archive staging
+> folders. They were evidence about the archive path, and were filed as
+> evidence that the archive path was untouched.
+>
+> What is still true from that note: sherpa-onnx loads on this machine, and
+> `local-sense-voice` (per-file, 240 MB) downloads, probes and transcribes
+> correctly here, so the local engine can be exercised end to end.
+
+**Two candidate causes found 2026-09-07, one demonstrated.**
+
+1. **The publish had a 900 ms budget.** A model is published by renaming its
+   staging folder into place, and on Windows a directory cannot be renamed
+   while any file inside it is open - which is what Defender does while it
+   scans freshly written files. Four attempts at 150/300/450 ms. It fits the
+   split exactly (99 MB and 68 MB install; 651 MB and 989 MB do not) and it
+   explains the empty `.part` folders: the cleanup deletes the files but cannot
+   remove a directory whose handles are held. Now ~32 s of backoff, for the
+   four codes that mean something else holds the file.
+2. **A dropped connection restarted from byte zero, and was reported as a
+   corrupt archive.** Proved end to end: a proxy in front of the real GitHub
+   asset, killing the socket once at 40% of the 118 MB Whisper Tiny archive,
+   makes the shipped code lose 47 MB and say "the archive would not unpack
+   (47241984 bytes read) - terminated". The archive was perfect. Downloads now
+   resume with `Range: bytes=<received>-`, and the give-up error says it is a
+   transport failure instead of being guessed at from an errno it does not
+   carry. The same proxy against the new code unpacks byte-exact across two
+   connections.
+
+   Parallel range chunks were asked for and not built: the pipeline decodes bz2
+   and untars *while* downloading, so out-of-order chunks would mean buffering
+   the whole archive to disk first (Whisper Turbo: 989 MB to about 1.55 GB) and
+   would add an assembly failure mode to the path already suspected of being
+   the broken one.
+
+**Neither is confirmed.** Both failing models downloaded cleanly into the real
+models directory on this machine with Defender live (71 s and 95 s). What will
+settle it is `relay.log` from a real failure - ask for it.
 
 > **The two `.part` folders in the models dir were never evidence of this.**
 > `local-nemotron-streaming.part` is empty and `local-whisper-turbo.part` holds
