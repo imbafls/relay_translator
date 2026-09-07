@@ -155,6 +155,16 @@ button:disabled { cursor: default; }
   color: var(--dim);
   pointer-events: none;
 }
+/* The panel is inset:0 over the stage and normally has no ground of its own.
+   When the stage still holds a transcript - an error raised mid-session, or a
+   failed restart - the amber error string printed straight through the
+   captions and neither could be read. Scrim it, rather than wiping the
+   transcript: what was said stays, dimmed, behind the reason it stopped. */
+.idle.over-lines {
+  background: rgba(19, 19, 19, 0.88);
+  backdrop-filter: blur(2px);
+}
+
 .ghost-wave { display: flex; align-items: center; gap: 3px; height: 28px; }
 .ghost-wave i { width: 2px; background: var(--mute); display: block; }
 .ghost-wave i:nth-child(1) { height: 4px; }  .ghost-wave i:nth-child(2) { height: 10px; }

@@ -123,7 +123,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 11c | The heartbeat pinged and dropped nothing, so a half-open peer held on | `3a45667` |
 | 35 | Ghost interim rows that never resolve | `47d7ade` |
 | 36 | The session clock subtracts the streamer's epoch from the viewer's | `4ec491c` |
-| 30 | A late key verdict repaints the live console as a setup placeholder | *(this commit)* |
+| 30 | A late key verdict repaints the live console as a setup placeholder | `ace475d` |
+| 32 | The error overlay printed straight through the transcript underneath it | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -136,7 +137,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | 17 | medium | The flat 4 s kill timer discards the local STT worker's flush finals, so the last utterance before STOP never reaches viewers. | `packages/relay/src/localStt.ts` |
 | 27 | low | Changing `updateFeedUrl` has no effect until restart. | `apps/standalone/src/updater.ts` |
 | 28 | low | An unguarded `await startControl()` aborts startup before the tray and window exist. | `apps/standalone/src/main.ts` |
-| 32 | low | The error overlay paints on top of the previous transcript. | `apps/standalone/renderer/app.ts` |
 | 34 | low | A successful local-STT probe is discarded when the session already stopped. | `packages/relay/src/localStt.ts` |
 
 Each entry in the audit carries a reproduced failure scenario and a suggested

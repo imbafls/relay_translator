@@ -2485,3 +2485,38 @@ so it cannot simply be dropped.
 repaint that belonged to setup`). The other is the invariant that a verdict
 arriving while setup IS open still reaches it and still enables CONTINUE -
 a fix that guarded too hard would have broken the thing the check exists for.
+
+### Turn 70 - Client UI (audit finding 32: the error that printed through the transcript)
+
+`#idle` is `position: absolute; inset: 0` over the stage and has no background
+of its own - it is a ghost waveform and two lines of centred text on nothing.
+That is right for an empty stage. It is wrong the moment the stage has
+captions on it, and `renderIdle` unhides the panel whenever the session state
+is `error`, which is exactly the case where it does.
+
+Reaching that state does not need anything exotic: `startSession` raises its
+pre-flight errors - no Deepgram key, local model not downloaded - **before**
+`clearStage()`. Clear the key and press START on a session that has been
+running, and "Could not start" plus the amber reason land letter-for-letter on
+top of the last thing anyone said. Verified in a browser against the mock
+relay: the error read `Add a Deepgram key first (KEYS)...` straight across
+`Save it, they have ops`, and neither line could be read.
+
+The transcript is worth keeping - it is what was said, and wiping it to make
+room would lose it to fix a legibility problem. So the panel gets a ground
+instead: a `over-lines` class whenever the stage is not empty, and a scrim in
+CSS. What was said stays visible behind the reason it stopped.
+
+**Guards - three, one watched fail** (`the panel would paint over the
+transcript with nothing behind it`). The other two are the pair that keep the
+fix honest: an ordinary idle stage must stay plain - a panel that is always
+scrimmed is a different, worse UI - and the captions must still be in the DOM
+afterwards.
+
+Worth saying plainly what is **not** asserted in the suite: the scrim itself.
+The test asserts the condition - the panel knows something is behind it - and
+a happy-dom test that read back a CSS background would only be asserting what
+the CSSOM guarantees, which is the shape of a test this run has already been
+burned by once. The scrim was checked in a browser, in a real error state, with
+ten real caption rows underneath it: `rgba(19, 19, 19, 0.88)` plus a 2px blur,
+amber on near-black, legible.

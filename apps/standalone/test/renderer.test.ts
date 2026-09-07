@@ -824,3 +824,62 @@ describe("a key check that lands after setup has closed", () => {
     expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+describe("the idle panel over a stage that still has captions on it", () => {
+  /**
+   * Audit finding 32. `#idle` is absolutely positioned and has no background,
+   * and `renderIdle` unhides it whenever the state is error - while
+   * `startSession` throws its pre-flight errors BEFORE `clearStage()`. Clear the
+   * Deepgram key and SAVE while live: the restart's throw leaves a dozen caption
+   * rows on the stage and draws "Could not start" plus the amber error string
+   * straight over them, which makes the error itself unreadable.
+   *
+   * The transcript is worth keeping - it is what was said - so the panel gets a
+   * background rather than the stage being wiped.
+   *
+   * What is asserted here is the CONDITION: the panel knows when there is
+   * something behind it. Reaching the error state from happy-dom means going
+   * through startSession, which fails there for reasons of its own that have
+   * nothing to do with this, so that would be a test of the harness. The
+   * overlay was checked in a browser, in a real error state.
+   */
+  const stageRow = (): void => {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.textContent = "enemy down mid";
+    document.getElementById("lines")?.appendChild(row);
+  };
+  /** any render path that reaches renderIdle; RESCAN is the reachable one */
+  const rerender = async (): Promise<void> => {
+    (document.getElementById("rescan") as HTMLButtonElement).click();
+    await settle(60);
+  };
+
+  it("marks itself as covering something when captions are underneath", async () => {
+    await bootWith({ setupDone: true });
+    stageRow();
+    await rerender();
+
+    expect(
+      (document.getElementById("idle") as HTMLElement).classList.contains("over-lines"),
+      "the panel would paint over the transcript with nothing behind it",
+    ).toBe(true);
+  });
+
+  it("stays plain when there is nothing behind it", async () => {
+    await bootWith({ setupDone: true });
+    await rerender();
+
+    const idle = document.getElementById("idle") as HTMLElement;
+    expect(idle.hidden).toBe(false);
+    expect(idle.classList.contains("over-lines"), "the ordinary idle state grew a panel background").toBe(false);
+  });
+
+  it("keeps the captions rather than wiping them to make room", async () => {
+    await bootWith({ setupDone: true });
+    stageRow();
+    await rerender();
+
+    expect(document.querySelectorAll("#lines .row").length, "the transcript was thrown away").toBe(1);
+  });
+});

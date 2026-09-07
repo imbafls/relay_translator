@@ -502,6 +502,11 @@ function renderIdle(): void {
   const empty = $("lines").children.length === 0;
   const idle = $("idle");
   idle.hidden = !empty && session !== "error";
+  // the panel is absolutely positioned over the stage and has no ground of
+  // its own, so an error raised on a stage that still holds a transcript used
+  // to print straight through the captions underneath it. Keep the captions -
+  // they are what was said - and give the panel something to sit on instead.
+  idle.classList.toggle("over-lines", !empty);
   const chain = `${sourcesSummary()} → ${sttShort(config.stt)} → ${
     translationActive() ? `${trShort(config.translation)} → ` : ""
   }${outputLabel(config.output).toLowerCase()}${translationActive() ? "" : ` · ${langName(config.languages.source)} only`}`;
