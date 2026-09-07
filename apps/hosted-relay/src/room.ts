@@ -31,14 +31,33 @@ import { markUsed, nextReapCheck, reapTick } from "./reap";
 import type { ReapableRoom, RoomIo } from "./reap";
 
 /**
- * A six-digit hex colour, or nothing. A local copy of shared's
- * safeSpeakerColor: this Worker takes no dependencies on purpose, and one
- * regex is a smaller price than the first import into a bundle that has none.
+ * What this relay is willing to pass on from a publisher.
+ *
+ * Local copies of shared's `safeSpeakerColor` and `MAX_SPEAKER_TAG`, because
+ * this Worker takes no dependencies on purpose - a regex and a number are a
+ * smaller price than the first import into a bundle that has none. Exported so
+ * they can be tested directly, the way `reap.ts` exports its decision.
+ *
+ * They exist because the sanitiser was half deployed: the embedded relay
+ * checked the colour and capped the tag, and this one - the hop that every
+ * internet viewer goes through and no developer tests against - did neither.
  */
-function safeColor(value: unknown): string | undefined {
+export const MAX_SPEAKER_TAG = 12;
+
+/** a six-digit hex colour, or nothing. Never escaped, never guessed at. */
+export function safeColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const v = value.trim().toLowerCase();
   return /^#[0-9a-f]{6}$/.test(v) ? v : undefined;
+}
+
+/**
+ * A speaker tag, capped. The name is drawn on every caption a viewer sees, so
+ * an uncapped one is a publisher deciding how much of somebody's screen to take.
+ */
+export function safeSpeaker(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.slice(0, MAX_SPEAKER_TAG);
 }
 
 /** what a room is, between messages */
@@ -300,7 +319,7 @@ export class Room {
         final: msg.final !== false,
         latency: msg.latency,
         channel: msg.channel,
-        speaker: msg.speaker,
+        speaker: safeSpeaker(msg.speaker),
         // The whole SpeakerTag, or none of it. Dropping `color` here was
         // invisible: the literal is typed `& SpeakerTag`, an absent optional
         // field compiles, and LAN viewers - the ones anyone tests with - go

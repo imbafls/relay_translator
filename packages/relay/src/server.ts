@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG,
   clampChannels,
   safeSpeakerColor,
+  MAX_SPEAKER_TAG,
   PublisherToServer,
   ServerToPublisher,
   ServerToUplink,
@@ -157,7 +158,7 @@ function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConf
     profanityFilter: raw.profanityFilter !== false,
     channels: clampChannels(raw.channels),
     channelLabels: Array.isArray(raw.channelLabels)
-      ? raw.channelLabels.map((l) => String(l).slice(0, 12))
+      ? raw.channelLabels.map((l) => String(l).slice(0, MAX_SPEAKER_TAG))
       : undefined,
     // a colour ends up in a style attribute on every viewer, and the publisher
     // is only as trustworthy as the token it holds: anything that is not
