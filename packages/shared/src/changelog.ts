@@ -28,6 +28,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.12",
+    date: "2026-09-07",
+    headline: "A model download that loses its connection carries on where it stopped",
+    changes: [
+      {
+        kind: "fixed",
+        text: "A large speech model used to start again from the beginning every time the connection dropped, so on a line that hiccups even occasionally the big models never finished at all. A download now resumes from the point it reached. Whisper Turbo is 989 MB and Nemotron 651 MB, and neither has to arrive in one unbroken run any more.",
+      },
+      {
+        kind: "fixed",
+        text: "Installing a large model could also fail at the very last step, while antivirus was still scanning the files it had just written. The app used to give that under a second to clear and then delete everything it had downloaded. It now waits about half a minute, and if it does run out it tells you what to change. This is the most likely cause of a large model failing to install for you, though it has not been reproduced here.",
+      },
+      {
+        kind: "fixed",
+        text: "When a download does fail, the message says whether the connection broke or the archive was bad. It used to report a broken connection as a corrupt archive, which sent you looking in the wrong place.",
+      },
+      {
+        kind: "added",
+        text: "Captions in OBS now clear about ten seconds after you stop talking, so a quiet stretch no longer leaves your last sentence sitting on the stream. Anything you say brings them straight back. Open your overlay link and go to display settings to change it: Hide after sets the delay, and Never keeps it on screen the way it used to be.",
+      },
+    ],
+  },
+  {
     version: "0.5.11",
     date: "2026-09-07",
     headline: "A failed model download now tells you why",
