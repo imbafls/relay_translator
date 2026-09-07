@@ -57,6 +57,7 @@
     </div>
     <div class="keys-grid">
       <div class="keys-col">
+        <div class="keys-group" data-group="viewers">
         <div class="col-title label">WHAT VIEWERS SEE</div>
         <div class="field">
           <div class="field-label">CAPTIONS</div>
@@ -82,6 +83,15 @@
             <span id="captionViewHint" class="field-status dim"></span>
           </div>
         </div>
+      </div>
+      <!--
+        Everything about how far a link reaches, in one place. It used to be
+        split: this button on the left, the URL and token that do the same job
+        inside ADVANCED on the right, and a second status word for the same
+        fact. See settings keeps a subject in one place, in renderer.test.ts.
+      -->
+      <div class="keys-group" data-group="reach">
+        <div class="col-title label">WHO CAN REACH IT</div>
         <div class="field">
           <div class="field-label">VIEWER LINK</div>
           <div class="seg" id="linkModeSeg">
@@ -91,7 +101,7 @@
           <p class="hint">New each session kills the old link every time you start. Fixed keeps one link alive, which is what an OBS browser source needs.</p>
         </div>
         <div class="field">
-          <div class="field-label">WHO CAN OPEN IT<span id="reachStatus" class="field-status warn">THIS NETWORK ONLY</span></div>
+          <div class="field-label">WHO CAN OPEN IT<span id="reachStatus" data-reach-status class="field-status warn">THIS NETWORK ONLY</span></div>
           <p id="reachHint" class="hint">Your link only opens on your own network. Getting an address lets someone read your captions from a phone anywhere &mdash; a friend who is deaf or hard of hearing, or anyone not in the room. Nothing is transcribed or stored there; it passes the captions on to whoever has the link and nothing else.</p>
           <div class="field-row">
             <button id="claimRoom" class="mono-btn">GET AN ADDRESS THAT WORKS ANYWHERE &rarr;</button>
@@ -101,20 +111,38 @@
             <button class="mono-btn" data-open="https://github.com/imbafls/relay_translator/blob/master/docs/GUIDE.md">HOW TO SET THIS UP FOR SOMEONE &rarr;</button>
           </div>
         </div>
-        <div class="field">
-          <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
-          <div class="field-row update-row">
-            <span id="updateState" class="mono update-state">—</span>
-            <button id="checkUpdate" class="mono-btn">CHECK</button>
-            <button id="installUpdate" class="mono-btn ink" hidden>RESTART &amp; INSTALL</button>
-            <button id="openReleases" class="mono-btn" hidden>OPEN RELEASES</button>
+        <details id="ownRelay" class="field advanced">
+          <summary class="field-label">RUN YOUR OWN RELAY INSTEAD<span class="field-status dim">OPTIONAL</span></summary>
+          <div class="advanced-body">
+            <p class="hint">Not needed to use Relay. The button above gets you an address on the project&#39;s relay; these three point the app at one you run yourself.</p>
+            <div class="field field-bare">
+              <div class="field-label">RELAY URL<span id="relayStatus" class="field-status warn">NOT SET</span></div>
+              <div class="field-row">
+                <input id="relayUrl" type="text" class="uinput mono" placeholder="wss://relay.yourdomain.app" autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+            <div class="field field-bare">
+              <div class="field-label">PUBLISH TOKEN</div>
+              <div class="field-row">
+                <input id="publisherToken" type="password" class="uinput mono" placeholder="RELAY_PUBLISHER_TOKEN" autocomplete="off" spellcheck="false" />
+                <button class="mono-btn" data-show="publisherToken">SHOW</button>
+              </div>
+            </div>
+            <div class="field field-bare">
+              <div class="field-label">PUBLIC BASE URL · OPTIONAL</div>
+              <div class="field-row"><input id="publicBaseUrl" type="text" class="uinput mono" placeholder="https://tunnel.example.com" autocomplete="off" spellcheck="false" /></div>
+            </div>
+            <div class="field-row">
+              <button class="mono-btn" data-open="https://github.com/imbafls/relay_translator#running-your-own-relay">DEPLOY GUIDE →</button>
+            </div>
           </div>
-          <button id="autoUpdate" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>CHECK AUTOMATICALLY</button>
-        </div>
-        <p class="hint keys-note">Without a relay URL, phone links only reach devices on your own network. An OBS browser source never needs one.</p>
+        </details>
+        <p class="hint keys-note">With none of this set, phone links only reach devices on your own network. An OBS browser source never needs any of it.</p>
+      </div>
       </div>
       <div class="keys-col">
-        <div class="col-title label">ACCOUNTS &amp; ENGINE</div>
+        <div class="keys-group" data-group="engine">
+        <div class="col-title label">SPEECH &amp; TRANSLATION</div>
         <div class="field">
           <div class="field-label">DEEPGRAM API KEY<span id="dgStatus" class="field-status">NOT SET</span></div>
           <div class="field-row">
@@ -140,42 +168,41 @@
           <div id="settingsModels" class="model-list"></div>
           <p class="hint">Picking one here switches the engine straight away. Offline models also fetch a 1 MB voice detector.</p>
         </div>
-        <details id="advanced" class="field advanced">
-          <summary class="field-label">ADVANCED<span class="field-status dim">REMOTE RELAY · PORT · UPDATE FEED</span></summary>
-          <div class="advanced-body">
-            <p class="hint">None of this is needed to run Relay. The app carries its own relay; these point it at someone else&#39;s.</p>
-            <div class="field field-bare">
-              <div class="field-label">RELAY URL<span id="relayStatus" class="field-status warn">NOT SET</span></div>
-              <div class="field-row">
-                <input id="relayUrl" type="text" class="uinput mono" placeholder="wss://relay.yourdomain.app" autocomplete="off" spellcheck="false" />
-              </div>
+        </div>
+        <!--
+          This machine's own housekeeping. LOCAL PORT lives here and NOT beside
+          RELAY URL: that is the port the relay THIS APP runs listens on, and it
+          is always running - it is what serves LAN viewers and OBS. The one
+          under WHO CAN REACH IT points at somebody else's. Shelving them
+          together taught the exact confusion CLAUDE.md opens by warning about.
+        -->
+        <div class="keys-group" data-group="app">
+          <div class="col-title label">THIS APP</div>
+          <div class="field">
+            <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
+            <div class="field-row update-row">
+              <span id="updateState" class="mono update-state">—</span>
+              <button id="checkUpdate" class="mono-btn">CHECK</button>
+              <button id="installUpdate" class="mono-btn ink" hidden>RESTART &amp; INSTALL</button>
+              <button id="openReleases" class="mono-btn" hidden>OPEN RELEASES</button>
             </div>
-            <div class="field field-bare">
-              <div class="field-label">PUBLISH TOKEN</div>
-              <div class="field-row">
-                <input id="publisherToken" type="password" class="uinput mono" placeholder="RELAY_PUBLISHER_TOKEN" autocomplete="off" spellcheck="false" />
-                <button class="mono-btn" data-show="publisherToken">SHOW</button>
-              </div>
-            </div>
-            <div class="field field-bare field-2col">
-              <div>
-                <div class="field-label">PUBLIC BASE URL · OPTIONAL</div>
-                <div class="field-row"><input id="publicBaseUrl" type="text" class="uinput mono" placeholder="https://tunnel.example.com" autocomplete="off" spellcheck="false" /></div>
-              </div>
-              <div>
+            <button id="autoUpdate" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>CHECK AUTOMATICALLY</button>
+          </div>
+          <details id="advanced" class="field advanced">
+            <summary class="field-label">ADVANCED<span class="field-status dim">LOCAL PORT · UPDATE FEED</span></summary>
+            <div class="advanced-body">
+              <div class="field field-bare">
                 <div class="field-label">LOCAL PORT</div>
+                <p class="hint">The port the relay inside this app listens on. It is always running, and it is what a phone on your own network and an OBS browser source connect to.</p>
                 <div class="field-row"><input id="relayPort" type="number" class="uinput mono" min="1024" max="65535" /></div>
               </div>
+              <div class="field field-bare">
+                <div class="field-label">UPDATE FEED</div>
+                <div class="field-row"><input id="updateFeedUrl" type="text" class="uinput mono" placeholder="blank = the project update server" autocomplete="off" spellcheck="false" /></div>
+              </div>
             </div>
-            <div class="field field-bare">
-              <div class="field-label">UPDATE FEED</div>
-              <div class="field-row"><input id="updateFeedUrl" type="text" class="uinput mono" placeholder="blank = the project update server" autocomplete="off" spellcheck="false" /></div>
-            </div>
-            <div class="field-row">
-              <button class="mono-btn" data-open="https://github.com/imbafls/relay_translator#running-your-own-relay">DEPLOY GUIDE →</button>
-            </div>
-          </div>
-        </details>
+          </details>
+        </div>
         <div class="keys-actions">
           <button id="settingsSave" class="ink-btn">SAVE</button>
           <button id="settingsSetup" class="mono-btn">RUN SETUP AGAIN</button>

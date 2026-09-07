@@ -1389,3 +1389,54 @@ describe("when a model download fails", () => {
     expect(strip()).toMatch(/2752512/);
   });
 });
+
+describe("settings keeps a subject in one place", () => {
+  /**
+   * The panel was organised by how technical a setting is rather than by what
+   * it answers, and that split single subjects across both columns.
+   *
+   * Reaching viewers was activated bottom-left under WHO CAN OPEN IT (y=1105,
+   * below the fold) and configured mid-right inside a collapsed ADVANCED, with
+   * two readouts for one fact: THIS NETWORK ONLY and NOT SET. Updates was split
+   * the same way - the controls on the left, the feed URL on the right. And
+   * LOCAL PORT, which is the relay this app runs itself, shared a box with
+   * RELAY URL, which is somebody else's. That last pairing is the confusion
+   * CLAUDE.md opens by calling the single biggest source of wasted time here.
+   *
+   * `data-group` says which question a field answers. It is in the markup
+   * rather than inferred from columns so that moving a column cannot quietly
+   * re-split a subject.
+   */
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const settings = doc.getElementById("settings") as HTMLElement;
+  /** null when the field sits in no group at all, which is itself a failure */
+  const groupOf = (id: string): string | null =>
+    settings.querySelector(`#${id}`)?.closest("[data-group]")?.getAttribute("data-group") ?? null;
+
+  it("keeps every control for reaching viewers together", () => {
+    const ids = ["reachStatus", "claimRoom", "relayUrl", "publisherToken", "publicBaseUrl"];
+    const where = ids.map((id) => `${id}=${groupOf(id) ?? "(none)"}`);
+    expect(ids.filter((id) => groupOf(id) === null), `ungrouped: ${where.join("  ")}`).toEqual([]);
+    expect(new Set(ids.map(groupOf)).size, `spread across: ${where.join("  ")}`).toBe(1);
+  });
+
+  it("says how far the link reaches exactly once", () => {
+    expect(settings.querySelectorAll("[data-reach-status]")).toHaveLength(1);
+  });
+
+  it("does not shelve the relay this app runs beside somebody else's", () => {
+    // both must be grouped for the comparison to mean anything - two ungrouped
+    // fields are not "in different groups", they are the old panel
+    const port = groupOf("relayPort");
+    const url = groupOf("relayUrl");
+    expect(port, "relayPort is in no group").not.toBeNull();
+    expect(url, "relayUrl is in no group").not.toBeNull();
+    expect(port, "the embedded relay is boxed with the uplink again").not.toBe(url);
+  });
+
+  it("keeps the update controls and the feed they read together", () => {
+    const feed = groupOf("updateFeedUrl");
+    expect(feed, "updateFeedUrl is in no group").not.toBeNull();
+    expect(feed).toBe(groupOf("checkUpdate"));
+  });
+});
