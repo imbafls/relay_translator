@@ -186,12 +186,12 @@ fix — read the numbered section there before starting.
   reason now reaches the panel: another device reads as such and says TRY AGAIN
   takes it back, a rotated link says a new one was made, and no reason at all
   falls back without inventing a cause.
-- **Nothing warns about the one-viewer limit before it bites.** While the reach
-  reads `THIS NETWORK ONLY` there is no chip anywhere saying only one device can
-  watch at a time; it is discovered by two people kicking each other.
-- **`NEW` is unconfirmed and immediately destructive.** It sits beside `COPY`
-  and `OPEN` in the footer, disconnects everyone reading, and the only notice is
-  a log line after the fact.
+- ~~**Nothing warns about the one-viewer limit before it bites.**~~ Fixed
+  2026-09-07. `04 OUTPUT` now reads `THIS NETWORK ONLY` / `ONE DEVICE AT A TIME`
+  while the link is local, in the same words SETTINGS uses.
+- ~~**`NEW` is unconfirmed and immediately destructive.**~~ Fixed 2026-09-07. It
+  arms to `SURE?` for five seconds when somebody is reading, and still fires on
+  one press when nobody is.
 - **The SHOW toggle on the API-key fields never resets.** `i.type` is assigned
   in exactly one place in the renderer - the toggle itself - so a key revealed
   once stays revealed for the life of the window, including the next time

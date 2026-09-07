@@ -3045,3 +3045,40 @@ hint that trying again works, and the label contradicting the title). The
 fourth is the one that keeps the fix honest: given no reason at all - which is
 what the hosted relay does, closing with a code and no frame - the panel must
 still say something, and must not invent a specific cause.
+
+### Turn 85 - Two things the app knew and did not say
+
+**The one-viewer limit.** The local relay keys viewers by token and a second
+device kicks the first, and nothing anywhere said so until it happened. The way
+people found out was two readers disconnecting each other in turn, or a phone
+fighting an OBS overlay - neither of which suggests a rule, which is why turn 84
+had to fix how the kick is *reported*. Reporting it well is second best;
+saying it beforehand is the fix.
+
+It goes in `04 OUTPUT`, which also settles something the guide flagged: that
+block said `RELAY NOT SET · LAN ONLY` - relay jargon, in the strip the user is
+looking at - while SETTINGS said `THIS NETWORK ONLY` in plain words, in a panel
+they have no reason to open. Two wordings for one fact, and no route from the
+one you see to the one that fixes it. Both say `THIS NETWORK ONLY` now.
+
+**NEW.** It sat between COPY and OPEN, one press, no confirming, and it
+disconnects every person reading. The one most likely to reach for COPY is the
+one most likely to hit the button beside it. It arms now - `SURE?` in amber, a
+log line saying how many people are reading, five seconds to change your mind.
+
+Only when it would cost something. With nobody watching there is nothing to
+lose, so it just goes; a confirmation for an unused link is a press for nothing,
+and confirmations you always dismiss are the ones you stop reading.
+
+**Caught by the browser, not the suite.** `THIS NETWORK ONLY · ONE DEVICE AT A
+TIME` as one string is clipped at the app's minimum width - `.block-meta` is a
+wrapping flex row with `nowrap` inside each span - and the clipped half was the
+half worth reading. The DOM test passed on `textContent`, which does not know
+about overflow. Two spans, so the row wraps.
+
+**Guards - five, three watched fail** (nothing warning about a second phone;
+the link rotating on one press with people on it; and arming when nobody is
+reading). Two counterweights, both of which would be wrong to get right by
+accident: the limit must NOT be claimed once an address makes it untrue - the
+hosted relay broadcasts to everyone - and the second press must actually go
+through, rather than an armed button that never fires.

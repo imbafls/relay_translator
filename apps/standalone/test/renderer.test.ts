@@ -31,6 +31,8 @@ interface Calls {
   opened: string[];
   /** relay addresses a room was claimed on; undefined means "the default one" */
   claimed: (string | undefined)[];
+  /** each time the viewer link was actually rotated */
+  rotated: number[];
 }
 
 /** the status callback boot() registers, so a test can push a live relay in */
@@ -59,7 +61,10 @@ function bridge(config: AppConfig) {
       return current;
     },
     prepareSession: async () => ({ viewerUrl: "", localViewerUrl: "", relayUrl: "" }),
-    rotateLink: async () => undefined,
+    rotateLink: async () => {
+      calls.rotated.push(Date.now());
+      return undefined;
+    },
     claimRelayRoom: async (relayUrl?: string) => {
       calls.claimed.push(relayUrl);
       if (claimFails) return { ok: false, message: claimFails };
@@ -120,7 +125,7 @@ let setConfigFails = false;
 let claimFails: string | null = null;
 
 async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
-  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [], claimed: [] };
+  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [], claimed: [], rotated: [] };
   pushStatus = undefined;
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
@@ -1111,5 +1116,109 @@ describe("what setup tells you about reaching a phone", () => {
     await settle(60);
 
     expect(outputMeta().className, "someone who already has an address is warned anyway").not.toContain("warn");
+  });
+});
+
+/**
+ * Two things the app knew and did not act on.
+ *
+ * The app's own relay allows exactly ONE viewer per link - a second device
+ * kicks the first - and nothing said so anywhere until it happened. The way
+ * people find out is two people disconnecting each other in turn, or a phone
+ * fighting an OBS overlay, neither of which suggests a rule.
+ *
+ * And NEW sits between COPY and OPEN in the footer, one press, no confirming.
+ * It disconnects everyone reading, immediately, and the only notice is a log
+ * line afterwards. The person who most wants to press COPY is the person most
+ * likely to hit the button beside it.
+ */
+describe("warning about the one-viewer limit before it bites", () => {
+  const outputMeta = (): string => (document.getElementById("metaOutput") as HTMLElement).textContent || "";
+
+  const goLive = async (relay: { viewers?: number; remoteViewers?: number; remoteViewerUrl?: string }): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: relay.remoteViewerUrl ?? "",
+        uplinkState: relay.remoteViewerUrl ? "connected" : "off",
+        viewers: relay.viewers ?? 0,
+        remoteViewers: relay.remoteViewers ?? 0,
+      },
+      usage: undefined,
+    });
+    await settle(50);
+  };
+
+  it("says only one device can watch, while the link is local-only and live", async () => {
+    await bootWith({ setupDone: true });
+    await goLive({ viewers: 1 });
+
+    expect(outputMeta(), "nothing warns that a second phone will kick the first").toMatch(/one device/i);
+  });
+
+  it("does not say it once an address makes the limit untrue", async () => {
+    await bootWith({ setupDone: true, relayUrl: "wss://relay.supr.systems", publisherToken: "p1_a_b" });
+    await goLive({ remoteViewerUrl: "https://relay.supr.systems/watch/v1_a_b", remoteViewers: 3 });
+
+    // the hosted relay broadcasts to everyone; repeating the limit there would
+    // be telling the user something false
+    expect(outputMeta(), "the limit is claimed on a relay that does not have it").not.toMatch(/one device/i);
+  });
+});
+
+describe("NEW, which disconnects everyone reading", () => {
+  const newBtn = (): HTMLButtonElement => document.getElementById("rotateLink") as HTMLButtonElement;
+
+  const liveWith = async (viewers: number): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "",
+        uplinkState: "off",
+        viewers,
+        remoteViewers: 0,
+      },
+      usage: undefined,
+    });
+    await settle(50);
+  };
+
+  it("asks first when someone is actually reading", async () => {
+    await bootWith({ setupDone: true });
+    await liveWith(2);
+
+    newBtn().click();
+    await settle(40);
+
+    expect(calls.rotated, "the link was rotated on one press, with people on it").toHaveLength(0);
+    expect(newBtn().textContent, "nothing on the button says it is now asking").not.toMatch(/^NEW$/i);
+  });
+
+  it("goes through on the second press", async () => {
+    await bootWith({ setupDone: true });
+    await liveWith(2);
+
+    newBtn().click();
+    await settle(40);
+    newBtn().click();
+    await settle(40);
+
+    expect(calls.rotated, "confirming did not rotate the link").toHaveLength(1);
+    expect(newBtn().textContent, "the button stayed armed after it fired").toMatch(/^NEW$/i);
+  });
+
+  it("does not ask when there is nobody to disconnect", async () => {
+    await bootWith({ setupDone: true });
+    await liveWith(0);
+
+    newBtn().click();
+    await settle(40);
+
+    // confirming costs a press for nothing when the link is unused
+    expect(calls.rotated, "asked to confirm disconnecting nobody").toHaveLength(1);
   });
 });

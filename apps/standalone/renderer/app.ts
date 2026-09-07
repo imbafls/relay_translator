@@ -971,7 +971,20 @@ function renderChain(): void {
   if (config.output === "obs") {
     items.push({ text: live ? "LOCAL" : "LOCAL · NO RELAY NEEDED" });
   } else if (!relaySet) {
-    items.push({ text: live ? "LAN ONLY" : "RELAY NOT SET · LAN ONLY", cls: "warn" });
+    // Says the same words SETTINGS does. This read "RELAY NOT SET · LAN ONLY",
+    // which is relay jargon in the strip the user is actually looking at, while
+    // the panel they have no reason to open said "THIS NETWORK ONLY" - two
+    // wordings for one fact, and no route from the one you see to the one that
+    // fixes it.
+    //
+    // The device limit is here because it is not discoverable any other way:
+    // the local relay keys viewers by token and a second device kicks the
+    // first, so people find out by disconnecting each other in turn.
+    items.push({ text: "THIS NETWORK ONLY", cls: "warn" });
+    // its own span, not one long string: `.block-meta` is a wrapping flex row
+    // with nowrap inside each span, so a single string is clipped at the app's
+    // minimum width and the clipped half is the half worth reading
+    items.push({ text: "ONE DEVICE AT A TIME", cls: "warn" });
   } else if (up === "connected") {
     items.push({ text: live ? "UPLINK OK" : "RELAY OK" });
     if (rel?.uplinkRttMs != null) items.push({ text: `${rel.uplinkRttMs} MS` });
@@ -986,6 +999,33 @@ function renderChain(): void {
 // ---------------------------------------------------------------------------
 // footer
 // ---------------------------------------------------------------------------
+
+/** how many people are reading right now, local and remote */
+function watchingNow(): number {
+  return (status?.relay?.viewers ?? 0) + (status?.relay?.remoteViewers ?? 0);
+}
+
+/**
+ * NEW is armed before it fires, but only when firing would cost somebody
+ * something. It sits between COPY and OPEN, one press, and it disconnects
+ * every person reading - the one most likely to reach for COPY is the one most
+ * likely to hit the button beside it. With nobody watching there is nothing to
+ * lose, so it just goes.
+ */
+let rotateArmed = false;
+let rotateTimer: ReturnType<typeof setTimeout> | null = null;
+
+function armRotate(on: boolean): void {
+  rotateArmed = on;
+  if (rotateTimer) clearTimeout(rotateTimer);
+  rotateTimer = null;
+  const btn = $("rotateLink");
+  btn.textContent = on ? "SURE?" : "NEW";
+  btn.classList.toggle("warn", on);
+  // disarms itself, so a stray click does not leave a loaded button sitting
+  // there for the rest of the session
+  if (on) rotateTimer = setTimeout(() => armRotate(false), 5000);
+}
 
 function currentLink(): string | undefined {
   const r = status?.relay;
@@ -2085,6 +2125,13 @@ function bind(): void {
     if (url) void cr.openExternal(url);
   };
   $("rotateLink").onclick = async () => {
+    const watching = watchingNow();
+    if (watching > 0 && !rotateArmed) {
+      armRotate(true);
+      log(`press again to replace the link - ${watching} ${watching === 1 ? "person is" : "people are"} reading it`, "err");
+      return;
+    }
+    armRotate(false);
     await cr.rotateLink();
     log("links rotated - old links are dead", "ok");
   };
