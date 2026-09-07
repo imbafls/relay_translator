@@ -560,8 +560,18 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
 
     if (url.pathname === "/ws/uplink") {
       if (token !== state.publisherToken) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
+        // Refused AFTER the upgrade, not during it. UplinkClient reads a close
+        // code and stops; a failed HTTP handshake reaches it as 1006, which is
+        // indistinguishable from a dropped network and retries for ever - so a
+        // wrong or stale token sat on "RELAY CONNECTING..." indefinitely and
+        // the RELAY ERROR - CHECK KEYS state that exists for exactly this case
+        // could never fire. The hosted relay already does it this way, for the
+        // same reason (apps/hosted-relay/src/room.ts).
+        //
+        // The socket is closed immediately and registered nowhere, so this is
+        // one short-lived socket per attempt - about what the refused HTTP
+        // handshake cost anyway.
+        wss.handleUpgrade(req, socket, head, (ws) => ws.close(4401, "uplink token rejected"));
         return;
       }
       wss.handleUpgrade(req, socket, head, (ws) => onUplink(ws));

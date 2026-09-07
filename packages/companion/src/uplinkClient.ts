@@ -116,6 +116,16 @@ export class UplinkClient {
         this.setState("idle");
         return;
       }
+      // 4409 = displaced by another uplink on the same token; don't fight it.
+      // relayClient.ts has handled this since cc824dd and this did not, so two
+      // machines sharing one publisher token displaced each other about once a
+      // second - forever, because `attempt` resets to 0 on every open, so the
+      // backoff never grew past its first step - and every subtitle produced in
+      // each gap went on the floor.
+      if (ev.code === 4409) {
+        this.setState("error", "replaced by another machine");
+        return;
+      }
       if (ev.code === 4401) {
         this.setState("error", "uplink token rejected");
         return;

@@ -135,12 +135,33 @@ async function publish(languages = { source: "en", target: "vi" }): Promise<Conn
 const utterance = (): Buffer => Buffer.alloc(16000 * 2 * 2, 1);
 
 describe("uplink auth", () => {
-  it("rejects a socket carrying the viewer token", async () => {
-    await expect(connect(url(remote, "/ws/uplink", remote.state.viewerToken))).rejects.toThrow();
+  /**
+   * Refused with a close code on an OPEN socket, not with a 401 during the
+   * handshake. UplinkClient reads close codes and stops on 4401; a failed
+   * handshake reaches it as 1006, which it cannot tell from a dropped network,
+   * so a wrong token retried for ever behind "RELAY CONNECTING..." and the
+   * RELAY ERROR - CHECK KEYS state could never fire. Audit finding 24.
+   */
+  const closeCodeFor = (token: string): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${remote.port}/ws/uplink?token=${token}`);
+      const timer = setTimeout(() => reject(new Error("no close arrived")), 4000);
+      ws.on("close", (code: number) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+      ws.on("error", () => {
+        clearTimeout(timer);
+        resolve(1006);
+      });
+    });
+
+  it("refuses the viewer token with a code the client can act on", async () => {
+    await expect(closeCodeFor(remote.state.viewerToken)).resolves.toBe(4401);
   });
 
-  it("rejects a socket carrying no token", async () => {
-    await expect(connect(`ws://127.0.0.1:${remote.port}/ws/uplink`)).rejects.toThrow();
+  it("refuses a socket carrying no token the same way", async () => {
+    await expect(closeCodeFor("")).resolves.toBe(4401);
   });
 
   it("accepts the publisher token and greets it", async () => {

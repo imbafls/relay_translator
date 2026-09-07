@@ -245,3 +245,53 @@ describe("what the publisher client hands back to the app", () => {
     expect(seg.color).toBeUndefined();
   });
 });
+
+describe("being displaced by another machine", () => {
+  /**
+   * Audit finding 24. The relay closes a displaced uplink with 4409.
+   * `RelayPublisherClient` handles that code and stops; `UplinkClient`
+   * special-cased only 4401 and fell through to `scheduleRetry` - and because
+   * `attempt` is reset to 0 on every successful open, the backoff never grew.
+   *
+   * Two machines sharing one publisher token therefore displaced each other
+   * about once a second, forever, with every subtitle produced in each gap
+   * dropped on the floor.
+   */
+  it("stops instead of fighting a replacement", async () => {
+    const states: string[] = [];
+    const c = makeClient(states);
+    c.connect(HELLO);
+    await until(() => live().length === 1, "the first connection");
+
+    accepted[0].close(4409, "replaced by new uplink");
+    await until(() => c.state === "error", "the error state");
+
+    await settle(2500);
+    expect(accepted, "it reconnected and was displaced again").toHaveLength(1);
+    expect(c.state).toBe("error");
+  });
+
+  it("says it was replaced, not that the connection dropped", async () => {
+    const states: string[] = [];
+    const c = makeClient(states);
+    c.connect(HELLO);
+    await until(() => live().length === 1, "the first connection");
+    accepted[0].close(4409, "replaced by new uplink");
+    await until(() => c.state === "error", "the error state");
+
+    expect(states.join(" ")).not.toContain("disconnected");
+    c.disconnect();
+  });
+
+  it("still reconnects when the relay simply goes away", async () => {
+    // the invariant a "stop retrying" fix could easily break
+    const c = makeClient();
+    c.connect(HELLO);
+    await until(() => live().length === 1, "the first connection");
+
+    // 1001 "going away", not 1006 - an endpoint cannot send a reserved code
+    accepted[0].close(1001, "gone");
+    await until(() => accepted.length === 2, "the reconnect", 8000);
+    c.disconnect();
+  });
+});

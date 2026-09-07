@@ -2206,3 +2206,47 @@ feed is what the laptop reads, so this reaches a real machine on its next check.
 **Still not signed.** B4 is unchanged: no certificate, so the sha512 in
 `latest.yml` remains the only integrity proof for an update. Worth restating on
 a release day rather than only in the backlog.
+
+### Turn 62 - Message orchestration (audit finding 24: an uplink that fights forever)
+
+Two defects in one finding, and the first one matters more now that
+`relay.supr.systems` is shared.
+
+**The 4409 fight.** The relay closes a displaced uplink with 4409.
+`RelayPublisherClient` has handled that code since `cc824dd` - "kicked off by a
+replacement; don't fight it" - and `UplinkClient` special-cased only 4401 and
+fell straight through to `scheduleRetry`. Because `attempt` resets to 0 on every
+successful open, the backoff never grew past its first step. Two machines
+sharing one publisher token therefore displaced each other **about once a
+second, forever**, with every subtitle produced in each gap dropped.
+
+**The dead 4401 branch.** The relay refused a bad uplink token during the HTTP
+upgrade - `socket.write("HTTP/1.1 401 …")` - which reaches the client as close
+code **1006**, indistinguishable from a dropped network. So a wrong or stale
+token retried for ever behind "RELAY CONNECTING…", and the
+"RELAY ERROR · CHECK KEYS" state that exists for exactly this case could never
+fire. The branch handling 4401 was unreachable code.
+
+It is refused **after** the upgrade now, closing with a real 4401 - which is
+what `apps/hosted-relay/src/room.ts` already does, under a comment giving this
+same reason. The socket is closed immediately and registered nowhere, so the
+cost is one short-lived socket per attempt, about what the refused handshake
+cost anyway. That trade is worth stating rather than assuming.
+
+**Guards - four, two watched fail against their own reverts.** The 4409 branch
+removed (the client reconnects and is displaced again); and the relay closing
+1011 instead of 4401 (`expected 1011 to be 4401`). The other two are the
+invariants that matter here: it still says *replaced* rather than
+*disconnected*, and a genuine 1001 close still reconnects - a "stop retrying"
+fix that broke that would be a worse bug than the one it fixed.
+
+**A revert that proved nothing, caught.** The first attempt at the relay revert
+put a real line break inside a string literal, so it did not compile and vitest
+reported "no tests" - which the harness reads as green. Re-done as a one-token
+change (4401 → 1011) that compiles and fails for the right reason.
+
+**Scoped deliberately.** The same handshake-refusal problem affects the viewer
+socket - a phone that *loads* a dead link sits on RECONNECTING for ever, which
+is already written down in `docs/OPEN-WORK.md`. That is a bigger blast radius
+(six asserted contracts in `viewerAuth.test.ts`, plus the viewer's own UI) and
+gets its own turn rather than riding along in this one.
