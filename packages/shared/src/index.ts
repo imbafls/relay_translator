@@ -179,6 +179,29 @@ export function isAllowedUpdateFeed(url: string | undefined | null): boolean {
   return parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname);
 }
 
+/**
+ * What to do with the update feed, given the configured override and whatever
+ * was last handed to electron-updater. Split out from the updater so the
+ * decision can be tested without Electron: the updater only executes it.
+ *
+ * `restart-needed` is the one that is not a full answer. electron-updater has
+ * no public way to go back to the packaged `app-update.yml` once `setFeedURL`
+ * has replaced it, so clearing the override takes a relaunch - and the caller
+ * has to say so out loud rather than leaving the old feed silently in place.
+ */
+export type UpdateFeedAction =
+  | { action: "none" }
+  | { action: "set"; url: string }
+  | { action: "refused"; url: string }
+  | { action: "restart-needed" };
+
+export function updateFeedAction(configured: string | undefined, applied: string | undefined): UpdateFeedAction {
+  const next = configured?.trim() || undefined;
+  if (!next) return applied ? { action: "restart-needed" } : { action: "none" };
+  if (!isAllowedUpdateFeed(next)) return { action: "refused", url: next };
+  return next === applied ? { action: "none" } : { action: "set", url: next };
+}
+
 /** true when the STT model id runs on this PC (sherpa-onnx) instead of Deepgram */
 export function isLocalStt(id: string): boolean {
   const info = sttModel(id);

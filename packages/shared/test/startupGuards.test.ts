@@ -61,3 +61,45 @@ describe("a control API that cannot bind does not take the app down with it", ()
     expect(window, "createWindow moved above the control API").toBeGreaterThan(control);
   });
 });
+
+/**
+ * Audit finding 27.
+ *
+ * `Updater.load()` returns the cached `this.updater` on its first line, and
+ * `setFeedURL` sits below that early return; `stop()` only clears the poll
+ * timer. So `applyConfig`'s `updater?.start()` - the thing that fires when
+ * `updateFeedUrl` changes - re-checked the OLD feed, for the rest of the
+ * process's life, and the confirming `update feed: <url>` line never printed.
+ * Point the app at a feed and it keeps asking GitHub; point it back and it
+ * keeps asking your box.
+ *
+ * The decision the fix executes is real code with real tests, in
+ * `updateFeed.test.ts`. That it is now consulted on the cached path is what is
+ * checked here, and it has to be checked at the source: `updater.ts` imports
+ * Electron's `app` at module scope, so the suite cannot load it, and `app` is
+ * not a thing Node can supply - `require("electron")` outside Electron returns
+ * a path string.
+ */
+describe("changing the update feed takes effect without a restart", () => {
+  const updater = fs.readFileSync(path.join(root, "apps/standalone/src/updater.ts"), "utf8");
+
+  it("consults the feed decision on the cached path, not only on first load", () => {
+    const at = updater.indexOf("private load()");
+    expect(at, "load() is gone - this guard needs re-pointing").toBeGreaterThanOrEqual(0);
+    const body = updater.slice(at, updater.indexOf("\n  }", at));
+
+    const early = body.indexOf("if (this.updater)");
+    expect(early, "the cached early return is gone; check this guard still means anything").toBeGreaterThanOrEqual(0);
+    // everything the cached path runs, from the test to the return it takes
+    const cached = body.slice(early, body.indexOf("return this.updater;", early));
+    expect(
+      cached,
+      "load() returns the cached updater without re-applying the feed, so a changed updateFeedUrl does nothing until restart",
+    ).toContain("applyFeed");
+  });
+
+  it("routes that decision through the tested function rather than re-deciding inline", () => {
+    expect(updater, "the updater no longer uses updateFeedAction").toContain("updateFeedAction");
+    expect(updater, "a cleared override has to be reported, not silently ignored").toContain("restart-needed");
+  });
+});

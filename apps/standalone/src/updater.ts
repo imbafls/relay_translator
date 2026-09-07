@@ -13,7 +13,7 @@
 import { app } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { isAllowedUpdateFeed } from "@callout-relay/shared";
+import { updateFeedAction } from "@callout-relay/shared";
 import type { AppConfig, UpdateStatus } from "@callout-relay/shared";
 
 export const RELEASES_URL = "https://github.com/imbafls/relay_translator/releases/latest";
@@ -35,6 +35,8 @@ export class Updater {
   private updater: AutoUpdater | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private checking = false;
+  /** the feed URL last handed to electron-updater; undefined = the packaged one */
+  private appliedFeed: string | undefined;
   private status: UpdateStatus;
 
   constructor(private readonly deps: UpdaterDeps) {
@@ -63,7 +65,16 @@ export class Updater {
   }
 
   private load(): AutoUpdater | null {
-    if (this.updater) return this.updater;
+    if (this.updater) {
+      // the feed is re-read here, not only when the updater is first built.
+      // `applyConfig` calls `start()` whenever `updateFeedUrl` changes, and that
+      // path used to reach this early return and stop - so a changed feed did
+      // nothing at all until the app was restarted, and the confirming log line
+      // never printed. The decision is cheap and idempotent; re-registering the
+      // event listeners below would not be, which is why only the feed moves.
+      this.applyFeed(this.updater);
+      return this.updater;
+    }
     const reason = this.unsupportedReason();
     if (reason) {
       this.set({ state: "unsupported", detail: reason });
@@ -91,21 +102,7 @@ export class Updater {
       debug: () => {},
     };
 
-    // no override = the packaged app-update.yml (GitHub releases)
-    const feedUrl = this.deps.config().updateFeedUrl?.trim();
-    if (feedUrl && !isAllowedUpdateFeed(feedUrl)) {
-      // electron-updater downloads and runs what the feed names, and this build
-      // sets no publisherName, so its signature check returns early - the only
-      // integrity proof would be a hash in the attacker's own file
-      this.deps.log("error", `refusing update feed "${feedUrl}" - falling back to the release feed`);
-    } else if (feedUrl) {
-      try {
-        mod.setFeedURL({ provider: "generic", url: feedUrl });
-        this.deps.log("info", `update feed: ${feedUrl}`);
-      } catch (err) {
-        this.deps.log("error", `bad updateFeedUrl, falling back to the release feed: ${String(err)}`);
-      }
-    }
+    this.applyFeed(mod);
 
     mod.on("checking-for-update", () => this.set({ state: "checking" }));
     mod.on("update-available", (info) =>
@@ -127,6 +124,40 @@ export class Updater {
 
     this.updater = mod;
     return mod;
+  }
+
+  /**
+   * Point electron-updater at whatever `updateFeedUrl` currently says. Called
+   * on every `load()`, cached updater included, so a feed change takes effect
+   * on the next check rather than on the next launch.
+   *
+   * No override means the packaged `app-update.yml` (GitHub releases). Clearing
+   * an override that was already applied is the one case this cannot honour:
+   * electron-updater exposes no way back to the packaged config once
+   * `setFeedURL` has replaced it, so it says so rather than carrying on
+   * against a feed the user just deleted.
+   */
+  private applyFeed(mod: AutoUpdater): void {
+    const decision = updateFeedAction(this.deps.config().updateFeedUrl, this.appliedFeed);
+    if (decision.action === "none") return;
+    if (decision.action === "refused") {
+      // electron-updater downloads and runs what the feed names, and this build
+      // sets no publisherName, so its signature check returns early - the only
+      // integrity proof would be a hash in the attacker's own file
+      this.deps.log("error", `refusing update feed "${decision.url}" - staying on the release feed`);
+      return;
+    }
+    if (decision.action === "restart-needed") {
+      this.deps.log("warn", `update feed cleared - the release feed comes back when the app restarts`);
+      return;
+    }
+    try {
+      mod.setFeedURL({ provider: "generic", url: decision.url });
+      this.appliedFeed = decision.url;
+      this.deps.log("info", `update feed: ${decision.url}`);
+    } catch (err) {
+      this.deps.log("error", `bad updateFeedUrl, falling back to the release feed: ${String(err)}`);
+    }
   }
 
   /** manual CHECK, and the background poll */

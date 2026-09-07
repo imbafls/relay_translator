@@ -2617,3 +2617,39 @@ real line break in the generated source. The child died with a SyntaxError, the
 probe counted zero, and the bug being tested for swallowed the error - `done`
 was already true. It read as a test failure rather than as a broken test. The
 generated worker now contains no escape sequences at all.
+
+### Turn 74 - Updates (audit finding 27: a feed change that waited for a restart)
+
+`load()` returns the cached `this.updater` on its first line and `setFeedURL`
+sits below that return; `stop()` only clears the poll timer. `applyConfig`
+calls `updater?.start()` the moment `updateFeedUrl` changes - and that path
+reached the early return and stopped. So the app went on checking the old feed
+for the rest of the process's life, and the `update feed: <url>` line that
+would have said otherwise never printed. Point it at your own box and it keeps
+asking GitHub. Point it back and it keeps asking your box.
+
+Only the feed re-applies on the cached path. Re-running the rest of `load()`
+would re-register every `mod.on(...)` listener on electron-updater's singleton,
+which turns one download-progress event into two `set()` calls and grows every
+time the config is touched. That is the reason the fix is a call and not a
+cache invalidation.
+
+The decision itself moved to `updateFeedAction` in shared, next to
+`isAllowedUpdateFeed`, because `updater.ts` imports Electron's `app` at module
+scope and cannot be loaded by the suite - and `app` is not something Node can
+stand in for, since `require("electron")` outside Electron returns a path
+string. So the interesting part is real code with real tests and the plumbing
+gets a narrow source check. **Said plainly: no test here runs `Updater`.**
+
+Writing it down also surfaced a case the audit did not name. Clearing the
+override cannot be honoured: electron-updater has no public way back to the
+packaged `app-update.yml` once `setFeedURL` has replaced it. Returning "none"
+there would leave the app checking a feed the user had just deleted and
+reporting it missing, so it warns that the release feed returns on restart.
+
+**Guards - seven, two watched fail** (`load() returns the cached updater
+without re-applying the feed` and `the updater no longer uses
+updateFeedAction`). The five in `updateFeed.test.ts` are unit tests of the new
+decision, not guards over the old bug - a function that did not exist cannot
+have failed against the old tree, and saying otherwise would be the kind of
+claim this log exists to stop.

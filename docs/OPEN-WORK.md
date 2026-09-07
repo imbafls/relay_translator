@@ -127,7 +127,8 @@ Anyone can pick these up. Ordered by the audit's rank.
 | 32 | The error overlay printed straight through the transcript underneath it | `71c320e` |
 | 3 (part) | The unauthenticated `GET /link` route, which had no callers | `6931abd` |
 | 28 | A busy control-API port took the tray and the window down with it | `dd6e9c6` |
-| 34 | A passing local-STT probe thrown away because the session had stopped | *(this commit)* |
+| 34 | A passing local-STT probe thrown away because the session had stopped | `3b2d21f` |
+| 27 | A changed update feed that did nothing until the app was restarted | *(this commit)* |
 
 Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
@@ -138,7 +139,6 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 | 3 | high | Control API: no credential and `Origin: null` admitted, so a page you visit can start/stop the session, patch config, and `POST /link/rotate` for an unredacted viewer link. **Partly closed** - `GET /link` deleted (it had no callers); the rest needs a token the property inspector has no testable way to receive. *(Also B5.)* | `packages/companion/src/controlServer.ts` |
 | 8 | high | Offline local STT has no backpressure and can never catch up: partials are gated on buffered samples rather than wall clock, and the worker queue is unbounded. **Cannot be verified on this machine** - both archive models in the models dir are `.part` files, which is B6's symptom, so the local engine has never run here. | `packages/relay/src/localSttWorker.ts` |
 | 17 | medium | The flat 4 s kill timer discards the local STT worker's flush finals, so the last utterance before STOP never reaches viewers. | `packages/relay/src/localStt.ts` |
-| 27 | low | Changing `updateFeedUrl` has no effect until restart. | `apps/standalone/src/updater.ts` |
 
 Each entry in the audit carries a reproduced failure scenario and a suggested
 fix — read the numbered section there before starting.
