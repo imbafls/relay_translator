@@ -2585,3 +2585,35 @@ that and nothing had ever asserted it. The call site itself cannot be run -
 main.ts imports Electron - so it is checked at the source the way finding 33
 is, plus the ordering the fix exists to protect: tray and window still come
 after the control API, or the guard would be checking nothing.
+
+### Turn 73 - Local STT (audit finding 34: an answer thrown away for no reason)
+
+The probe is a whole second load of the model, in a child process, before the
+worker thread loads it again - which is precisely the cost the per-process
+`verified` cache was added to pay once. The `.then()` that records the result
+opened with `if (done) return;`, above `verified.add(cfg.model)`.
+
+So a probe that PASSED after the user pressed STOP was discarded. The model had
+been proved loadable on this PC, the answer was in hand, and the next START
+paid the entire probe again. Pressing START and changing your mind is an
+ordinary thing to do, and a model heavy enough to make the probe worth waiting
+through is exactly the one you give up on.
+
+Whether a model loads on this PC is a fact about the PC. It has no business
+depending on whether the session that asked survived. One line moves.
+
+**Guards - two, one watched fail** (`the second start paid for a probe that had
+already passed`, 2 where 1 was wanted). They count from outside the process -
+the stand-in worker appends a byte per probe child - so what is asserted is how
+many child processes were actually spawned, not the contents of a private Set.
+The second is the counterweight and matters: a FAILED probe must still not be
+cached, or moving the bookkeeping up would have taught the app that a model it
+could not load was fine.
+
+Worth recording, since it is the fifth time in this run: the first draft of the
+guard generated a worker script with `
+` inside a string literal, which put a
+real line break in the generated source. The child died with a SyntaxError, the
+probe counted zero, and the bug being tested for swallowed the error - `done`
+was already true. It read as a test failure rather than as a broken test. The
+generated worker now contains no escape sequences at all.

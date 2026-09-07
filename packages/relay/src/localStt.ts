@@ -226,13 +226,20 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   if (verified.has(cfg.model)) startWorker();
   else {
     void probeModel(opts.workerPath, initMsg).then((problem) => {
+      // recorded before the bail-out, deliberately. The probe is a second full
+      // load of the model in a child process, which is the cost this cache
+      // exists to pay once; whether it loads on this PC is a fact about the PC,
+      // not about the session that happened to ask. Bailing out first threw
+      // away a passing answer whenever the user pressed STOP while it ran - and
+      // a model heavy enough to make that probe long is exactly the one they
+      // give up on waiting for. The next START then paid for it all over again.
+      if (!problem) verified.add(cfg.model);
       if (done) return;
       if (problem) {
         events.onError?.(`"${info.label}" could not be loaded on this PC (${problem}). Pick another model under 02 TRANSCRIBE.`);
         finish();
         return;
       }
-      verified.add(cfg.model);
       startWorker();
     });
   }

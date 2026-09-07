@@ -349,3 +349,114 @@ describe("audio buffered while the model is being prepared", () => {
     expect(errors[0]).toMatch(/1s of speech was dropped/);
   });
 });
+
+/**
+ * Audit finding 34.
+ *
+ * The probe is a whole second load of the model in a child process - the thing
+ * the per-process `verified` cache exists to stop paying twice. But the
+ * `.then()` that records the result opened with `if (done) return;`, above
+ * `verified.add(cfg.model)`. So a probe that PASSED after the user pressed STOP
+ * was thrown away: the model had been proved loadable on this PC, the answer
+ * was in hand, and the next start paid the whole probe again. Pressing START
+ * and changing your mind is not an unusual thing to do, and a heavy model on a
+ * busy machine makes that probe long enough to be the reason you changed it.
+ *
+ * The bookkeeping has no reason to depend on the session surviving.
+ *
+ * Counted from outside: the stand-in worker appends a line per probe run, so
+ * the assertion is on how many child processes were actually spawned rather
+ * than on the private Set.
+ */
+function writeCountingProbe(dir: string, tally: string, delayMs: number): string {
+  const file = path.join(dir, "countingWorker.js");
+  fs.writeFileSync(
+    file,
+    `
+if (process.argv[2] === "--probe") {
+  require("fs").appendFileSync(${JSON.stringify(tally)}, "x");
+  setTimeout(() => process.exit(0), ${delayMs});
+} else {
+  const { parentPort } = require("worker_threads");
+  parentPort.on("message", (msg) => {
+    if (msg.type === "init") parentPort.postMessage({ type: "ready" });
+    else if (msg.type === "close") process.exit(0);
+  });
+}
+`,
+  );
+  return file;
+}
+
+describe("a probe that comes back after the session stopped", () => {
+  const MODEL = "local-nemotron-streaming";
+
+  it("is still worth remembering, so the next start does not pay for it again", async () => {
+    const models = tmp();
+    stageModel(models, MODEL, { vad: true });
+    const tally = path.join(models, "probes.txt");
+    const workerPath = writeCountingProbe(models, tally, 250);
+
+    /** one byte per probe child, counted from outside the process */
+    const probes = (): number => (fs.existsSync(tally) ? fs.readFileSync(tally, "utf8").length : 0);
+
+    // START, then change your mind while the probe is still running
+    const first = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: MODEL, language: "en", channels: 1 },
+      { onError: () => {}, onClose: () => {} },
+    );
+    first.close();
+
+    // let the probe finish on its own, after the session it belonged to is gone
+    await new Promise((r) => setTimeout(r, 600));
+    expect(probes(), "the probe never ran, so this test proves nothing").toBe(1);
+
+    // START again: the model was proved loadable a moment ago
+    let opened!: () => void;
+    const isOpen = new Promise<void>((r) => {
+      opened = r;
+    });
+    const second = createLocalSttStream(
+      { modelsDir: models, workerPath },
+      { model: MODEL, language: "en", channels: 1 },
+      { onOpen: () => opened(), onError: () => {}, onClose: () => {} },
+    );
+    await isOpen;
+    second.close();
+
+    expect(probes(), "the second start paid for a probe that had already passed").toBe(1);
+  });
+
+  it("is not remembered when it failed, however the session ended", async () => {
+    const models = tmp();
+    stageModel(models, "local-whisper-turbo", { vad: true });
+    const tally = path.join(models, "probes.txt");
+    // a worker that fails its probe - exit 127, the shape of a missing engine
+    const file = path.join(models, "failingWorker.js");
+    fs.writeFileSync(
+      file,
+      `require("fs").appendFileSync(${JSON.stringify(tally)}, "x"); setTimeout(() => process.exit(127), 150);`,
+    );
+
+    const errors: string[] = [];
+    const first = createLocalSttStream(
+      { modelsDir: models, workerPath: file },
+      { model: "local-whisper-turbo", language: "en", channels: 1 },
+      { onError: (m) => errors.push(m), onClose: () => {} },
+    );
+    first.close();
+    await new Promise((r) => setTimeout(r, 500));
+
+    // a model that could not be loaded must be re-probed, not cached as good
+    createLocalSttStream(
+      { modelsDir: models, workerPath: file },
+      { model: "local-whisper-turbo", language: "en", channels: 1 },
+      { onError: (m) => errors.push(m), onClose: () => {} },
+    );
+    await new Promise((r) => setTimeout(r, 500));
+
+    const runs = fs.readFileSync(tally, "utf8").length;
+    expect(runs, "a failed probe was cached as a pass").toBe(2);
+  });
+});
