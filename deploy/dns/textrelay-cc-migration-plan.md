@@ -1,3 +1,36 @@
+# textrelay.cc — done 2026-09-07
+
+**The migration is complete.** Kept as the record of what was decided and why,
+and because the email half has not been done yet.
+
+```
+textrelay.cc  NS  craig.ns.cloudflare.com, lia.ns.cloudflare.com
+              →   the hosted relay Worker, apex custom domain
+```
+
+What happened, in the order the plan called for:
+
+1. Zone added to Cloudflare (the account the Worker is in) while it still had
+   no MX - the empty blast radius the plan was built around.
+2. Both imported records deleted: the apex `A` at the Hostinger parking IP and
+   the `www` CNAME. A custom domain will not attach over a conflicting record.
+3. Nameservers repointed at the registrar. Live at the .cc registry within
+   about a minute.
+4. `textrelay.cc` attached as a Worker custom domain alongside
+   `relay.supr.systems`, and deployed.
+5. Verified on the new name: `verify-deploy` 14/14, `verify-isolation` 9/9, and
+   the viewer page byte-identical to the tree. The old name still passes 14/14.
+6. `HOSTED_RELAY_URL` moved to `wss://textrelay.cc`, so every install claims
+   there from the release that carries it.
+
+**Still to do: the email.** It is paid for and not configured. Create its
+records **in Cloudflare**, not at Hostinger - the zone is no longer served
+there. Verify by sending both directions and reading `SPF: PASS` / `DKIM: PASS`
+off a received message; records resolving is not the same as mail working.
+
+The rest of this file is the plan as it stood beforehand.
+
+---
 # textrelay.cc — the plan, for when it is done
 
 Domain bought 2026-09-06 as the product's own name, with a year of email.

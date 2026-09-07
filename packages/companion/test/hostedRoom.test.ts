@@ -119,7 +119,15 @@ describe("where a claim is sent", () => {
   });
 
   it("ships a default so the user is not asked to know the address", () => {
-    expect(HOSTED_RELAY_URL).toBe("wss://relay.supr.systems");
-    expect(claimUrlFor(HOSTED_RELAY_URL)).toBe("https://relay.supr.systems/claim");
+    // the apex, not a `relay.` subdomain: the Worker serves the landing page at
+    // / and the viewer at /watch/<token>, and the link is the thing people see
+    expect(HOSTED_RELAY_URL).toBe("wss://textrelay.cc");
+    expect(claimUrlFor(HOSTED_RELAY_URL)).toBe("https://textrelay.cc/claim");
+  });
+
+  it("still knows how to claim on the name rooms were claimed on before", () => {
+    // relay.supr.systems keeps answering, so a config carrying it stays valid
+    // and nobody's link dies because the default moved
+    expect(claimUrlFor("wss://relay.supr.systems")).toBe("https://relay.supr.systems/claim");
   });
 });

@@ -207,8 +207,16 @@ export function updateFeedAction(configured: string | undefined, applied: string
  * outside their network. A Cloudflare Worker, one Durable Object per room; it
  * does no transcription and no translation and holds no keys - it only fans
  * finished captions out to whoever has the link.
+ *
+ * The apex, not a `relay.` subdomain: the Worker serves the landing page at `/`
+ * and the viewer at `/watch/<token>`, and the viewer link is the most-shared
+ * thing this project makes - `textrelay.cc/watch/<token>` says what it is.
+ *
+ * `relay.supr.systems` still answers and still passes both verify scripts, so
+ * rooms claimed before this changed keep working. Moving is a release, not a
+ * deploy, which is the point of keeping both.
  */
-export const HOSTED_RELAY_URL = "wss://relay.supr.systems";
+export const HOSTED_RELAY_URL = "wss://textrelay.cc";
 
 /**
  * Where to POST to get a room, given the relay address the app stores.

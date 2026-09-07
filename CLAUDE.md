@@ -33,7 +33,7 @@ at `/watch/<token>`. It serves **LAN and OBS viewers**. It needs no
 configuration and works out of the box on a fresh install.
 
 **2. The uplink to a remote relay.** Optional. Mirrors **already-finished
-subtitles** to a remote relay (the VPS at `relay.supr.systems`) so viewers on
+subtitles** to a remote relay (the hosted Worker at `textrelay.cc`) so viewers on
 the internet — a phone not on your LAN — can watch. The remote relay does
 **no STT and no translation**. It is pure fan-out.
 

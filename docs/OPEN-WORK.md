@@ -21,7 +21,7 @@ the audit's stated grouping; it is a reading aid, not a quote.
 
 The first three blockers in the previous version of this file were all "SSH into
 the Hostinger box". **There is no box.** It was stopped on 2026-09-06 and
-`relay.supr.systems` is a Cloudflare Worker with one Durable Object per
+`textrelay.cc` (and still `relay.supr.systems`) is a Cloudflare Worker with one Durable Object per
 streamer (`apps/hosted-relay`). Nothing needs mirroring, no tokens need setting
 by hand — a room issues its own credentials on `POST /claim`.
 

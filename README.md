@@ -289,8 +289,8 @@ To deploy the hosted relay yourself (it is pinned to one Cloudflare account):
 
 ```powershell
 pnpm deploy:hosted
-node apps/hosted-relay/scripts/verify-deploy.cjs https://relay.supr.systems
-node apps/hosted-relay/scripts/verify-isolation.cjs https://relay.supr.systems
+node apps/hosted-relay/scripts/verify-deploy.cjs https://textrelay.cc
+node apps/hosted-relay/scripts/verify-isolation.cjs https://textrelay.cc
 ```
 
 Run both verify scripts after any deploy. The Worker serves the viewer page from

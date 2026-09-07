@@ -19,7 +19,20 @@ account_id = "c9b5a04c1a901e52c8d99c576ee55f90"
 # being cut over by a deploy.
 workers_dev = true
 
+# The apex is the whole product: the Worker already serves home.html at / and
+# the viewer at /watch/<token>, and the viewer link is the most-shared thing
+# this project makes - textrelay.cc/watch/<token> says what it is.
+#
+# relay.supr.systems stays, and so does workers_dev. Three names answering is
+# deliberate: rooms already claimed on the old name keep working, the app moves
+# when a release changes HOSTED_RELAY_URL rather than when a deploy happens, and
+# there is somewhere to fall back to.
+#
+# Both apex records Cloudflare imported had to be deleted first - a custom
+# domain will not attach to a hostname that already has a conflicting record,
+# which is the same reason `relay` was left out of the supr.systems import.
 routes = [
+  { pattern = "textrelay.cc", custom_domain = true },
   { pattern = "relay.supr.systems", custom_domain = true }
 ]
 

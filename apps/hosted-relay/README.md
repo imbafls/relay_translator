@@ -10,8 +10,16 @@ phone viewers without running a server. One Durable Object per streamer.
 second streamer connecting evicts the first (`server.ts:556`, "publisher
 replaced by new connection"). The VPS that used to run it served exactly one
 person at a time and could not be offered to users at all — not for want of
-credentials, but because the program cannot do it. That VPS is retired, and
-`relay.supr.systems` now points here instead.
+credentials, but because the program cannot do it. That VPS is retired.
+
+This Worker answers on **`textrelay.cc`**, the product's own name and what the
+app claims rooms on. `relay.supr.systems` still answers too, and so does the
+`workers.dev` name: rooms claimed before the move keep working, and the app
+moves when a release changes `HOSTED_RELAY_URL` rather than when a deploy
+happens. The apex rather than a `relay.` subdomain, because the Worker serves
+the landing page at `/` and the viewer at `/watch/<token>` — the viewer link is
+the most-shared thing this project makes, and `textrelay.cc/watch/<token>` says
+what it is.
 
 Those three globals are what a Durable Object gives you per-room for free. The
 room's logic is the old server's live half; isolation stops being something to
@@ -120,8 +128,9 @@ could not do at all: both uplinks stay up, each viewer gets its own room's
 languages, neither room's captions reach the other, one room's secret cannot
 open another, and each room counts only its own viewers.
 
-Both passed against the live deployment on 2026-09-06 (14/14 and 9/9):
-https://relay.supr.systems
+Both passed against the live deployment on 2026-09-07, on both names
+(14/14 and 9/9 on the new one, 14/14 on the old):
+https://textrelay.cc and https://relay.supr.systems
 
 ### Two things only deploying could catch
 

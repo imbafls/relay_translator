@@ -9,7 +9,7 @@
  * happens for a room with a live uplink and a viewer attached is the whole
  * premise of hosting other people for nothing, and it had never been checked.
  *
- *   node scripts/measure-cost.cjs https://relay.supr.systems <minutes>
+ *   node scripts/measure-cost.cjs https://textrelay.cc <minutes>
  *
  * It claims a room, attaches an uplink and a viewer, and publishes a caption
  * every few seconds at roughly the rate a real session produces them. It prints
