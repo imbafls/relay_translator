@@ -93,7 +93,10 @@ function bridge(config: AppConfig) {
     writeClipboard: async (text: string) => {
       calls.clipboard.push(text);
     },
-    appVersion: async () => appVersion,
+    appVersion: async () => {
+      if (appVersionFails) throw new Error("ipc timeout");
+      return appVersion;
+    },
     reportState: () => {},
     reportDevices: () => {},
     modelStatus: async () => [],
@@ -105,7 +108,14 @@ function bridge(config: AppConfig) {
     onStatus: (cb: (s: unknown) => void) => {
       pushStatus = cb;
     },
-    readRelayLog: async () => fakeRelayLog,
+    readRelayLog: async () => {
+      if (readRelayLogGate) await readRelayLogGate;
+      return fakeRelayLog;
+    },
+    sendFeedback: async (payload: unknown) => {
+      feedbackSends.push({ payload });
+      return feedbackResult;
+    },
   };
 }
 
@@ -133,16 +143,30 @@ let claimFails: string | null = null;
 /** what cr.readRelayLog() answers - the raw, unredacted relay.log text */
 let fakeRelayLog = "";
 /**
- * Every POST SEND FEEDBACK actually made. Real network I/O for this feature
- * happens in the renderer itself (not through the `cr` bridge - main.ts gains
- * no send capability, see preload.ts), so this stands in for `fetch`, the
- * same way `bridge()` stands in for the IPC boundary. Empty until SEND is
- * pressed is exactly what proves nothing leaves the machine before that.
+ * Delays cr.readRelayLog()'s resolution until released, so a test can create
+ * a real race between ticking INCLUDE MY LOG and unticking it again before
+ * the read comes back. null (the default) means "resolve immediately".
  */
-let feedbackPosts: { url: string; body: unknown }[] = [];
-/** what the mocked fetch() answers SEND FEEDBACK's request with */
-let feedbackResponse: { status: number; body?: unknown } = { status: 200, body: { id: "a1b2c3d4e5f6a7b8" } };
-const realFetch = globalThis.fetch;
+let readRelayLogGate: Promise<void> | null = null;
+let releaseReadRelayLogGate: (() => void) | null = null;
+/** when set, cr.appVersion() rejects instead of answering - a local IPC hiccup */
+let appVersionFails = false;
+/**
+ * Every call to cr.sendFeedback() actually made. The real network I/O for
+ * this feature happens in the main process now (packages/companion's
+ * sendFeedback, over IPC - a fetch() from this renderer's file:// origin is
+ * CORS-blocked against the hosted relay by design, see main.ts), so this
+ * stands in for that IPC call the same way every other `calls.*` array
+ * stands in for the rest of the bridge. Empty until SEND is pressed is
+ * exactly what proves nothing leaves the machine before that.
+ */
+let feedbackSends: { payload: unknown }[] = [];
+/** what the mocked cr.sendFeedback() answers with - a FeedbackResult */
+let feedbackResult: { delivered: true; id: string; logFailed: boolean } | { delivered: false; message: string } = {
+  delivered: true,
+  id: "a1b2c3d4e5f6a7b8",
+  logFailed: false,
+};
 
 async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
   calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [], claimed: [], rotated: [] };
@@ -186,19 +210,8 @@ async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Prom
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
-  feedbackPosts = [];
-  feedbackResponse = { status: 200, body: { id: "a1b2c3d4e5f6a7b8" } };
-  // stands in for the network boundary submitFeedback() talks to directly -
-  // see the comment on `feedbackPosts` above for why this isn't on `cr`
-  (globalThis as unknown as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
-    feedbackPosts.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    const status = feedbackResponse.status;
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      json: async () => feedbackResponse.body,
-    } as Response;
-  };
+  feedbackSends = [];
+  feedbackResult = { delivered: true, id: "a1b2c3d4e5f6a7b8", logFailed: false };
 });
 
 afterEach(() => {
@@ -206,7 +219,9 @@ afterEach(() => {
   setConfigFails = false;
   claimFails = null;
   fakeRelayLog = "";
-  (globalThis as unknown as { fetch: typeof fetch }).fetch = realFetch;
+  readRelayLogGate = null;
+  releaseReadRelayLogGate = null;
+  appVersionFails = false;
   for (const t of timers) clearInterval(t);
   timers = [];
   vi.restoreAllMocks();
@@ -1671,6 +1686,7 @@ describe("sending a feedback report", () => {
     messageEl().value = text;
     messageEl().dispatchEvent(new Event("input"));
   };
+  const lastPayload = (): Record<string, unknown> => feedbackSends[feedbackSends.length - 1].payload as Record<string, unknown>;
 
   /** 40 lowercase hex characters - the exact shape redactLog.test.ts uses for a Deepgram-style key */
   const SECRET = "df".repeat(20);
@@ -1682,7 +1698,7 @@ describe("sending a feedback report", () => {
     const settings = doc.getElementById("settings") as HTMLElement;
     const groupOf = (id: string): string | null =>
       settings.querySelector(`#${id}`)?.closest("[data-group]")?.getAttribute("data-group") ?? null;
-    const ids = ["feedbackMessage", "feedbackIncludeLog", "feedbackPreview", "sendFeedback"];
+    const ids = ["feedbackMessage", "feedbackIncludeLog", "feedbackPreview", "sendFeedback", "feedbackNote"];
     const where = ids.map((id) => `${id}=${groupOf(id) ?? "(none)"}`);
     expect(ids.every((id) => groupOf(id) === "app"), `not all in data-group="app": ${where.join("  ")}`).toBe(true);
   });
@@ -1703,15 +1719,15 @@ describe("sending a feedback report", () => {
     fakeRelayLog = `deepgram key ${SECRET}`;
     await bootWith({ setupDone: true });
     await openSettings();
-    expect(feedbackPosts, "opening settings alone sent something").toEqual([]);
+    expect(feedbackSends, "opening settings alone sent something").toEqual([]);
 
     type("captions froze after twenty minutes");
     await settle(40);
-    expect(feedbackPosts, "typing the message sent something").toEqual([]);
+    expect(feedbackSends, "typing the message sent something").toEqual([]);
 
     includeLogEl().click();
     await settle(40);
-    expect(feedbackPosts, "ticking the log checkbox sent something").toEqual([]);
+    expect(feedbackSends, "ticking the log checkbox sent something").toEqual([]);
   });
 
   it("carries no log field at all when the box is left unticked", async () => {
@@ -1723,9 +1739,9 @@ describe("sending a feedback report", () => {
     sendBtn().click();
     await settle(40);
 
-    expect(feedbackPosts).toHaveLength(1);
-    expect(feedbackPosts[0].body, "an unticked box must omit `log`, not send it empty").not.toHaveProperty("log");
-    expect((feedbackPosts[0].body as { message: string }).message).toBe("no log, please");
+    expect(feedbackSends).toHaveLength(1);
+    expect(lastPayload(), "an unticked box must omit `log`, not send it empty").not.toHaveProperty("log");
+    expect(lastPayload().message).toBe("no log, please");
   });
 
   it("sends exactly the string the preview showed, not a fresh read of the log", async () => {
@@ -1746,15 +1762,18 @@ describe("sending a feedback report", () => {
     sendBtn().click();
     await settle(40);
 
-    expect(feedbackPosts).toHaveLength(1);
-    expect((feedbackPosts[0].body as { log?: string }).log, "the payload does not match what was previewed").toBe(shown);
-    expect((feedbackPosts[0].body as { log?: string }).log).not.toContain("never shown in the preview");
+    expect(feedbackSends).toHaveLength(1);
+    expect(lastPayload().log, "the payload does not match what was previewed").toBe(shown);
+    expect(lastPayload().log).not.toContain("never shown in the preview");
   });
 
-  it("always posts to the project's own hosted relay, never to a configured relayUrl", async () => {
+  it("never lets a configured relayUrl - or anything else machine-identifying - into the feedback payload", async () => {
     // a fresh install has relayUrl unset (LAN-only by construction), and a
-    // self-hosted relay has no /feedback route at all - either way, feedback
-    // has to reach the one place that implements it
+    // self-hosted relay has no /feedback route at all - sendFeedback
+    // (packages/companion) takes no url parameter at all, so there is no way
+    // for either fact to change where this goes or what it carries; that is
+    // now provable by the payload's shape alone, not by asserting on a URL
+    // the renderer no longer knows
     await bootWith({ setupDone: true, relayUrl: "wss://someone-elses-relay.example.com" });
     await openSettings();
     type("still works with a self-hosted relay configured");
@@ -1762,13 +1781,73 @@ describe("sending a feedback report", () => {
     sendBtn().click();
     await settle(40);
 
-    expect(feedbackPosts).toHaveLength(1);
-    const expected = `${HOSTED_RELAY_URL.replace(/^ws/, "http")}/feedback`;
-    expect(feedbackPosts[0].url).toBe(expected);
+    expect(feedbackSends).toHaveLength(1);
+    expect(Object.keys(lastPayload()).sort()).toEqual(["appVersion", "message"]);
+  });
+
+  it("falls back to a version string the server accepts when reading appVersion fails, instead of one it rejects", async () => {
+    // parseFeedback (apps/hosted-relay) 400s on an empty appVersion - an IPC
+    // hiccup reading the version must not turn into "invalid feedback",
+    // which would misreport a local problem as a bad report
+    appVersionFails = true;
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("version read failed locally");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackSends).toHaveLength(1);
+    expect(lastPayload().appVersion, "an empty appVersion is the one value the server rejects").not.toBe("");
+    expect(typeof lastPayload().appVersion).toBe("string");
+  });
+
+  it("explains an empty log instead of showing a blank box, and sends no log key for it", async () => {
+    // a fresh install has no relay.log at all - redactLog("") is "", and
+    // "log": "" is a zero-byte object the Worker would store for nothing
+    fakeRelayLog = "";
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("nothing to attach yet");
+
+    includeLogEl().click();
+    await settle(40);
+
+    expect(previewEl().hidden, "an empty log left the preview hidden with no explanation").toBe(false);
+    expect(previewEl().textContent, "an empty log showed a blank box instead of saying so").not.toBe("");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackSends).toHaveLength(1);
+    expect(lastPayload(), "an empty redacted log must omit `log`, not send it empty").not.toHaveProperty("log");
+  });
+
+  it("does not let a stale in-flight log read repopulate the preview after unticking", async () => {
+    fakeRelayLog = `deepgram key ${SECRET}`;
+    await bootWith({ setupDone: true });
+    await openSettings();
+
+    readRelayLogGate = new Promise((r) => {
+      releaseReadRelayLogGate = r;
+    });
+    includeLogEl().click(); // starts a read that will not resolve yet
+    await settle(20);
+    includeLogEl().click(); // unticks before that read comes back
+    await settle(20);
+
+    expect(previewEl().hidden, "unticking did not clear the preview immediately").toBe(true);
+    expect(previewEl().textContent).toBe("");
+
+    releaseReadRelayLogGate?.(); // let the stale read land
+    await settle(40);
+
+    expect(previewEl().hidden, "a stale read repopulated the preview after unticking").toBe(true);
+    expect(previewEl().textContent).toBe("");
   });
 
   it("reports success with the reference id", async () => {
-    feedbackResponse = { status: 200, body: { id: "a1b2c3d4e5f6a7b8" } };
+    feedbackResult = { delivered: true, id: "a1b2c3d4e5f6a7b8", logFailed: false };
     await bootWith({ setupDone: true });
     await openSettings();
     type("worked fine, just checking in");
@@ -1780,7 +1859,7 @@ describe("sending a feedback report", () => {
   });
 
   it("treats a 502 that carries an id as delivered - the report landed even though the log did not attach", async () => {
-    feedbackResponse = { status: 502, body: { error: "feedback stored, log upload failed", id: "deadbeefdeadbeef" } };
+    feedbackResult = { delivered: true, id: "deadbeefdeadbeef", logFailed: true };
     await bootWith({ setupDone: true });
     await openSettings();
     type("log attach test");
@@ -1789,13 +1868,14 @@ describe("sending a feedback report", () => {
     await settle(40);
 
     expect(noteText()).toContain("deadbeefdeadbeef");
+    expect(noteText()).toMatch(/log did not attach/i);
     // cleared, because a landed report must never be retried - retrying would
     // duplicate it just to retry the log attachment
     expect(messageEl().value, "a delivered report was left sitting there to be resent").toBe("");
   });
 
   it("treats a 502 with no id as nothing stored, and keeps the message so it can be retried", async () => {
-    feedbackResponse = { status: 502, body: { error: "feedback could not be stored" } };
+    feedbackResult = { delivered: false, message: "feedback could not be stored" };
     await bootWith({ setupDone: true });
     await openSettings();
     type("please retry me");
@@ -1808,7 +1888,7 @@ describe("sending a feedback report", () => {
   });
 
   it("surfaces the rate-limit message from the server", async () => {
-    feedbackResponse = { status: 429, body: { error: "too much feedback from here - try again in a minute" } };
+    feedbackResult = { delivered: false, message: "too much feedback from here - try again in a minute" };
     await bootWith({ setupDone: true });
     await openSettings();
     type("again");
@@ -1826,6 +1906,6 @@ describe("sending a feedback report", () => {
     sendBtn().click();
     await settle(40);
 
-    expect(feedbackPosts).toEqual([]);
+    expect(feedbackSends).toEqual([]);
   });
 });

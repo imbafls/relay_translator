@@ -8,6 +8,7 @@ import type {
   SessionState,
   UpdateStatus,
 } from "@callout-relay/shared";
+import type { FeedbackPayload, FeedbackResult } from "@callout-relay/companion";
 
 export interface RendererBridge {
   getConfig(): Promise<AppConfig>;
@@ -44,12 +45,19 @@ export interface RendererBridge {
   onConfigChanged(cb: (cfg: AppConfig) => void): void;
   onStatus(cb: (status: ControlStatus) => void): void;
   /**
-   * The raw, unredacted text of relay.log. This is the ONLY thing main.ts
-   * exposes for SEND FEEDBACK - the renderer redacts it (redactLog), shows
-   * the result in the preview, and posts to the hosted relay itself, only on
-   * the SEND press. Nothing about sending crosses this bridge.
+   * The raw, unredacted text of relay.log. The renderer redacts it
+   * (redactLog) and shows the result in the preview before anything is sent.
    */
   readRelayLog(): Promise<string>;
+  /**
+   * Send a feedback report - the exact payload the renderer built, already
+   * redacted client-side (see `readRelayLog` above and `redactLog`,
+   * packages/shared). This runs the actual POST in the main process: the
+   * renderer's `file://` origin gets no CORS headers back from the hosted
+   * relay (by design - see the comment on the `feedback:send` handler in
+   * main.ts) and could never complete this request itself.
+   */
+  sendFeedback(payload: FeedbackPayload): Promise<FeedbackResult>;
 }
 
 contextBridge.exposeInMainWorld("cr", {
@@ -81,4 +89,5 @@ contextBridge.exposeInMainWorld("cr", {
   onUpdate: (cb: (status: UpdateStatus) => void) =>
     ipcRenderer.on("update:changed", (_e, status) => cb(status)),
   readRelayLog: () => ipcRenderer.invoke("log:read"),
+  sendFeedback: (payload: FeedbackPayload) => ipcRenderer.invoke("feedback:send", payload),
 } satisfies RendererBridge);

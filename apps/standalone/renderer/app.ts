@@ -33,7 +33,6 @@ import {
   speakerTags,
   MAX_CAPTURE_CHANNELS,
   maskViewerLink,
-  HOSTED_RELAY_URL,
   redactLog,
 } from "@callout-relay/shared";
 import type { ChangelogEntry } from "@callout-relay/shared";
@@ -66,12 +65,24 @@ let syncing = false;
 let linkChoice: "phone" | "obs" = "phone";
 /**
  * The exact redacted log text currently shown in #feedbackPreview, or
- * undefined when INCLUDE MY LOG is off. Set in exactly one place
- * (refreshFeedbackPreview) and read in exactly one other (submitFeedback) -
- * that is what guarantees the bytes a person previews are the bytes that get
- * sent. submitFeedback never calls redactLog itself.
+ * undefined when INCLUDE MY LOG is off, or when there is nothing to show (a
+ * fresh install with no relay.log redacts down to an empty string, which is
+ * treated the same as "off" - see refreshFeedbackPreview). Set in exactly one
+ * place (refreshFeedbackPreview) and read in exactly one other
+ * (submitFeedback) - that is what guarantees the bytes a person previews are
+ * the bytes that get sent. submitFeedback never calls redactLog itself.
  */
 let feedbackLogPreview: string | undefined;
+/**
+ * Bumped on every refreshFeedbackPreview() call, including the synchronous
+ * "off" branch. A call whose token has been superseded by the time its
+ * `await cr.readRelayLog()` resolves drops its result instead of writing it -
+ * otherwise ticking, then unticking before the read finishes, then having
+ * that stale read land, would repopulate the preview after the toggle
+ * already turned it off (visual only: submitFeedback always re-reads the
+ * checkbox at send time, so this could never change what gets sent).
+ */
+let feedbackPreviewToken = 0;
 /**
  * Validation verdicts, keyed by the string they were earned for.
  *
@@ -1286,41 +1297,27 @@ async function claimRoom(): Promise<void> {
 }
 
 /**
- * Where SEND FEEDBACK posts - always the project's own hosted relay
- * (apps/hosted-relay, the Cloudflare Worker textrelay.cc), never
- * `config.relayUrl`.
- *
- * `relayUrl` can be empty (a fresh, LAN-only install has no cloud relay at
- * all by construction - CLAUDE.md) or point at a self-hosted relay someone
- * runs on their own VPS, which is a different codebase entirely
- * (packages/relay) with no /feedback route. Feedback has to work in both of
- * those cases, so it targets a fixed address, independent of whatever the
- * user has configured for viewers.
- *
- * Same ws(s)->http(s) rule as `claimUrlFor` (packages/shared) and
- * `httpOriginOfRelayUrl` (src/main.ts) - deliberately re-expressed here
- * rather than imported, since HOSTED_RELAY_URL is a constant this function
- * always resolves, never a stored, possibly-malformed address; touching
- * packages/shared is out of this task's file list.
- */
-function feedbackEndpoint(): string {
-  const m = HOSTED_RELAY_URL.match(/^(wss?):\/\/([^/]+)\/?$/i);
-  const scheme = m && m[1].toLowerCase() === "wss" ? "https" : "http";
-  const host = m ? m[2] : "textrelay.cc";
-  return `${scheme}://${host}/feedback`;
-}
-
-/**
  * Recompute #feedbackPreview from relay.log, redacted, or clear it.
  *
- * Reads through the new `cr.readRelayLog()` IPC call - main.ts's only new
- * capability for this feature - and runs redactLog() on the result exactly
- * once, here. `feedbackLogPreview` is the only place that string is kept;
- * submitFeedback() below sends it verbatim rather than recomputing it, which
- * is what makes the preview and the payload provably the same string.
+ * Reads through `cr.readRelayLog()` and runs redactLog() on the result
+ * exactly once, here. `feedbackLogPreview` is the only place that string is
+ * kept; submitFeedback() below sends it verbatim rather than recomputing it,
+ * which is what makes the preview and the payload provably the same string.
+ *
+ * A redacted-empty log (nothing has been logged yet) shows an explanation
+ * instead of a blank box, and leaves feedbackLogPreview undefined so
+ * submitFeedback sends no `log` key at all - a fresh install has no
+ * relay.log, and "log": "" is not a meaningfully different report from no log
+ * field, just a zero-byte object the Worker would otherwise store.
+ *
+ * `feedbackPreviewToken` guards against ticking, then unticking before this
+ * async read resolves: the stale "on" call's result is dropped rather than
+ * repopulating a preview the toggle already turned off. See the comment on
+ * the token itself.
  */
 async function refreshFeedbackPreview(): Promise<void> {
   const pre = $("feedbackPreview");
+  const token = ++feedbackPreviewToken;
   if (!$("feedbackIncludeLog").classList.contains("on")) {
     feedbackLogPreview = undefined;
     pre.hidden = true;
@@ -1328,26 +1325,34 @@ async function refreshFeedbackPreview(): Promise<void> {
     return;
   }
   const raw = await cr.readRelayLog();
-  feedbackLogPreview = redactLog(raw);
-  pre.textContent = feedbackLogPreview;
+  if (token !== feedbackPreviewToken) return; // superseded by a later tick/untick
+  const redacted = redactLog(raw);
+  feedbackLogPreview = redacted || undefined;
+  pre.textContent = redacted || "(nothing logged yet - there is no log to attach)";
   pre.hidden = false;
 }
 
 /**
- * SEND FEEDBACK. The only place this app posts anything to the network
+ * SEND FEEDBACK. The only place this app sends anything to the network
  * without a person having pressed a button for exactly that - and it is
  * pressing SEND that calls this, never opening the panel, typing, or ticking
  * the log checkbox (those only touch local state and, for the checkbox, the
- * log-reading IPC call above).
+ * log-reading IPC call above). The actual POST happens in the main process
+ * (`cr.sendFeedback`, packages/companion via IPC) - a `fetch()` from this
+ * renderer's `file://` origin is blocked by CORS against a Worker that
+ * answers no Access-Control-* headers on any route, by design; see the
+ * comment on the `feedback:send` handler in main.ts.
  *
- * Handles all five statuses POST /feedback can answer with (Task 7):
- *   200               - stored, `id` in the body
- *   400 / 413 / 415   - the request itself was refused, nothing stored
- *   429               - rate limited, nothing stored
- *   502, no id         - the report itself failed to store; safe to retry
- *   502, id present     - the report DID store, only the log attachment
- *                        failed; retrying would duplicate the report, so
- *                        this is treated as delivered, the same as 200
+ * Handles all five statuses POST /feedback can answer with (Task 7),
+ * collapsed by sendFeedback into a delivered/not-delivered result:
+ *   200               - stored, `id` in the body -> delivered, logFailed=false
+ *   502, id present    - report DID store, only the log attach failed ->
+ *                        delivered, logFailed=true - resending would
+ *                        duplicate the report just to retry the log
+ *   502, no id         - report itself failed to store -> not delivered,
+ *                        safe to retry
+ *   400 / 413 / 415    - the request itself was refused -> not delivered
+ *   429                - rate limited -> not delivered
  */
 async function submitFeedback(): Promise<void> {
   const note = $("feedbackNote");
@@ -1360,58 +1365,42 @@ async function submitFeedback(): Promise<void> {
   }
 
   const includeLog = $("feedbackIncludeLog").classList.contains("on");
-  const payload: { message: string; appVersion: string; log?: string } = {
-    message,
-    appVersion: await cr.appVersion().catch(() => ""),
-  };
+  // an appVersion read that fails locally (IPC hiccup) must not turn into a
+  // server-side "invalid feedback" - parseFeedback (apps/hosted-relay) rejects
+  // an empty string outright, and that 400 would misreport a local problem as
+  // a bad report
+  const appVersion = (await cr.appVersion().catch(() => "")) || "unknown";
+  const payload: { message: string; appVersion: string; log?: string } = { message, appVersion };
   // feedbackLogPreview is exactly what #feedbackPreview is showing right now -
-  // set once by refreshFeedbackPreview() and not touched here. Unticked, or
-  // never populated, means no `log` key at all, not an empty string.
-  if (includeLog && feedbackLogPreview !== undefined) payload.log = feedbackLogPreview;
+  // set once by refreshFeedbackPreview() and not touched here. Unticked,
+  // never populated, or redacted down to nothing, means no `log` key at all,
+  // not an empty string.
+  if (includeLog && feedbackLogPreview) payload.log = feedbackLogPreview;
 
   const btn = $("sendFeedback") as HTMLButtonElement;
   btn.disabled = true;
   note.className = "field-status dim";
   note.textContent = "SENDING…";
-  const delivered = (): void => {
-    messageField.value = "";
-    $("feedbackIncludeLog").classList.remove("on");
-    void refreshFeedbackPreview();
-  };
   try {
-    const res = await fetch(feedbackEndpoint(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = (await res.json().catch(() => undefined)) as { id?: string; error?: string } | undefined;
-    if (res.ok) {
-      note.className = "field-status ok";
-      note.textContent = `SENT · REF ${body?.id ?? "?"}`;
-      log(`feedback sent (ref ${body?.id ?? "?"})`, "ok");
-      delivered();
+    const result = await cr.sendFeedback(payload);
+    if (result.delivered) {
+      note.className = result.logFailed ? "field-status warn" : "field-status ok";
+      note.textContent = result.logFailed ? `SENT · REF ${result.id} · LOG DID NOT ATTACH` : `SENT · REF ${result.id}`;
+      log(
+        result.logFailed ? `feedback sent, but the log did not attach (ref ${result.id})` : `feedback sent (ref ${result.id})`,
+        result.logFailed ? "err" : "ok",
+      );
+      // delivered - safe, and necessary, to clear: resending would duplicate it
+      messageField.value = "";
+      $("feedbackIncludeLog").classList.remove("on");
+      void refreshFeedbackPreview();
       return;
     }
-    if (res.status === 502 && body?.id) {
-      // the report landed; only the log attachment failed. Resending would
-      // send the message a second time just to retry the log, so this
-      // counts as delivered, not failed.
-      note.className = "field-status warn";
-      note.textContent = `SENT · REF ${body.id} · LOG DID NOT ATTACH`;
-      log(`feedback sent, but the log did not attach (ref ${body.id})`, "err");
-      delivered();
-      return;
-    }
-    // 400 / 413 / 415 / 429 / 502-with-no-id: nothing was stored, so the
-    // message is left in place rather than cleared - safe, and necessary, to
-    // press SEND again.
+    // nothing was stored, so the message is left in place - safe, and
+    // necessary, to press SEND again
     note.className = "field-status warn";
-    note.textContent = body?.error || `send failed (HTTP ${res.status})`;
-    log(`feedback send failed: ${body?.error || res.status}`, "err");
-  } catch (err) {
-    note.className = "field-status warn";
-    note.textContent = "could not reach the server";
-    log(`feedback send failed: ${String((err as Error)?.message || err)}`, "err");
+    note.textContent = result.message;
+    log(`feedback send failed: ${result.message}`, "err");
   } finally {
     btn.disabled = false;
   }

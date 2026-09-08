@@ -14,7 +14,8 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { claimHostedRoom, ConfigStore, defaultDataDir, openFileLog, UplinkClient } from "@callout-relay/companion";
+import { claimHostedRoom, ConfigStore, defaultDataDir, openFileLog, sendFeedback, UplinkClient } from "@callout-relay/companion";
+import type { FeedbackPayload } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
 import {
   AppConfig,
@@ -596,12 +597,11 @@ function registerIpc(): void {
   });
 
   /**
-   * SEND FEEDBACK. This is the ONLY new thing main.ts gains for it - reading
-   * relay.log's raw text, unredacted. The renderer runs redactLog on the
-   * result before it is ever shown, and posts to the hosted relay itself,
-   * only on the SEND press - nothing here sends anything anywhere. Never
-   * throws: a missing file (nothing has been logged yet) or a locked one is
-   * "no log", not a broken feature.
+   * SEND FEEDBACK, read half: relay.log's raw text, unredacted. The renderer
+   * runs redactLog on the result before it is ever shown, and that redacted
+   * string - not a fresh read of this - is what "feedback:send" below
+   * forwards. Never throws: a missing file (nothing has been logged yet) or a
+   * locked one is "no log", not a broken feature.
    */
   ipcMain.handle("log:read", (): string => {
     try {
@@ -609,6 +609,28 @@ function registerIpc(): void {
     } catch {
       return "";
     }
+  });
+
+  /**
+   * SEND FEEDBACK, send half. This used to be a `fetch()` in the renderer,
+   * which cannot work: the renderer's origin is `file://` (opaque) and
+   * `apps/hosted-relay` answers no `Access-Control-*` headers on any route,
+   * so Chromium's CORS preflight for the JSON POST has nothing to succeed
+   * against - verified against the live deploy. Node's `fetch` has no origin,
+   * so it is not subject to CORS at all; that is also why `claimHostedRoom`
+   * just above lives here rather than in the renderer.
+   *
+   * `sendFeedback` (packages/companion) always targets the hosted relay's own
+   * `/feedback` route - it takes no address, so there is nothing here that
+   * could route it through a self-hosted relay or widen it into something a
+   * web page could POST to. The payload is exactly what the renderer built
+   * and already redacted; this only forwards it.
+   */
+  ipcMain.handle("feedback:send", (_e, payload: FeedbackPayload) => {
+    const message = String(payload?.message || "");
+    const appVersion = String(payload?.appVersion || "");
+    const log = typeof payload?.log === "string" ? payload.log : undefined;
+    return sendFeedback(log === undefined ? { message, appVersion } : { message, appVersion, log });
   });
 
   // local STT models: status is part of every status broadcast; downloads
