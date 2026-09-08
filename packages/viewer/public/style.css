@@ -339,13 +339,30 @@ body.obs .obs-only { display: flex; }
    separation, since .hud itself has no gap. (No `gap` here: #brandBar has
    exactly one child - v1 forbids the avatar a second child would need.) */
 .hud-brand { display: inline-flex; align-items: center; margin-left: 14px; min-width: 0; }
+/* The brand is the one child of .hud that gives when the row runs out of room.
+   Everything else in there is a fixed label or a 44px tap target, and a flex
+   item shrinks by default - so without this the state chip, the language pair
+   and the clock squeeze too, which makes the header wrong rather than tight. */
+.hud-state, .hud-langs, .hud-clock, .hud-aa { flex: none; }
 .hud-brand-name {
   color: var(--brand, var(--fg));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 14ch;
+  /* min-width: 0, not a max-width in ch. A flex item will not shrink below its
+     own content, so this is what lets the name take the width the header
+     actually has and ellipsis only when the VIEWPORT genuinely cannot fit it.
+     It replaced `max-width: 14ch`, which under .hud's letter-spacing: 0.16em
+     and font-stretch: 75% showed about ten characters of a name the settings
+     field lets a streamer type twenty-four of - "SuprKernel Callouts" needed
+     134px, was given 68px, and read "SUPRKERNEL C..." on a desktop with 700px
+     of empty header beside it. */
+  min-width: 0;
+  /* .hud uppercases its own labels because they are chrome. This is a proper
+     name somebody typed, with the casing they chose, and the settings field
+     shows it back to them exactly as typed - so it is not transformed here. */
+  text-transform: none;
 }
 /* The overlay is composited into a scene the streamer already brands, and an
    element outside .row.obs-live never fades - it would sit on the broadcast
