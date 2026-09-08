@@ -313,6 +313,30 @@ export function validRelayPort(value: unknown): number | undefined {
 }
 
 /**
+ * Fix-round-2 Finding 3. `idleBillingStopMinutes` is `number` on `AppConfig`
+ * (required, per the comment on that field), but `ConfigStore.merge()` in
+ * `packages/companion/src/config.ts` writes a hand-edited `config.json`
+ * straight into it - `JSON.parse` plus an `as Partial<AppConfig>` cast, with
+ * nothing checking the parsed value actually is one. TypeScript trusts the
+ * cast, so a typo'd `"abc"` or a stray negative sign reaches `session.ts`
+ * typed as a `number` even though it never was one at runtime.
+ *
+ * That matters here specifically because the field fails open: session.ts's
+ * gate only ever fires on `idleMinutes > 0`, and both `"abc" > 0` (NaN,
+ * coerced) and `-5 > 0` are `false` - so a broken value does not error, it
+ * just silently disables the one setting in this build whose entire purpose
+ * is to stop money leaking. `validRelayPort` above is the precedent for not
+ * trusting raw JSON as though it had passed through a form; same shape here,
+ * with the same explicit-`0`-is-not-a-mistake exception, since `0` is the
+ * config's own documented escape hatch and must keep disabling the bound.
+ */
+export function validIdleBillingStopMinutes(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : DEFAULT_CONFIG.idleBillingStopMinutes;
+}
+
+/**
  * The patch that puts the relay-shaped settings back the way they were.
  *
  * Used when a restart fails: the new config has already been written (the

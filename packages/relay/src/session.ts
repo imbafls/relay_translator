@@ -6,7 +6,7 @@ import {
   clampChannels,
   isLocalStt,
   maskProfanity,
-  DEFAULT_CONFIG,
+  validIdleBillingStopMinutes,
 } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
@@ -223,6 +223,12 @@ export interface SessionDeps {
    * `DEFAULT_CONFIG.idleBillingStopMinutes` (60), so an embedder that never
    * sets this still gets the bound rather than an unmetered leak.
    *
+   * Fix-round-2 Finding 3: this is typed `number`, but a hand-edited
+   * `config.json` can put anything in the field it names on `AppConfig` and
+   * nothing between there and here checks it - `audio()` runs the value
+   * through `validIdleBillingStopMinutes()` before using it, so a non-number,
+   * a negative number, or a non-finite one falls back to the default instead
+   * of silently disabling the gate (see that function's own comment).
    */
   idleBillingStopMinutes?: number;
 }
@@ -762,11 +768,13 @@ export class PublisherSession {
       }
     } else {
       this.aboveFloorStreak = 0;
-      // no `?? 0` tail: idleBillingStopMinutes is required on AppConfig now
-      // (Fix-round Finding 5), so DEFAULT_CONFIG always has a real number -
-      // the compiler enforces that, rather than this silently degrading to
-      // "gate disabled" if it were ever forgotten there
-      const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes;
+      // Fix-round-2 Finding 3: a hand-edited config.json can put anything in
+      // this field and nothing upstream checks it before it reaches here -
+      // validIdleBillingStopMinutes() falls back to the documented default
+      // rather than letting a non-number or a negative one fail `> 0` and
+      // silently disable the gate. An explicit 0 passes through unchanged -
+      // see that function's own comment.
+      const idleMinutes = validIdleBillingStopMinutes(this.deps.idleBillingStopMinutes);
       if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
         this.billingOpen = false;
         this.gateWatermark = now;

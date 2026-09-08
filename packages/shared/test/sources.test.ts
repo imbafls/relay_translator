@@ -7,6 +7,7 @@ import {
   speakerTags,
   SPEAKER_COLORS,
   validRelayPort,
+  validIdleBillingStopMinutes,
   relayRollbackPatch,
   viewerLinkFor,
 } from "../src/index";
@@ -196,6 +197,32 @@ describe("the port the embedded relay is asked to bind", () => {
 
   it("refuses the privileged range, which needs rights the app does not have", () => {
     for (const p of [80, 443, 1, 1023]) expect(validRelayPort(p)).toBeUndefined();
+  });
+});
+
+describe("the minutes of silence before the relay stops paying to transcribe it", () => {
+  /**
+   * Fix-round-2 Finding 3. `idleBillingStopMinutes` is `number` on
+   * `AppConfig`, but a hand-edited `config.json` reaches it through
+   * `JSON.parse` and an `as Partial<AppConfig>` cast in
+   * `packages/companion/src/config.ts` that checks nothing about the parsed
+   * value's shape. session.ts's gate only fires on `idleMinutes > 0`, which
+   * is false for a NaN-ish string comparison AND for a negative number - so
+   * a broken value does not error, it silently disables the one setting in
+   * this build whose entire purpose is stopping a bleed. Same shape as
+   * `validRelayPort` above: fall back to the safe default rather than trust
+   * unchecked JSON, with the same explicit-0-is-not-a-mistake exception.
+   */
+  it("takes a plausible non-negative number unchanged, explicit 0 included", () => {
+    for (const n of [0, 1, 60, 1440]) expect(validIdleBillingStopMinutes(n)).toBe(n);
+  });
+
+  it("falls back to the default for anything that cannot mean a bound", () => {
+    for (const v of ["abc", "", -1, -0.5, NaN, Infinity, -Infinity, null, undefined, {}, [], true]) {
+      expect(validIdleBillingStopMinutes(v), `accepted ${JSON.stringify(v)}`).toBe(
+        DEFAULT_CONFIG.idleBillingStopMinutes,
+      );
+    }
   });
 });
 

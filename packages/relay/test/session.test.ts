@@ -1896,3 +1896,150 @@ describe("fix-round-2 finding 2: a capture stall inside a gated stretch must not
     session.stop();
   });
 });
+
+describe("fix-round-2 finding 3: a corrupted idleBillingStopMinutes must not silently disable the gate", () => {
+  /**
+   * `idleBillingStopMinutes` is `number` on AppConfig, but a hand-edited
+   * config.json survives `JSON.parse` + `ConfigStore`'s `as Partial<AppConfig>`
+   * cast as whatever was actually typed there - TypeScript trusts the cast,
+   * so a typo'd string or a stray negative sign reaches session.ts still
+   * typed `number`. `idleMinutes > 0` is false for both a NaN-ish string
+   * comparison and a negative number, so the gate silently disables itself -
+   * fail-open on the one setting whose entire purpose is stopping a bleed.
+   * relayPort has validRelayPort(); this field had nothing.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+
+  function makeGated(idleBillingStopMinutes: number) {
+    const sent: Buffer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents): SttStream => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: (chunk: Buffer) => {
+              sent.push(chunk);
+              return true;
+            },
+            keepAlive: () => {},
+            close() {},
+          };
+        },
+        idleBillingStopMinutes,
+        sttStats: { seconds: 0, localSeconds: 0 },
+        toViewers: () => {},
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    return { session, sent, logs };
+  }
+
+  it("a non-number value (a hand-edited config.json string) falls back to the 60-minute default", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    // JSON.parse('{"idleBillingStopMinutes":"abc"}') survives as the literal
+    // string "abc" - ConfigStore's cast, not this test, is what erases the
+    // type safety; the cast reproduces exactly that at the SessionDeps seam
+    const g = makeGated("abc" as unknown as number);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame()); // seeds the clock
+
+    vi.setSystemTime(t0 + 59 * 60_000); // just under the 60-minute default
+    g.session.audio(silentFrame());
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "tripped before the 60-minute default - not falling back to it",
+    ).toBe(false);
+
+    vi.setSystemTime(t0 + 61 * 60_000); // just past the 60-minute default
+    g.session.audio(silentFrame());
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "a non-number idleBillingStopMinutes silently disabled the gate instead of falling back to the default",
+    ).toBe(true);
+
+    g.session.stop();
+  });
+
+  it("a negative value falls back to the 60-minute default", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(-5);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 61 * 60_000);
+    g.session.audio(silentFrame());
+
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "a negative idleBillingStopMinutes silently disabled the gate instead of falling back to the default",
+    ).toBe(true);
+
+    g.session.stop();
+  });
+
+  it("a non-finite value (NaN) falls back to the 60-minute default", async () => {
+    // NaN is neither > 0 nor < 0 - a validator that only rejects negatives
+    // would wrongly accept it as "valid"
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(NaN);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 61 * 60_000);
+    g.session.audio(silentFrame());
+
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "a non-finite idleBillingStopMinutes silently disabled the gate instead of falling back to the default",
+    ).toBe(true);
+
+    g.session.stop();
+  });
+
+  it("an explicit 0 still disables the bound entirely after the validation change", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(0);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 6 * 60 * 60 * 1000); // 6 hours of unbroken silence
+    g.session.audio(silentFrame());
+
+    expect(g.sent.length, "explicit 0 must still disable the gate, not fall back to the default").toBe(2);
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "0 should mean no gate at all, not only no logging",
+    ).toBe(false);
+
+    g.session.stop();
+  });
+});
