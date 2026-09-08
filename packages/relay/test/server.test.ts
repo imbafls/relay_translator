@@ -65,6 +65,55 @@ function waitFor(ws: WebSocket, type: string, ms = 2000): Promise<Record<string,
   });
 }
 
+type Msg = Record<string, unknown>;
+
+interface Conn {
+  ws: WebSocket;
+  seen: Msg[];
+  /** resolve once a message satisfying `match` has arrived (or already has) */
+  until(match: (m: Msg) => boolean, what: string, ms?: number): Promise<Msg>;
+}
+
+/**
+ * Like open(), but attaches the message listener at construction rather than
+ * after "open" resolves. The relay greets a viewer's socket the moment it is
+ * accepted - "hello" is sent synchronously inside the upgrade callback - so a
+ * caller that awaits open() and only then calls .on("message", ...) can miss
+ * that frame entirely. Modelled on uplink.test.ts's connect() helper, which
+ * documents the same issue for the uplink's "ready" greeting.
+ */
+function connect(url: string): Promise<Conn> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const seen: Msg[] = [];
+    ws.on("message", (data: Buffer) => {
+      try {
+        seen.push(JSON.parse(data.toString()));
+      } catch {
+        /* not our frame */
+      }
+    });
+    const conn: Conn = {
+      ws,
+      seen,
+      until(match, what, ms = 4000) {
+        const deadline = Date.now() + ms;
+        return new Promise((res, rej) => {
+          const poll = (): void => {
+            const hit = seen.find(match);
+            if (hit) return res(hit);
+            if (Date.now() > deadline) return rej(new Error(`no ${what} within ${ms}ms`));
+            setTimeout(poll, 20);
+          };
+          poll();
+        });
+      },
+    };
+    ws.once("open", () => resolve(conn));
+    ws.once("error", reject);
+  });
+}
+
 /** the relay is still answering, i.e. the process did not go down */
 async function stillUp(): Promise<boolean> {
   const res = await fetch(`http://127.0.0.1:${handle.port}/health`);
@@ -331,13 +380,13 @@ describe("a stream that says what it is called", () => {
 
   it("tells a viewer who connects afterwards", async () => {
     const pub = await announce({ brandName: "Omer's stream", brandColor: "#e0a43a" });
-    const viewer = await open(viewerUrl());
-    const hello = await waitFor(viewer, "hello");
+    const viewer = await connect(viewerUrl());
+    const hello = await viewer.until((m) => m.type === "hello", "hello");
 
-    expect(hello?.brandName).toBe("Omer's stream");
-    expect(hello?.brandColor).toBe("#e0a43a");
+    expect(hello.brandName).toBe("Omer's stream");
+    expect(hello.brandColor).toBe("#e0a43a");
     pub.close();
-    viewer.close();
+    viewer.ws.close();
   });
 
   it("drops a colour that is not plainly #rrggbb, and caps a long name", async () => {
@@ -345,12 +394,12 @@ describe("a stream that says what it is called", () => {
       brandName: "x".repeat(200),
       brandColor: "#fff; background: url(http://evil/)",
     });
-    const viewer = await open(viewerUrl());
-    const hello = await waitFor(viewer, "hello");
+    const viewer = await connect(viewerUrl());
+    const hello = await viewer.until((m) => m.type === "hello", "hello");
 
-    expect(hello?.brandName).toHaveLength(24);
-    expect(hello?.brandColor).toBeUndefined();
+    expect(hello.brandName).toHaveLength(24);
+    expect(hello.brandColor).toBeUndefined();
     pub.close();
-    viewer.close();
+    viewer.ws.close();
   });
 });

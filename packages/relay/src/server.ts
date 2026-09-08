@@ -697,35 +697,30 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     viewers.set(token, ws);
     viewersChanged();
 
-    // Sent past the handshake write rather than inside it. A caller that opens
-    // the socket, awaits "open", and only then attaches a "message" handler -
-    // every test in this file, and any Node client written the same way -
-    // can otherwise never see this frame: on this stack the 101 response and
-    // an immediately-following send reach the client close enough together
-    // that "open" resolves and the frame is delivered before that caller's
-    // await has returned control to attach the listener, so it is emitted to
-    // nobody - measured with setImmediate too, which still lost it every
-    // time; a real timer-phase turn (setTimeout 0) did not, repeatedly. A
-    // real browser page attaches onmessage synchronously, before the socket even
-    // opens, so this never bites the phone/OBS viewer this frame is for.
-    setTimeout(() => {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      ws.send(
-        JSON.stringify({
-          type: "hello",
-          languages: currentLanguages,
-          live: isLive(),
-          translates: currentTranslates,
-          since: isLive() ? liveSince : undefined,
-          // these two hellos are built by hand rather than through stamp(), so
-          // they have to carry the elapsed time as well or a viewer joining an
-          // in-progress stream falls straight back to subtracting the streamer's
-          // clock from its own
-          elapsedMs: isLive() ? elapsed() : undefined,
-          ...currentBrand,
-        } satisfies ServerToViewer),
-      );
-    });
+    // The relay greets a socket the moment it accepts it - deliberately: a
+    // caption broadcast in the window between accept and hello would otherwise
+    // reach the viewer first, and the viewer's "hello" handler is what sets
+    // serverTranslates and calls applyLive, so a subtitle arriving before it
+    // lands on a page that has not been told the language pair or that the
+    // stream is live. A test client that opens the socket, awaits "open", and
+    // only then attaches a "message" handler can miss this frame, since it is
+    // sent synchronously inside the upgrade callback - see connect() in
+    // server.test.ts, which attaches its listener at construction instead.
+    ws.send(
+      JSON.stringify({
+        type: "hello",
+        languages: currentLanguages,
+        live: isLive(),
+        translates: currentTranslates,
+        since: isLive() ? liveSince : undefined,
+        // these two hellos are built by hand rather than through stamp(), so
+        // they have to carry the elapsed time as well or a viewer joining an
+        // in-progress stream falls straight back to subtracting the streamer's
+        // clock from its own
+        elapsedMs: isLive() ? elapsed() : undefined,
+        ...currentBrand,
+      } satisfies ServerToViewer),
+    );
 
     ws.on("message", (data: RawData) => {
       try {
