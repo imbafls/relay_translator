@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#131313" />
   <title>Relay</title>
+  <!-- one unauthenticated page per stream, pasted into public chats: never index it.
+       The Worker sends X-Robots-Tag too; this copy survives the embedded relay. -->
+  <meta name="robots" content="noindex, nofollow" />
   <link rel="stylesheet" href="fonts/fonts.css" />
   <link rel="stylesheet" href="style.css" />
 </head>

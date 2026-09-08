@@ -38,3 +38,6 @@ packages/relay/sea/relay-bundle.cjs
 
 # knowledge graph build output (graphify)
 graphify-out/
+
+# marketing / seo planning scratch — not part of the product
+.marketing/

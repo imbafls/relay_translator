@@ -6,6 +6,45 @@
   <meta name="theme-color" content="#131313" />
   <title>Relay — live captions, translated · textrelay.cc</title>
   <meta name="description" content="Relay hears your mic, transcribes it as you speak and translates line by line. Your viewers open a link on their phone. OBS gets a clean overlay. Sub-second, your own API keys, no account." />
+  <link rel="canonical" href="https://textrelay.cc/" />
+
+  <!-- The pasted link IS the funnel: every stream shows textrelay.cc/watch/<token>
+       to its own chat, and Discord rendered all of it as bare blue text. These
+       tags are what turn that into a card. og:image must be absolute. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Relay" />
+  <meta property="og:url" content="https://textrelay.cc/" />
+  <meta property="og:title" content="Relay — live captions, translated" />
+  <meta property="og:description" content="Relay hears your mic, transcribes it as you speak and translates line by line. Your viewers open a link on their phone. OBS gets a clean overlay." />
+  <meta property="og:image" content="https://textrelay.cc/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Relay: a spoken line transcribed and translated into a caption on a phone and in OBS." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Relay — live captions, translated" />
+  <meta name="twitter:description" content="Relay hears your mic, transcribes it as you speak and translates line by line. Your viewers open a link on their phone. OBS gets a clean overlay." />
+  <meta name="twitter:image" content="https://textrelay.cc/og.png" />
+
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/favicon.ico" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+  <!-- What it is, for a search result. No aggregateRating: there are no reviews,
+       and invented stars get the whole rich result dropped. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Relay",
+    "url": "https://textrelay.cc/",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Windows",
+    "description": "Live speech-to-text captions with line-by-line translation, pushed to a phone link and an OBS browser source.",
+    "downloadUrl": "https://textrelay.cc/download",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+
   <!-- self-hosted, and the Worker serves /fonts/. The Vietnamese subset is not
        optional here: the demo text on this page is Vietnamese. -->
   <link rel="stylesheet" href="/fonts/fonts.css" />

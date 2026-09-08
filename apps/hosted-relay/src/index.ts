@@ -120,6 +120,71 @@ export async function downloadInstaller(): Promise<Response> {
   return new Response(asset.body, { status: 200, headers });
 }
 
+/**
+/**
+ * The one name this site is published under.
+ *
+ * Three hostnames answer this Worker and all three serve the same bytes. That
+ * is deliberate - see wrangler.toml - but to a crawler it reads as one site at
+ * three addresses, and the copy it decides to rank is not necessarily the one
+ * on the download button. Everything a crawler is given says textrelay.cc.
+ */
+export const CANONICAL_ORIGIN = "https://textrelay.cc";
+
+/**
+ * robots.txt, decided from the name the request arrived on.
+ *
+ * On the canonical name: crawl the site, stay out of /watch/, here is the
+ * sitemap. On any other name: crawl nothing. A duplicate that is merely
+ * canonicalised still has to be fetched to learn that; a duplicate that is
+ * disallowed costs nobody anything.
+ */
+export function robotsTxt(url: URL): string {
+  const lines = ["User-agent: *"];
+  if (url.origin !== CANONICAL_ORIGIN) {
+    lines.push("Disallow: /");
+    return lines.join("\n") + "\n";
+  }
+  // the token in a viewer link is the whole credential, and the pages are
+  // minted one per stream - none of it belongs in an index
+  lines.push("Disallow: /watch/", "Allow: /", "", `Sitemap: ${CANONICAL_ORIGIN}/sitemap.xml`);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * The sitemap. One URL today, because one URL is what this site has.
+ *
+ * Written out rather than generated from the router: the router knows about
+ * /health and /claim and /ws/uplink too, and a sitemap that lists an endpoint
+ * is worse than no sitemap. What belongs here is a decision, not a derivation.
+ */
+export function sitemapXml(): string {
+  const urls = ["/"];
+  const body = urls.map((u) => `  <url><loc>${CANONICAL_ORIGIN}${u}</loc></url>`).join("\n");
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    body,
+    "</urlset>",
+    "",
+  ].join("\n");
+}
+
+/**
+ * The same response, refusing to be indexed.
+ *
+ * Rebuilt rather than mutated: what comes back from the asset binding carries
+ * an immutable header list, and setting a header on it throws. The header is
+ * used as well as the meta tag in the page because it covers the response
+ * whatever the markup later says, and because a crawler that only fetched the
+ * headers has already been answered.
+ */
+export function noindex(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set("X-Robots-Tag", "noindex, nofollow");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 /** everyone Cloudflare could not name shares one bucket */
 const ANON_CLAIMER = "anon";
 
@@ -301,6 +366,16 @@ export default {
       case "home":
         return env.ASSETS.fetch(assetRequest(url, "home.html"));
 
+      case "sitemap":
+        return new Response(sitemapXml(), {
+          headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
+        });
+
+      case "robots":
+        return new Response(robotsTxt(url), {
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
+        });
+
       case "update-feed":
         return updateFeed();
 
@@ -311,7 +386,7 @@ export default {
         // the page itself is public; the token is checked when its script opens
         // the socket. Serving it unconditionally keeps a wrong link looking like
         // a dead stream rather than a 404, which is what a viewer can act on.
-        return env.ASSETS.fetch(assetRequest(url, "index.html"));
+        return noindex(await env.ASSETS.fetch(assetRequest(url, "index.html")));
 
       case "asset":
         return env.ASSETS.fetch(assetRequest(url, route.rel));

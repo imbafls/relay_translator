@@ -274,3 +274,38 @@ describe("reading the installer out of the update feed", () => {
     expect(installerName("version: 0.5.9")).toBeUndefined();
   });
 });
+
+describe("what a crawler is allowed to ask for", () => {
+  /**
+   * A new domain has to hand a crawler three things before any of the writing
+   * matters: a sitemap it can find, a robots file that points at it, and a
+   * clear refusal on the pages that must never be indexed.
+   *
+   * These are routes rather than files in the asset directory on purpose.
+   * `packages/viewer/public` is also the bundle the desktop app ships, and a
+   * robots.txt naming textrelay.cc has no business inside somebody's local
+   * relay on port 8787.
+   */
+  it("serves a sitemap and a robots file from the root", () => {
+    expect(resolveRoute("/sitemap.xml").kind).toBe("sitemap");
+    expect(resolveRoute("/robots.txt").kind).toBe("robots");
+  });
+
+  it("serves the images a link preview and a browser tab ask for at the root", () => {
+    // home.html points at absolute /og.png and /favicon.svg; without a root
+    // asset rule every one of them 404s and the page ships broken references.
+    for (const f of ["og.png", "favicon.svg", "favicon.ico", "apple-touch-icon.png"]) {
+      const r = resolveRoute(`/${f}`);
+      expect(r.kind, `/${f} should be an asset`).toBe("asset");
+      if (r.kind === "asset") expect(r.rel).toBe(f);
+    }
+  });
+
+  it("does not turn the root into a file server", () => {
+    // only the named files. Anything else at the root is still a 404, so a
+    // new file dropped into the viewer bundle is never silently published.
+    for (const p of ["/app.js", "/style.css", "/index.html", "/home.html", "/secrets.json"]) {
+      expect(resolveRoute(p).kind, `${p} should not be served`).toBe("not-found");
+    }
+  });
+});

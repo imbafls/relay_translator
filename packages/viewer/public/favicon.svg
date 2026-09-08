@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Relay">
+  <!-- Two caption bars, not the RELAY wordmark: the wordmark is unreadable at
+       16px and a tab icon has to survive 16px. Kept in step with the PNG icons
+       by hand - packages/viewer/scripts/make-brand-images.py draws these same
+       proportions. -->
+  <rect width="64" height="64" rx="14" fill="#131313"/>
+  <rect x="11" y="23" width="42" height="7" rx="3.5" fill="#efeae0"/>
+  <rect x="11" y="36" width="29" height="7" rx="3.5" fill="#e0a43a"/>
+</svg>

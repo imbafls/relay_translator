@@ -29,6 +29,11 @@ const FEED = [
   "",
 ].join("\n");
 
+/** the head alone, with its stylesheet links dropped - happy-dom would go and
+ *  fetch them, and this is a markup assertion, not a network one */
+const headOnly = (doc: string): string =>
+  doc.replace(/<body[\s\S]*/i, "").replace(/<link rel="stylesheet"[^>]*>/g, "");
+
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`no #${id} in the shipped markup`);
@@ -140,8 +145,11 @@ describe("the landing page", () => {
    * here, deliberately.
    */
   it("links only to routes the Worker serves and hosts we have checked", () => {
-    const SERVED = new Set(["/download"]);
-    const EXTERNAL = new Set(["console.deepgram.com"]);
+    // the root assets the crawler/preview tags point at; each has a route in
+    // apps/hosted-relay/src/routes.ts ROOT_ASSETS and a file in ./public
+    const SERVED = new Set(["/download", "/og.png", "/favicon.svg", "/favicon.ico", "/apple-touch-icon.png"]);
+    // the canonical link names this site's own apex, absolutely, by design
+    const EXTERNAL = new Set(["console.deepgram.com", "textrelay.cc"]);
 
     const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
     expect(hrefs.length).toBeGreaterThan(0);
@@ -167,5 +175,65 @@ describe("the landing page", () => {
       fs.existsSync(licensePath) && /^MIT License/.test(fs.readFileSync(licensePath, "utf8"));
 
     expect(claimed && !carried).toBe(false);
+  });
+});
+
+describe("what a link preview and a crawler read off this page", () => {
+  /**
+   * The page had no Open Graph tags at all, which is why a textrelay.cc link
+   * pasted into Discord rendered as bare blue text. This product's growth loop
+   * IS the pasted link - every stream shows the viewer URL to its own chat - so
+   * an unstyled preview is not cosmetic, it is the funnel.
+   *
+   * Parsed out of the shipped file rather than asserted as substrings: a tag
+   * that is present but inside a comment is not present.
+   */
+  const head = new DOMParser().parseFromString(headOnly(html), "text/html").head;
+  const meta = (prop: string): string | null =>
+    head.querySelector(`meta[property="${prop}"], meta[name="${prop}"]`)?.getAttribute("content") ?? null;
+
+  it("names itself, describes itself and points at its own image", () => {
+    expect(meta("og:title")).toBeTruthy();
+    expect(meta("og:description")).toBeTruthy();
+    expect(meta("og:type")).toBe("website");
+    expect(meta("og:url")).toBe("https://textrelay.cc/");
+    // absolute, because a relative og:image is ignored by every scraper
+    expect(meta("og:image")).toBe("https://textrelay.cc/og.png");
+    expect(meta("og:image:alt")).toBeTruthy();
+    expect(meta("twitter:card")).toBe("summary_large_image");
+  });
+
+  it("says which of the three hostnames is the real one", () => {
+    // relay.supr.systems and the workers.dev fallback serve these same bytes
+    const canonical = head.querySelector('link[rel="canonical"]');
+    expect(canonical?.getAttribute("href")).toBe("https://textrelay.cc/");
+  });
+
+  it("has an icon for a browser tab and for a phone home screen", () => {
+    expect(head.querySelector('link[rel="icon"]')).not.toBeNull();
+    expect(head.querySelector('link[rel="apple-touch-icon"]')).not.toBeNull();
+  });
+
+  it("describes itself to a search engine as the free Windows app it is", () => {
+    const script = head.querySelector('script[type="application/ld+json"]');
+    expect(script, "no JSON-LD in the head").not.toBeNull();
+    const data = JSON.parse(script!.textContent || "{}");
+    expect(data["@type"]).toBe("SoftwareApplication");
+    expect(data.operatingSystem).toBe("Windows");
+    expect(data.offers?.price).toBe("0");
+    // no reviews exist. Stars that were never earned are a guideline violation
+    // and get the whole snippet dropped, not just the rating.
+    expect(data.aggregateRating).toBeUndefined();
+  });
+});
+
+describe("what the viewer page tells a crawler", () => {
+  it("refuses to be indexed", () => {
+    // /watch/<token> pages are unauthenticated, one per stream, and pasted into
+    // public chats. The Worker sends X-Robots-Tag as well; this is the copy
+    // that survives being opened from a file or served by the embedded relay.
+    const viewer = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
+    const doc = new DOMParser().parseFromString(headOnly(viewer), "text/html");
+    expect(doc.head.querySelector('meta[name="robots"]')?.getAttribute("content")).toContain("noindex");
   });
 });
