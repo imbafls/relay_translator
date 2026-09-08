@@ -170,6 +170,12 @@ describe("the uplink hears the stream's brand at every hello main.ts hands it", 
  * A spread passes on purpose: `...currentBrand` carries whatever the brand
  * holds now and whatever is added to it later, which is the shape this guard
  * exists to encourage rather than punish.
+ *
+ * What this list does and does not see: every hello inside these four files is
+ * found by pattern, so a fifth one added to any of them tomorrow is checked
+ * without touching this test. A hop that arrives in a file that is not on this
+ * list is invisible to it. The list is hand-maintained and adding a hop means
+ * adding it here; the sibling `HOPS` above is bounded the same way.
  */
 const HELLO_HOPS = [
   {
@@ -212,18 +218,112 @@ const BRAND_FIELDS = ["brandName", "brandColor"];
  * and the guard went red over a declaration that never builds a hello at all.
  * A guard that reads source has to be told what is source.
  *
+ * Being told what is source means knowing a regex literal from a division, and
+ * this originally did not. `server.ts:846` writes
+ *
+ *   m?.[1]?.replace(/^["']|["']$/g, "")
+ *
+ * With no `/` branch the scan read the `"` inside that pattern as a string
+ * opening, closed it on the second `"`, opened a bogus `'` string on the
+ * apostrophe after it and ran to end of file. Lines 846-984 - the last 14.1% of
+ * that file - were never blanked at all, leaving six comment spans, fifteen
+ * comment lines and 631 characters of prose in the text this guard reads as
+ * code. Measured against the TypeScript parser's own comment ranges, before and
+ * after; the other three hop files were clean.
+ *
+ * That blind spot survived a review because nothing announced it. The count
+ * assertion below was the only thing standing between it and a silent failure,
+ * and a count only says the numbers moved, not where. So `MAX_QUOTED_LINES`
+ * makes the next one loud: the heuristic here is the usual one rather than a
+ * lexer, it will eventually meet a construct it reads wrong, and when it does
+ * the runaway that follows should be a red test naming a line.
+ *
  * `\r` survives alongside `\n`: this repo stores LF but checks a good deal out
  * as CRLF - `git ls-files --eol` lists fourteen `w/crlf` files today, one of
  * them `packages/relay/src/index.ts` - so a hop file can arrive either way.
  * Blanking a `\r` would shorten the text and slide every offset after it.
  */
-function blankComments(src: string): string {
+
+/**
+ * A `"` or `'` span cannot legally hold a raw newline, and the longest string
+ * or template literal in any of the four hop files is one line. So a quoted
+ * span running past this is not a long string; it is a scan that lost sync.
+ */
+const MAX_QUOTED_LINES = 3;
+
+/** punctuation that cannot end an expression, so a `/` after it opens a regex */
+const BEFORE_REGEX = /[(,=:[!&|?{};+\-*%<>~^]/;
+
+/** ...and the keywords, which are words rather than punctuation */
+const BEFORE_REGEX_WORDS = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
+
+function blankComments(src: string, file: string): string {
   const out = src.split("");
+  const lineAt = (at: number): number => src.slice(0, at).split("\n").length;
   const blank = (from: number, to: number): void => {
     for (let k = from; k < to && k < out.length; k += 1) {
       if (out[k] !== "\n" && out[k] !== "\r") out[k] = " ";
     }
   };
+
+  /**
+   * Does the `/` at `i` open a regex literal, or divide? Look back past
+   * whitespace - which, since every comment before `i` is already spaces, skips
+   * comments too - and ask whether what is there could end an expression. A `)`
+   * or an identifier could, so that `/` divides; a `(` or `=` could not, so it
+   * opens a pattern.
+   */
+  const opensRegex = (i: number): boolean => {
+    let k = i - 1;
+    while (k >= 0 && /\s/.test(out[k])) k -= 1;
+    if (k < 0) return true; // start of input
+    if (BEFORE_REGEX.test(out[k])) return true;
+    if (!/[\w$]/.test(out[k])) return false;
+    let w = k;
+    while (w >= 0 && /[\w$]/.test(out[w])) w -= 1;
+    return BEFORE_REGEX_WORDS.has(out.slice(w + 1, k + 1).join(""));
+  };
+
+  /**
+   * The index just past a regex literal's closing `/` and its flags, honouring
+   * `\` escapes and `[...]` classes - a `/` inside a class does not end it.
+   * Returns -1 if this was a division after all: a regex literal cannot hold a
+   * raw newline, so meeting one means the heuristic guessed wrong.
+   */
+  const regexEnd = (from: number): number => {
+    let inClass = false;
+    for (let j = from + 1; j < src.length; j += 1) {
+      const ch = src[j];
+      if (ch === "\\") {
+        j += 1;
+        continue;
+      }
+      if (ch === "\n" || ch === "\r") return -1;
+      if (ch === "[") inClass = true;
+      else if (ch === "]") inClass = false;
+      else if (ch === "/" && !inClass) {
+        let k = j + 1;
+        while (k < src.length && /[a-z]/i.test(src[k])) k += 1;
+        return k;
+      }
+    }
+    return -1;
+  };
+
   let i = 0;
   while (i < src.length) {
     const c = src[i];
@@ -238,10 +338,21 @@ function blankComments(src: string): string {
       const j = end < 0 ? src.length : end + 2;
       blank(i, j);
       i = j;
+    } else if (c === "/" && opensRegex(i)) {
+      // stepped over for the same reason a string is, and for one more: the
+      // `//` in a pattern like `/https?:\/\//` is not the start of a comment.
+      // Checked against the parser: this finds all 8 of the regex literals in
+      // these four files that sit in open code. The 9th, `server.ts:53`, lives
+      // inside a `${...}` of a template, and a template is stepped over whole -
+      // so a comment written inside an interpolation would not be blanked. None
+      // is today, and the exactness check that proved it is in the fix report.
+      const j = regexEnd(i);
+      i = j < 0 ? i + 1 : j;
     } else if (c === '"' || c === "'" || c === "`") {
       // stepped over, never blanked: a `//` inside a URL string must not eat
       // the rest of that line, or a real hop downstream of it goes unseen
       let j = i + 1;
+      let closed = false;
       while (j < src.length) {
         if (src[j] === "\\") {
           j += 2;
@@ -249,9 +360,22 @@ function blankComments(src: string): string {
         }
         if (src[j] === c) {
           j += 1;
+          closed = true;
           break;
         }
         j += 1;
+      }
+      const spanned = src.slice(i, j).split("\n").length;
+      if (!closed || spanned > MAX_QUOTED_LINES) {
+        // guards the guard, part two. The frame count below notices that a
+        // desync moved the numbers; this says where it started. Losing that
+        // distinction is how the regex above stayed invisible for a whole
+        // review cycle while the count carried the load on its own.
+        throw new Error(
+          `${file}:${lineAt(i)} the comment scan lost sync here - a ${c} span opened and ran ` +
+            `${closed ? `${spanned} lines` : "to end of file"}, which no string in these files does. ` +
+            `Something on that line reads as a quote and is not one: teach blankComments about it.`,
+        );
       }
       i = j;
     } else {
@@ -309,7 +433,7 @@ const SEND_CALL = /(?:^|[^\w$])(?:send|broadcast|toViewers)\w*\s*\(/;
 describe("a hello keeps the brand at every hop", () => {
   for (const { file, hop, frames } of HELLO_HOPS) {
     it(`carries the brand through ${hop}`, () => {
-      const code = blankComments(fs.readFileSync(path.join(root, file), "utf8"));
+      const code = blankComments(fs.readFileSync(path.join(root, file), "utf8"), file);
       const built = helloLiterals(code).filter(({ at }) =>
         SEND_CALL.test(code.slice(Math.max(0, at - 160), at)),
       );
