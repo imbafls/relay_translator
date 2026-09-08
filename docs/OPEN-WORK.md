@@ -33,10 +33,11 @@ mirroring the release to the VPS, setting `RELAY_PUBLISHER_TOKEN` /
 
 ## Closed by the last build (v0.7.0)
 
-Written 2026-09-08. Eight tasks, chosen against one fact: after 0.7.0 ships,
-this product runs for weeks with nobody watching. All eight landed on
-`master`; none has been version-bumped, tagged or deployed yet - that is the
-owner's call.
+Written 2026-09-08. Nine tasks, chosen against one fact: after 0.7.0 ships,
+this product runs for weeks with nobody watching. All nine, plus the fix
+rounds a whole-branch review afterward closed, are on `feature/last-build` -
+**not** `master`, which is still at `efc0717`; none has been merged,
+version-bumped, tagged or deployed yet - that is the owner's call.
 
 - **The speech pipeline no longer gives up for the session.** The reopen
   ladder used to exhaust four attempts in ~12 s (`STT_REOPEN_DELAYS_MS`,
