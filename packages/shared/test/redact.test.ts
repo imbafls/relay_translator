@@ -99,6 +99,19 @@ describe("removes each kind of secret, not just marks it", () => {
     expect(out).toBe("https://<redacted>@example.com/path");
   });
 
+  it("redacts a basic-auth password containing '@', matching the LAST '@' in the authority (round 2 finding 3)", () => {
+    // [^/\s:@]+ can't cross "@", so the old rule took the FIRST "@" where
+    // URL parsing takes the last - "p@ss" partially survived as "ss" glued
+    // onto the host. This is the exact shape :1226-1228's "never a partial
+    // mask" invariant forbids.
+    const secret = "p@ss";
+    const line = `https://u:${secret}@example.com/x`;
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+    expect(out).not.toContain("ss@example"); // the leftover fragment shape from the bug
+    expect(out).toBe("https://<redacted>@example.com/x");
+  });
+
   it("removes a 192.168.x.x RFC1918 address", () => {
     const secret = "192.168.8.187";
     const out = redactLog(`[relay] listening on http://${secret}:8787`);
@@ -151,6 +164,56 @@ describe("removes each kind of secret, not just marks it", () => {
     const out = redactLog(line);
     expect(out).not.toContain(secret);
     expect(out).toBe("C:\\Users\\<user>\\AppData\\Local\\Temp\\<user>-cache\\x");
+  });
+
+  it("removes the account name from a forward-slash macOS-style path (round 2 finding 1)", () => {
+    // the round-1 fix for finding 3 required a drive letter, UNC prefix, or
+    // backslash before Users/users - narrowing out the bare-"/" case the
+    // original (9a54b4c) rule accepted. Restore it via a case-SENSITIVE
+    // "Users" alternative so the lowercase REST-path collision this rule was
+    // fixed to avoid (https://api.github.com/users/imbafls) still doesn't fire.
+    const secret = "omert";
+    const line = "/Users/omert/Library/Logs/relay.log";
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+    expect(out).toBe("/Users/<user>/Library/Logs/relay.log");
+  });
+
+  it("redacts every distinct account name on a line, not just the first (round 2 finding 4)", () => {
+    const line =
+      "C:\\Users\\alice\\AppData\\Local\\a; C:\\Users\\bob\\AppData\\Local\\Temp\\bob-cache";
+    const out = redactLog(line);
+    expect(out).not.toContain("alice");
+    expect(out).not.toContain("bob");
+    expect(out).toBe(
+      "C:\\Users\\<user>\\AppData\\Local\\a; C:\\Users\\<user>\\AppData\\Local\\Temp\\<user>-cache",
+    );
+  });
+
+  it("does not double-mark when the account name is literally 'user' (round 2 finding 2)", () => {
+    // \buser\b matches inside the just-written "<user>" marker itself
+    // ("<" and ">" are non-word, so \b anchors right next to them), turning
+    // a second pass into "<<user>>". Redaction must converge in one pass.
+    const line = "C:\\Users\\user\\AppData";
+    const out = redactLog(line);
+    expect(out).toBe("C:\\Users\\<user>\\AppData");
+    expect(redactLog(out)).toBe(out); // idempotent - no <<user>> on a second pass
+  });
+
+  it("does not double-mark a DIFFERENT earlier account when one of several names is literally 'user'", () => {
+    // found while re-verifying finding 2's fix under multiple distinct
+    // names (finding 4): a per-name loop that calls .replace() once per
+    // captured name, one after another, runs each replace against the
+    // OUTPUT of the previous one - so once "omert" has been rewritten to
+    // "<user>", a later pass for a second account literally named "user"
+    // matches the "user" text inside that already-written marker, same as
+    // the single-name case above but reached through a different name.
+    // Every captured name must be matched in one combined pass, against the
+    // original text, before any marker exists.
+    const line = "C:\\Users\\omert\\a; C:\\Users\\user\\b";
+    const out = redactLog(line);
+    expect(out).toBe("C:\\Users\\<user>\\a; C:\\Users\\<user>\\b");
+    expect(redactLog(out)).toBe(out);
   });
 
   it("tags a hex-shaped Windows account name <user>, not <redacted>", () => {
@@ -280,5 +343,23 @@ describe("ordinary lines survive unchanged", () => {
 
   it("returns empty input unchanged", () => {
     expect(redactLog("")).toBe("");
+  });
+
+  it("is idempotent (x1 = x2 = x3) across all four round-2 fixes at once", () => {
+    const line = [
+      "/Users/omert/Library/Logs/relay.log", // finding 1: forward-slash path
+      "C:\\Users\\user\\AppData", // finding 2: account name literally "user"
+      "https://u:p@ss@example.com/x", // finding 3: '@' inside the password
+      "C:\\Users\\alice\\a; C:\\Users\\bob\\Temp\\bob-cache", // finding 4: two names
+    ].join("\r\n");
+    const x1 = redactLog(line);
+    const x2 = redactLog(x1);
+    const x3 = redactLog(x2);
+    expect(x1).toBe(x2);
+    expect(x2).toBe(x3);
+    expect(x1).not.toContain("omert");
+    expect(x1).not.toContain("p@ss");
+    expect(x1).not.toContain("alice");
+    expect(x1).not.toContain("bob");
   });
 });

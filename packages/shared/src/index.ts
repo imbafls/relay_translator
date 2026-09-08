@@ -1250,16 +1250,30 @@ export interface ControlEvent {
  *    place that token is guaranteed to show up as an opaque URL path segment
  *    rather than inside a header or a JSON body.
  * 3. Basic-auth credentials embedded in a URL (`//user:pass@host`) are
- *    redacted next, again by position.
+ *    redacted next, again by position - matched to the LAST `@` in the
+ *    authority (a greedy, slash-bounded value class that backtracks to find
+ *    it), the way a URL parser resolves the userinfo/host boundary. Matching
+ *    the first `@` instead - which a value class that excludes `@` from both
+ *    the user and password pieces is forced to do - leaves a fragment of the
+ *    password glued onto the host whenever the password itself contains an
+ *    `@` (`https://u:p@ss@example.com` used to come out
+ *    `//<redacted>@ss@example.com`): a partial mask, which is exactly what
+ *    the invariant below forbids.
  * 4. Windows account names in a path are redacted next, before the generic
  *    hex/key rules below. An account name that happens to be hex-looking
  *    would otherwise be swallowed by the 32-hex relay-token rule and come
  *    out mislabelled `<redacted>` instead of `<user>` - still hidden, but
  *    the wrong marker, and it stops the username rule from ever running
- *    (there is nothing 32-hex left in the path for it to see). The name
- *    captured from the first match is then redacted everywhere else it
- *    appears on the line too - a per-user subfolder derived from the same
- *    name, or a second mention, would otherwise survive.
+ *    (there is nothing 32-hex left in the path for it to see). Every
+ *    context-qualified name on the line is collected first, from the
+ *    original text, then each one is redacted everywhere it appears via a
+ *    single whole-word pass - a per-user subfolder derived from the same
+ *    name, a second mention, or a second, different account name entirely,
+ *    would otherwise survive. That single pass (rather than writing the
+ *    `<user>` marker and then re-scanning for bare occurrences of the name)
+ *    is also what keeps this idempotent for an account literally named
+ *    "user": a second scan's `\buser\b` would otherwise match the "user"
+ *    text inside the marker it had just written, producing `<<user>>`.
  * 5. RFC1918 addresses, Gemini-shaped keys, Deepgram-shaped keys and bare
  *    32-hex relay tokens follow. The two hex-length rules cannot collide
  *    with each other: hex characters are a subset of `[0-9A-Za-z]`, so an
@@ -1307,30 +1321,58 @@ export function redactLog(text: string): string {
   out = out.replace(/(\/watch\/)[^/?#\s"'<>]+/g, "$1<redacted>");
 
   // 3. Basic-auth credentials embedded in a URL: scheme://user:pass@host.
-  out = out.replace(/\/\/[^/\s:@]+:[^/\s@]+@/g, "//<redacted>@");
+  // The authority-scoped value class ([^/\s]*, bounded by the next "/" or
+  // whitespace) is greedy, so it backtracks to the LAST "@" in the
+  // authority, matching how a URL parser finds the userinfo/host boundary -
+  // not the first. The old rule's [^/\s:@]+ / [^/\s@]+ pair couldn't cross
+  // an "@", so a password containing one (https://u:p@ss@example.com/x)
+  // took the FIRST "@" and left a fragment ("ss") glued onto the host: a
+  // partial mask, which is exactly what the invariant below forbids.
+  out = out.replace(/\/\/[^/\s]*@/g, "//<redacted>@");
 
   // 4. Windows account name in a path, e.g.
   // C:\Users\omert\AppData\Local\... -> C:\Users\<user>\AppData\Local\...
   // Runs before the hex/key rules below - see the ordering note above.
   // Both separators because a file:// URL (Node/Electron emit these in some
-  // stack traces) renders the same path with forward slashes. Requires
-  // Windows-shaped context (a drive letter, a UNC prefix, or a bare
-  // backslash) immediately before Users/users, matched case-insensitively,
-  // so a lowercase c:\users\<name> is caught too without also matching an
-  // unrelated REST path like /users/<id> (e.g. a GitHub API URL) - that path
-  // has neither a drive letter nor a backslash before its "users" segment.
-  const windowsUserRe = /((?:[A-Za-z]:[\\/]|\\\\[^\\/\r\n]+[\\/]|\\)Users[\\/])([^\\/\r\n]+)/gi;
-  let firstUser: string | undefined;
-  out = out.replace(windowsUserRe, (_match: string, prefix: string, user: string) => {
-    if (firstUser === undefined) firstUser = user;
-    return `${prefix}<user>`;
-  });
-  // A per-user subfolder derived from the same name, or a second mention of
-  // it elsewhere on the line, would otherwise survive - redact every other
-  // occurrence of the name captured from the first match too.
-  if (firstUser !== undefined) {
-    const escaped = firstUser.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`\\b${escaped}\\b`, "g"), "<user>");
+  // stack traces) renders the same path with forward slashes, and because a
+  // macOS-style /Users/<name>/... path (no drive letter) uses the forward
+  // slash exclusively. Two alternative contexts, with two different case
+  // rules:
+  //  - a drive letter, a UNC prefix, or a bare backslash immediately before
+  //    Users/users, matched case-insensitively on "Users" itself, so a
+  //    lowercase c:\users\<name> is caught too;
+  //  - OR a bare "/" or "\" immediately before *capitalized* "Users" only,
+  //    with no drive-letter/UNC/backslash context required, so a
+  //    forward-slash path (/Users/<name>/Library/...) is caught too without
+  //    also matching an unrelated lowercase REST path segment like
+  //    /users/<id> (e.g. a GitHub API URL) - that path has neither a drive
+  //    letter nor a backslash before its "users" segment, and its "users"
+  //    is lowercase, so it fails both alternatives.
+  // Every context-qualified account name is collected first, from the
+  // ORIGINAL text, without mutating `out` - not just the first one, so a
+  // second, different name elsewhere on the same line is also redacted. All
+  // collected names are then redacted in a SINGLE combined-alternation
+  // pass, not one `.replace()` call per name. A per-name loop runs each
+  // replace against the output of the previous one, so once any earlier
+  // name's replacement has written a "<user>" marker, a later name that
+  // happens to be literally "user" would match the "user" text inside that
+  // marker ("<" and ">" are non-word characters, so \b anchors right next
+  // to them) and produce "<<user>>" - the same failure as writing the
+  // marker and then re-scanning for it, just reached through a second
+  // account name instead of the same one. Matching every name in one pass
+  // finds all of them against the original text at once, before any marker
+  // exists to collide with.
+  const windowsUserRe =
+    /(?:(?:[A-Za-z]:[\\/]|\\\\[^\\/\r\n]+[\\/]|\\)[Uu]sers[\\/]|[\\/]Users[\\/])([^\\/\r\n]+)/g;
+  const windowsUsers = new Set<string>();
+  for (const m of out.matchAll(windowsUserRe)) {
+    windowsUsers.add(m[1]);
+  }
+  if (windowsUsers.size > 0) {
+    const alternation = [...windowsUsers]
+      .map((user) => user.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+    out = out.replace(new RegExp(`\\b(?:${alternation})\\b`, "g"), "<user>");
   }
 
   // 5a. RFC1918 private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
