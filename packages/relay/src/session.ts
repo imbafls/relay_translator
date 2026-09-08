@@ -222,6 +222,7 @@ export interface SessionDeps {
    * disables the bound entirely. Undefined falls back to
    * `DEFAULT_CONFIG.idleBillingStopMinutes` (60), so an embedder that never
    * sets this still gets the bound rather than an unmetered leak.
+   *
    */
   idleBillingStopMinutes?: number;
 }
@@ -331,18 +332,48 @@ export class PublisherSession {
    */
   private billingOpen = true;
   /**
-   * Wall clock of the moment `billingOpen` last flipped to false. Fix-round
-   * Finding 2: the STT clock (Deepgram's word timings, or the local worker's
-   * `fed / SAMPLE_RATE`) does not advance while the gate is shut - no audio
-   * reaches it - but the wall clock does, and `silentMs` is what the latency
-   * arithmetic in `onFinal` subtracts to absorb exactly that divergence. The
-   * existing mute-gap detector at the top of `audio()` cannot see this gap:
-   * it only fires on a real pause BETWEEN calls, and capture keeps calling
-   * `audio()` on schedule the whole time the gate is shut. 0 means "not
-   * currently timed", so a spurious `now - 0` on the very first recovery
-   * cannot be read as a gap.
+   * Wall clock up to which the gated span has already been folded into
+   * `silentMs`. Fix-round Finding 2: the STT clock (Deepgram's word timings,
+   * or the local worker's `fed / SAMPLE_RATE`) does not advance while the
+   * gate is shut - no audio reaches it - but the wall clock does, and
+   * `silentMs` is what the latency arithmetic in `onFinal` subtracts to
+   * absorb exactly that divergence.
+   *
+   * 0 means "gate is open, nothing to account for". While the gate is shut
+   * this advances to `now` on EVERY call to `audio()` (Fix-round-2 Finding 2:
+   * "accumulate the gated span per chunk", not one lump sum on reopen) -
+   * because the existing mute-gap detector at the top of `audio()` runs
+   * unconditionally, gate open or shut, and already claims any REAL gap
+   * between calls (a capture stall, a publisher mute). A gated stretch with
+   * chunks still arriving on schedule never trips that detector, so this
+   * watermark is all that accounts for it - but a stall that happens to land
+   * INSIDE a gated stretch would otherwise be claimed by both: once by the
+   * detector, once again here for the same span, doubling `silentMs` for a
+   * gap that only happened once. Since `silentMs` never decays, that error
+   * would clamp every later final's `stt` latency in the session to 0.
+   * Subtracting whatever the detector already claimed for THIS call, before
+   * adding the rest, is what keeps the two mechanisms from ever double-
+   * counting the same wall-clock span.
    */
-  private gateClosedAt = 0;
+  private gateWatermark = 0;
+  /**
+   * Whether the current idle period has already had its "pausing billed
+   * transcription" line written. Fix-round-2 Finding 1: SILENCE_RESET_STREAK
+   * (see its own comment) stops an isolated impulse from resetting the idle
+   * clock, but the same impulse still reopens `billingOpen` for that one
+   * chunk - the zero-chunk recovery property is deliberate and untouched.
+   * Because the impulse doesn't clear the streak, `lastAboveFloorAt` never
+   * actually moves, so the very next silent chunk finds the SAME stale clock
+   * past the bound and re-trips it - without this latch, that wrote a SECOND
+   * "pausing" error for an idle period that never really ended, alternating
+   * info/error at whatever rate the impulses arrive, with the stated minute
+   * count climbing even though sound keeps returning. Same
+   * latch-until-a-real-transition shape as `sttDegraded`: set the first time
+   * an idle period actually gets announced, cleared only once the streak
+   * actually reaches SILENCE_RESET_STREAK and the clock moves for real - so
+   * a genuinely NEW idle period still gets its own line.
+   */
+  private billingPauseLogged = false;
   /**
    * Wall clock of the last Deepgram KeepAlive this session sent. Fix-round
    * Finding 1 - see DEEPGRAM_KEEPALIVE_MS's own comment.
@@ -669,9 +700,32 @@ export class PublisherSession {
 
   audio(chunk: Buffer): void {
     const now = Date.now();
-    if (this.streamWallStart === 0) this.streamWallStart = now;
-    else if (now - this.lastAudioAt > GAP_MS) this.silentMs += now - this.lastAudioAt;
+    // gapClaimedByDetector is how much of THIS call's elapsed-since-last-call
+    // span the mute-gap detector below just folded into silentMs - the
+    // gate-watermark block further down needs it to avoid claiming the same
+    // span a second time (Fix-round-2 Finding 2).
+    let gapClaimedByDetector = 0;
+    if (this.streamWallStart === 0) {
+      this.streamWallStart = now;
+    } else if (now - this.lastAudioAt > GAP_MS) {
+      gapClaimedByDetector = now - this.lastAudioAt;
+      this.silentMs += gapClaimedByDetector;
+    }
     this.lastAudioAt = now;
+
+    // Fix-round-2 Finding 2. While the gate is shut, fold the elapsed span
+    // into silentMs HERE, on every call (per chunk), rather than as one lump
+    // sum on reopen - and subtract whatever the mute-gap detector above just
+    // claimed for this same call, so a capture stall or a publisher mute that
+    // happens to land inside a gated stretch is never counted by both
+    // mechanisms for the same wall-clock span. See gateWatermark's own
+    // comment for why that would otherwise clamp every later final's `stt`
+    // latency to 0.
+    if (this.gateWatermark > 0) {
+      const sinceWatermark = now - this.gateWatermark;
+      this.silentMs += Math.max(0, sinceWatermark - gapClaimedByDetector);
+      this.gateWatermark = now;
+    }
 
     // Idle-billing gate. Runs on every chunk, whether or not forwarding is
     // currently open - that is what makes recovery possible. A design gated
@@ -691,14 +745,19 @@ export class PublisherSession {
       // do it - see SILENCE_RESET_STREAK's own comment.
       this.aboveFloorStreak += 1;
       this.billingOpen = true;
-      if (this.aboveFloorStreak >= SILENCE_RESET_STREAK) this.lastAboveFloorAt = now;
+      if (this.aboveFloorStreak >= SILENCE_RESET_STREAK) {
+        this.lastAboveFloorAt = now;
+        // Fix-round-2 Finding 1: a genuine recovery - the clock actually
+        // moved - so the NEXT idle period, if there is one, is a new one and
+        // deserves its own "pausing" line rather than being suppressed as a
+        // stale re-trip.
+        this.billingPauseLogged = false;
+      }
       if (wasClosed) {
-        // Finding 2: the STT clock did not move for the span the gate was
-        // shut - see gateClosedAt's own comment - but the wall clock did.
-        // Without this every latency figure for the rest of the session
-        // reads high by roughly that span.
-        if (this.gateClosedAt > 0) this.silentMs += now - this.gateClosedAt;
-        this.gateClosedAt = 0;
+        // any gated span up to `now` was already folded into silentMs by the
+        // watermark block above, on this same call - nothing left to account
+        // for, so the gate is fully open again
+        this.gateWatermark = 0;
         this.deps.log("info", "audio above the silence floor again - resuming billed transcription");
       }
     } else {
@@ -710,20 +769,25 @@ export class PublisherSession {
       const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes;
       if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
         this.billingOpen = false;
-        this.gateClosedAt = now;
-        const silentMinutes = Math.round((now - this.lastAboveFloorAt) / 60_000);
-        // written once, on the transition - not on every silent chunk after
-        // it, which at capture's own chunk rate would flood relay.log and
-        // evict everything before it long before this line was ever read
-        this.deps.log(
-          "error",
-          `no audio above the silence floor for ${silentMinutes}m - pausing billed transcription until sound returns`,
-        );
+        this.gateWatermark = now;
+        // Fix-round-2 Finding 1: only the FIRST trip of a given idle period
+        // gets a line - see billingPauseLogged's own comment for why an
+        // isolated impulse must not make this fire again for the same one.
+        if (!this.billingPauseLogged) {
+          this.billingPauseLogged = true;
+          const silentMinutes = Math.round((now - this.lastAboveFloorAt) / 60_000);
+          this.deps.log(
+            "error",
+            `no audio above the silence floor for ${silentMinutes}m - pausing billed transcription until sound returns`,
+          );
+        }
         // Finding 1: hold the Deepgram socket open across the gate instead
         // of letting it idle-close - see DEEPGRAM_KEEPALIVE_MS's own
         // comment. Sent immediately on the transition rather than waiting
         // for the first interval to elapse, since the last real audio this
         // stream saw may already be close to Deepgram's own idle window.
+        // Unconditional on the log latch above: the socket still needs to
+        // be held open on a stale re-trip even though nothing is logged.
         if (!this.local) {
           this.lastKeepAliveAt = now;
           this.stt?.keepAlive?.();

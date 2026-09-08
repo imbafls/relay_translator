@@ -1567,3 +1567,332 @@ describe("fix-round finding 2: latency after the idle-billing gate reopens", () 
     session.stop();
   });
 });
+
+describe("fix-round-2 finding 1: an isolated impulse must not re-trip and re-log the same idle period", () => {
+  /**
+   * session.ts:694/702/718-721 (pre-fix-round-2). SILENCE_RESET_STREAK stops
+   * an isolated impulse from resetting `lastAboveFloorAt`, but the same
+   * impulse still reopens `billingOpen` for that one chunk - the zero-chunk
+   * recovery property is deliberate and must stay untouched. Because the
+   * impulse never clears the streak, `lastAboveFloorAt` stays exactly where
+   * it was, so the very next silent chunk finds the SAME stale clock already
+   * past the bound and re-trips it - logging a second "pausing" error for an
+   * idle period that never actually ended. Repeat that every time a chime,
+   * a Discord blip or a driver discontinuity lands on the loopback source and
+   * relay.log alternates info/error with the stated minute count climbing,
+   * even though sound keeps returning.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+  const loudFrame = (): Buffer => {
+    const samples = SR * 0.1;
+    const b = Buffer.alloc(samples * 2);
+    for (let i = 0; i < samples; i++) b.writeInt16LE(20000, i * 2);
+    return b;
+  };
+
+  function makeGated(idleBillingStopMinutes: number) {
+    const sent: Buffer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents): SttStream => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: (chunk: Buffer) => {
+              sent.push(chunk);
+              return true;
+            },
+            keepAlive: () => {},
+            close() {},
+          };
+        },
+        idleBillingStopMinutes,
+        sttStats: { seconds: 0, localSeconds: 0 },
+        toViewers: () => {},
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    return { session, sent, logs };
+  }
+
+  it("a single isolated impulse after the gate shuts does not re-log the pause", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1); // 60s bound
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame()); // seeds the clock
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trips the bound - the one legitimate pause line
+    expect(
+      g.logs.filter((l) => l.level === "error").length,
+      "setup: the bound should have tripped exactly once",
+    ).toBe(1);
+
+    // an isolated impulse - one chunk, well under SILENCE_RESET_STREAK(3) -
+    // reopens billing (as it must) and is immediately followed by silence
+    // again, the same way a chime or a Discord blip would land on a loopback
+    // source and vanish a moment later
+    vi.setSystemTime(t0 + 66_000);
+    g.session.audio(loudFrame());
+    vi.setSystemTime(t0 + 66_100);
+    g.session.audio(silentFrame());
+
+    const errors = g.logs.filter((l) => l.level === "error");
+    expect(
+      errors.length,
+      `a single isolated impulse re-logged the pause: ${errors.map((e) => e.message).join(" | ")}`,
+    ).toBe(1);
+
+    g.session.stop();
+  });
+
+  it("ten isolated impulses a minute apart still produce only the one pause line, not a pair each", async () => {
+    // the reviewer's own reproduction, reduced to fake-timer scale: 10
+    // isolated impulses against a 60s bound. Pre-fix this alternated
+    // info/error 20 times, the stated minute count climbing on each error
+    // even though sound kept returning every minute.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trips the bound once
+
+    let at = t0 + 65_000;
+    for (let i = 0; i < 10; i++) {
+      at += 60_000;
+      vi.setSystemTime(at);
+      g.session.audio(loudFrame()); // isolated impulse - reopens, does not clear the streak
+      at += 100;
+      vi.setSystemTime(at);
+      g.session.audio(silentFrame()); // silence resumes immediately after
+    }
+
+    const errors = g.logs.filter((l) => l.level === "error");
+    // excludes the one unrelated "stt open" info line onOpen logs at start()
+    const resumes = g.logs.filter((l) => l.level === "info" && /resuming/.test(l.message));
+    expect(
+      errors.length,
+      `10 isolated impulses produced ${errors.length} pause lines - the same idle period must not be re-announced: ${errors
+        .map((e) => e.message)
+        .join(" | ")}`,
+    ).toBe(1);
+    // one "resuming" line per impulse is the bounded, expected cost of the
+    // zero-chunk recovery property staying untouched - it is the repeat
+    // ERROR line this finding is about suppressing, not this one
+    expect(resumes.length, "each impulse should still log its own resume").toBe(10);
+
+    g.session.stop();
+  });
+
+  it("a genuinely new idle period after a real recovery still gets its own pause line", async () => {
+    // regression guard: the latch must not go permanently silent. A REAL
+    // recovery (the streak actually reaches SILENCE_RESET_STREAK) has to
+    // re-arm it so a later, genuinely new idle period is still announced.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trip #1
+
+    // a real recovery: three consecutive loud chunks clears the streak and
+    // actually moves lastAboveFloorAt
+    let at = t0 + 65_000;
+    for (let i = 0; i < 3; i++) {
+      at += 100;
+      vi.setSystemTime(at);
+      g.session.audio(loudFrame());
+    }
+
+    // silence for another full bound, from the real recovery's own clock
+    at += 65_000;
+    vi.setSystemTime(at);
+    g.session.audio(silentFrame()); // trip #2 - a genuinely new idle period
+
+    const errors = g.logs.filter((l) => l.level === "error");
+    expect(errors.length, "a real recovery followed by a real new idle period must log again").toBe(2);
+
+    g.session.stop();
+  });
+});
+
+describe("fix-round-2 finding 2: a capture stall inside a gated stretch must not double-count silence", () => {
+  /**
+   * session.ts:700 vs session.ts:673 (pre-fix-round-2). The mute-gap
+   * detector at the top of `audio()` runs unconditionally, gate open or
+   * shut, and claims any real gap between calls. The gate-close correction
+   * used to add the WHOLE gated span as one lump sum on reopen
+   * (`now - gateClosedAt`) regardless of what the detector had already
+   * claimed for the very same call - so a capture stall or a publisher mute
+   * that happened to land inside a gated stretch got counted twice for the
+   * same wall-clock span. silentMs never decays, so every later final in the
+   * session read `stt` clamped to 0 from then on.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+  const loudFrame = (): Buffer => {
+    const samples = SR * 0.1;
+    const b = Buffer.alloc(samples * 2);
+    for (let i = 0; i < samples; i++) b.writeInt16LE(20000, i * 2);
+    return b;
+  };
+  const finals = (viewers: ServerToViewer[]) =>
+    viewers.filter(
+      (m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle" && !!m.final,
+    );
+
+  it("a 5-minute capture stall inside a gated stretch is added to silentMs once, not twice", async () => {
+    vi.useFakeTimers();
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+
+    const viewers: ServerToViewer[] = [];
+    let events: SttEvents | undefined;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (ev: SttEvents): SttStream => {
+          events = ev;
+          setImmediate(() => ev.onOpen?.());
+          return { sendAudio: () => true, keepAlive: () => {}, close() {} };
+        },
+        idleBillingStopMinutes: 1, // 60s bound
+        toViewers: (m: ServerToViewer) => viewers.push(m),
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+    session.start();
+    await vi.advanceTimersByTimeAsync(0); // flush the deferred onOpen - currentStreamWallStart = t0
+
+    // seed the clock, then trip the bound with a single jump - matches the
+    // established style elsewhere in this file (the gate only cares about
+    // elapsed wall time between calls, not literal per-chunk cadence)
+    session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    session.audio(silentFrame()); // trips the bound; gate shuts here
+
+    // now the capture genuinely stalls for 5 minutes INSIDE the gated
+    // stretch - no calls to audio() at all, not even silent ones, unlike the
+    // common case where chunks keep arriving every ~100ms with nothing in
+    // them
+    vi.setSystemTime(t0 + 65_000 + 5 * 60_000);
+    session.audio(loudFrame()); // resume - forwarding reopens inside this call
+
+    // 200ms of real latency after recovery
+    vi.setSystemTime(t0 + 65_000 + 5 * 60_000 + 200);
+    // audioEndSec: 0 - nothing was ever actually forwarded to the STT engine
+    // in this synthetic test (every chunk before this was silent and gated),
+    // so the true post-recovery latency is exactly the 200ms wall-clock gap
+    // between the resume chunk and this final, with silentMs correctly
+    // absorbing the 65,000 + 300,000ms that came before it
+    events?.onFinal?.("hello again", { audioEndSec: 0, channel: 0 });
+
+    const last = finals(viewers).at(-1);
+    expect(last, "no final reached the viewer after recovery").toBeDefined();
+    expect(
+      last!.latency?.stt,
+      `latency badge read ${last!.latency?.stt}ms - a doubled 5-minute stall clamps this to 0`,
+    ).toBe(200);
+
+    session.stop();
+  });
+
+  it("every final after a double-counted stall must not stay clamped to 0", async () => {
+    // the report's own description of the symptom: silentMs never decays, so
+    // once it is inflated by a doubled stall, EVERY later final in the
+    // session reads 0, not just the first one after recovery
+    vi.useFakeTimers();
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+
+    const viewers: ServerToViewer[] = [];
+    let events: SttEvents | undefined;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (ev: SttEvents): SttStream => {
+          events = ev;
+          setImmediate(() => ev.onOpen?.());
+          return { sendAudio: () => true, keepAlive: () => {}, close() {} };
+        },
+        idleBillingStopMinutes: 1,
+        toViewers: (m: ServerToViewer) => viewers.push(m),
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+    session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    session.audio(silentFrame());
+
+    vi.setSystemTime(t0 + 65_000 + 5 * 60_000);
+    session.audio(loudFrame());
+
+    // two finals, a second apart, well after recovery - both should read a
+    // small, sane latency, not 0
+    vi.setSystemTime(t0 + 65_000 + 5 * 60_000 + 200);
+    events?.onFinal?.("first", { audioEndSec: 0, channel: 0 });
+    vi.setSystemTime(t0 + 65_000 + 5 * 60_000 + 1_200);
+    events?.onFinal?.("second", { audioEndSec: 1, channel: 0 });
+
+    const [first, second] = finals(viewers);
+    expect(first?.latency?.stt, "first final after recovery read 0 - the stall was double-counted").toBe(200);
+    expect(
+      second?.latency?.stt,
+      "second final after recovery also read 0 - silentMs never decayed from the double count",
+    ).toBe(200);
+
+    session.stop();
+  });
+});
