@@ -89,6 +89,14 @@ export interface RelayOptions {
   localStt?: LocalSttOptions;
   /** stand in for the STT socket (tests, and embedders bringing their own) */
   makeStt?: SessionDeps["makeStt"];
+  /**
+   * Minutes of unbroken silence before a session stops paying to transcribe
+   * it - see SessionDeps.idleBillingStopMinutes, which this threads through
+   * to every session `buildSession()` constructs. Absent falls back to
+   * DEFAULT_CONFIG.idleBillingStopMinutes there, same as an unset SessionDeps
+   * value.
+   */
+  idleBillingStopMinutes?: number;
   /** how often to ping every socket and drop the ones that stopped answering */
   heartbeatMs?: number;
   log?: (level: "info" | "warn" | "error", message: string) => void;
@@ -359,6 +367,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       mockGemini,
       localStt: opts.localStt,
       makeStt: opts.makeStt,
+      idleBillingStopMinutes: opts.idleBillingStopMinutes,
       geminiStats,
       sttStats,
       toViewers,

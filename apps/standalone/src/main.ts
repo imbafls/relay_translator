@@ -178,6 +178,10 @@ async function startEmbeddedRelay(): Promise<void> {
     geminiApiKey: cfg.geminiApiKey,
     // the worker is bundled next to main.js (see build.mjs)
     localStt: { modelsDir, workerPath: sttWorkerPath() },
+    // Fix-round Finding 6 (Task 5): without this a user's setting did
+    // nothing - every session got the shared 60-minute default regardless
+    // of what AppConfig.idleBillingStopMinutes said
+    idleBillingStopMinutes: cfg.idleBillingStopMinutes,
     log,
     onViewers: () => broadcastStatus(),
   });
