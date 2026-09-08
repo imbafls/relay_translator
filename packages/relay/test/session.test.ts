@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ServerToViewer } from "@callout-relay/shared";
 import { PublisherSession } from "../src/session";
-import type { SttEvents } from "../src/deepgram";
+import type { SttEvents, SttStream } from "../src/deepgram";
 import type { Translator } from "../src/gemini";
 
 /**
@@ -1061,5 +1061,277 @@ describe("a quiet session stops paying for silence", () => {
     );
 
     g.session.stop();
+  });
+});
+
+describe("fix-round finding 1: the Deepgram socket must not flap while the gate is shut", () => {
+  /**
+   * deepgram.ts sends no KeepAlive, and a real Deepgram socket that receives
+   * no audio closes on its own after roughly ten seconds. Once the
+   * idle-billing gate shuts, `audio()` stops calling `sendAudio()` - so with
+   * nothing else, the socket idles out, `onClose` fires with `sttDegraded`
+   * still false (the last `onOpen` reset it), the session narrates "stt
+   * closed unexpectedly", broadcasts "speech pipeline lost" to every viewer,
+   * reopens ~300ms later, resets `sttDegraded`, and repeats - every ~10s,
+   * for as long as the gate stays shut. Task 1's suppression of repeat
+   * narration never arms, because every reopen here succeeds.
+   *
+   * This fake reproduces exactly the one thing that matters - a socket that
+   * closes on its own after a real idle window with no activity - so the fix
+   * (a Deepgram KeepAlive sent while the gate is shut) can be proven against
+   * a stream that actually behaves the way Deepgram does, not against a mock
+   * that would pass whether or not the fix exists.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function makeIdleClosingDeepgram(idleTimeoutMs: number) {
+    let opens = 0;
+    const makeStt = (events: SttEvents): SttStream => {
+      opens += 1;
+      let open = true;
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      const arm = (): void => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          if (!open) return;
+          open = false;
+          events.onClose?.();
+        }, idleTimeoutMs);
+      };
+      setImmediate(() => events.onOpen?.());
+      arm();
+      return {
+        sendAudio: (_chunk: Buffer) => {
+          if (!open) return false;
+          arm();
+          return true;
+        },
+        keepAlive: () => {
+          if (!open) return;
+          arm();
+        },
+        close: () => {
+          open = false;
+          if (idleTimer) clearTimeout(idleTimer);
+        },
+      };
+    };
+    return { makeStt, opensCount: () => opens };
+  }
+
+  it("holds the socket open with KeepAlive instead of letting it idle-close for the rest of a gated stretch", async () => {
+    vi.useFakeTimers();
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const idleTimeoutMs = 10_000; // roughly what a real Deepgram socket allows
+    const dg = makeIdleClosingDeepgram(idleTimeoutMs);
+    const viewers: ServerToViewer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: dg.makeStt,
+        idleBillingStopMinutes: 1,
+        sttStats: { seconds: 0, localSeconds: 0 },
+        toViewers: (m) => viewers.push(m),
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(dg.opensCount(), "the first stream never opened").toBe(1);
+
+    const silent100 = Buffer.alloc(16000 * 2 * 0.1, 0);
+
+    // trip the 60s bound, one chunk every 2s - capture keeps posting frames
+    // whether or not there is anything in them
+    for (let i = 0; i < 31; i++) {
+      await vi.advanceTimersByTimeAsync(2000);
+      session.audio(silent100);
+    }
+    const errorsAtTrip = logs.filter((l) => l.level === "error").length;
+    expect(errorsAtTrip, "the bound never tripped").toBe(1);
+
+    // stay silent for three more Deepgram idle windows - the old code (no
+    // KeepAlive) reconnects on every single one of them
+    for (let i = 0; i < 15; i++) {
+      await vi.advanceTimersByTimeAsync(2000);
+      session.audio(silent100);
+    }
+
+    expect(
+      dg.opensCount(),
+      "the socket flapped during the gated stretch - KeepAlive did not hold it open",
+    ).toBe(1);
+    expect(
+      viewers.filter((m) => m.type === "status" && m.live === false).length,
+      "the viewer status flapped during the gated stretch",
+    ).toBe(0);
+    expect(
+      logs.filter((l) => l.level === "warn").length,
+      "relay.log churned with reconnect warnings during the gated stretch",
+    ).toBe(0);
+
+    session.stop();
+  });
+
+  it("never sends KeepAlive while forwarding is open - real audio already holds the socket up", async () => {
+    vi.useFakeTimers();
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    let keepAlives = 0;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents): SttStream => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: () => true,
+            keepAlive: () => {
+              keepAlives += 1;
+            },
+            close() {},
+          };
+        },
+        idleBillingStopMinutes: 1,
+        toViewers: () => {},
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+    session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const loud = Buffer.alloc(16000 * 2 * 0.1);
+    for (let i = 0; i < loud.length / 2; i++) loud.writeInt16LE(20000, i * 2);
+
+    // continuous loud audio for well over the KeepAlive interval - the gate
+    // never shuts, so nothing should ever call keepAlive()
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(2000);
+      session.audio(loud);
+    }
+
+    expect(keepAlives, "KeepAlive was sent even though real audio was flowing the whole time").toBe(0);
+    session.stop();
+  });
+});
+
+describe("fix-round finding 2: latency after the idle-billing gate reopens", () => {
+  /**
+   * session.ts:410. During the gate, chunks keep arriving so `lastAudioAt`
+   * updates every 100 ms and `silentMs` never grows - the existing mute-gap
+   * detector only fires on a real gap BETWEEN calls to `audio()`, and there
+   * is none here, capture keeps calling it right on schedule. But no audio
+   * reaches the engine while the gate is shut, so the STT clock (Deepgram's
+   * word timings, or the local worker's `fed / SAMPLE_RATE`) does not
+   * advance either. After a gated stretch and a resume, every caption's
+   * `stt` latency figure reads the whole gated span too high.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+  const loudFrame = (): Buffer => {
+    const samples = SR * 0.1;
+    const b = Buffer.alloc(samples * 2);
+    for (let i = 0; i < samples; i++) b.writeInt16LE(20000, i * 2);
+    return b;
+  };
+  const finals = (viewers: ServerToViewer[]) =>
+    viewers.filter(
+      (m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle" && !!m.final,
+    );
+
+  it("does not read the gated span as extra latency once forwarding resumes", async () => {
+    // full fake timers, not just Date: onOpen fires via a real setImmediate
+    // in makeStt below, and racing that against a real setTimeout(0) tick
+    // (the ordering between the two is not guaranteed outside an I/O
+    // callback) was observed to occasionally resolve the tick first,
+    // leaving currentStreamWallStart unstamped and the assertion flaky.
+    // advanceTimersByTimeAsync flushes it deterministically instead.
+    vi.useFakeTimers();
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+
+    const viewers: ServerToViewer[] = [];
+    let events: SttEvents | undefined;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        // a stand-in with no idle-close of its own - Finding 1 already
+        // covers that failure mode; this pins the latency arithmetic on a
+        // stream that stays open the whole time, exactly what Finding 1's
+        // fix produces on the real Deepgram socket
+        makeStt: (ev: SttEvents): SttStream => {
+          events = ev;
+          setImmediate(() => ev.onOpen?.());
+          return { sendAudio: () => true, keepAlive: () => {}, close() {} };
+        },
+        idleBillingStopMinutes: 1,
+        toViewers: (m: ServerToViewer) => viewers.push(m),
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+    session.start();
+    await vi.advanceTimersByTimeAsync(0); // flush the deferred onOpen
+
+    // capture keeps posting a 100ms frame whether or not there is anything
+    // in it - 70s of unbroken silence trips the 60s bound and keeps the
+    // gate shut for another ~10s after that
+    let at = t0;
+    for (let i = 0; i < 700; i++) {
+      at += 100;
+      vi.setSystemTime(at);
+      session.audio(silentFrame());
+    }
+
+    // real audio returns - forwarding resumes inside this very call
+    at += 100;
+    vi.setSystemTime(at);
+    session.audio(loudFrame());
+
+    // the STT clock only ever advanced across the ~60s that was actually
+    // forwarded before the trip, never across the gated stretch after it
+    events?.onFinal?.("hello again", { audioEndSec: 60, channel: 0 });
+
+    const last = finals(viewers).at(-1);
+    expect(last, "no final reached the viewer after recovery").toBeDefined();
+    expect(
+      last!.latency?.stt,
+      `latency badge read ${last!.latency?.stt}ms - it should read the true post-recovery latency, not the gated span`,
+    ).toBeLessThan(2000);
+
+    session.stop();
   });
 });

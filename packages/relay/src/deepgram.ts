@@ -19,6 +19,20 @@ export interface SttStream {
    * transcribed.
    */
   sendAudio(chunk: Buffer): boolean;
+  /**
+   * Hold the connection open without streaming audio. Deepgram's own
+   * mechanism for this - a `{"type":"KeepAlive"}` control frame - and it is
+   * not billed, unlike sending silent audio would be. Sent instead of audio
+   * while the session's idle-billing gate is shut (see session.ts's
+   * `audio()`): a live Deepgram socket that receives neither audio nor a
+   * KeepAlive closes on its own in roughly ten seconds, and without this the
+   * gate shutting would flap the pipeline open-closed for as long as it
+   * stayed shut, which for the default bound is the rest of the stream.
+   *
+   * Optional: nothing else has a socket that goes idle-and-closes, so the
+   * mock and local streams simply do not implement it.
+   */
+  keepAlive?(): void;
   close(): void;
 }
 
@@ -155,6 +169,16 @@ export function createDeepgramStream(cfg: SttConfig, events: SttEvents): SttStre
       if (ws.readyState !== WebSocket.OPEN) return false;
       ws.send(chunk, { binary: true });
       return true;
+    },
+    keepAlive() {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify({ type: "KeepAlive" }));
+      } catch {
+        // a send failing here means the socket is already on its way out;
+        // the ordinary close/reopen path handles that, this just must not
+        // throw into the caller
+      }
     },
     close() {
       closedByUs = true;

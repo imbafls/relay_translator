@@ -97,6 +97,25 @@ const GAP_MS = 500;
 const SILENCE_PEAK_FLOOR = 150;
 
 /**
+ * Fix-round Finding 1. Deepgram sends no KeepAlive of its own, and a live
+ * socket that receives no audio closes on its own in roughly ten seconds.
+ * Once the idle-billing gate shuts, `audio()` stops calling `sendAudio()` -
+ * so without this, the socket would idle-close, `onClose` would fire with
+ * `sttDegraded` still false (the last `onOpen` reset it), and the session
+ * would narrate "stt closed unexpectedly", flash "speech pipeline lost" at
+ * every viewer, and reopen ~300ms later - then repeat, forever, at whatever
+ * cadence Deepgram's real idle timeout runs on, for as long as the gate
+ * stays shut. Task 1's suppression of repeat narration never arms, because
+ * every one of those reopens succeeds.
+ *
+ * 5s comfortably beats any idle timeout Deepgram might actually run - it
+ * only has to be shorter than THEIR clock, not exactly ten seconds, and
+ * capture posts a chunk every ~100ms so this is checked far more often than
+ * it needs to be sent.
+ */
+const DEEPGRAM_KEEPALIVE_MS = 5_000;
+
+/**
  * Peak absolute sample in a chunk of 16-bit signed PCM (interleaved across
  * however many channels this session captures - a real sample on any one of
  * them is enough to call the chunk "audio").
@@ -283,6 +302,24 @@ export class PublisherSession {
    * start talking, not a session they have to notice is dead and restart.
    */
   private billingOpen = true;
+  /**
+   * Wall clock of the moment `billingOpen` last flipped to false. Fix-round
+   * Finding 2: the STT clock (Deepgram's word timings, or the local worker's
+   * `fed / SAMPLE_RATE`) does not advance while the gate is shut - no audio
+   * reaches it - but the wall clock does, and `silentMs` is what the latency
+   * arithmetic in `onFinal` subtracts to absorb exactly that divergence. The
+   * existing mute-gap detector at the top of `audio()` cannot see this gap:
+   * it only fires on a real pause BETWEEN calls, and capture keeps calling
+   * `audio()` on schedule the whole time the gate is shut. 0 means "not
+   * currently timed", so a spurious `now - 0` on the very first recovery
+   * cannot be read as a gap.
+   */
+  private gateClosedAt = 0;
+  /**
+   * Wall clock of the last Deepgram KeepAlive this session sent. Fix-round
+   * Finding 1 - see DEEPGRAM_KEEPALIVE_MS's own comment.
+   */
+  private lastKeepAliveAt = 0;
   /** whether Gemini runs for this session */
   translates = true;
   readonly local: boolean;
@@ -623,12 +660,19 @@ export class PublisherSession {
       this.lastAboveFloorAt = now;
       this.billingOpen = true;
       if (wasClosed) {
+        // Finding 2: the STT clock did not move for the span the gate was
+        // shut - see gateClosedAt's own comment - but the wall clock did.
+        // Without this every latency figure for the rest of the session
+        // reads high by roughly that span.
+        if (this.gateClosedAt > 0) this.silentMs += now - this.gateClosedAt;
+        this.gateClosedAt = 0;
         this.deps.log("info", "audio above the silence floor again - resuming billed transcription");
       }
     } else {
       const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes ?? 0;
       if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
         this.billingOpen = false;
+        this.gateClosedAt = now;
         const silentMinutes = Math.round((now - this.lastAboveFloorAt) / 60_000);
         // written once, on the transition - not on every silent chunk after
         // it, which at capture's own chunk rate would flood relay.log and
@@ -637,6 +681,18 @@ export class PublisherSession {
           "error",
           `no audio above the silence floor for ${silentMinutes}m - pausing billed transcription until sound returns`,
         );
+        // Finding 1: hold the Deepgram socket open across the gate instead
+        // of letting it idle-close - see DEEPGRAM_KEEPALIVE_MS's own
+        // comment. Sent immediately on the transition rather than waiting
+        // for the first interval to elapse, since the last real audio this
+        // stream saw may already be close to Deepgram's own idle window.
+        if (!this.local) {
+          this.lastKeepAliveAt = now;
+          this.stt?.keepAlive?.();
+        }
+      } else if (!this.billingOpen && !this.local && now - this.lastKeepAliveAt >= DEEPGRAM_KEEPALIVE_MS) {
+        this.lastKeepAliveAt = now;
+        this.stt?.keepAlive?.();
       }
     }
     // gate stops here: nothing below this line runs while it is shut, which
