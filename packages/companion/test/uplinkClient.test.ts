@@ -371,6 +371,12 @@ describe("whether the hello an uplink sends says anyone is actually streaming", 
     expect(hello.live).toBe(true);
   });
 
+  // Cannot fail against a `sendHello` rewritten to drop `live`: it spreads
+  // `...hello`, and vitest strips types, so the field rides through this
+  // path either way. Kept as a guard against someone rewriting `sendHello`
+  // to enumerate its fields by hand the way `open()`'s onopen does - not as
+  // coverage for that failure mode, which is what the tests above and the
+  // reconnect test below actually exercise.
   it("carries an updated live on the re-hello sendHello sends", async () => {
     const c = makeClient();
     c.connect({ ...HELLO, live: false });

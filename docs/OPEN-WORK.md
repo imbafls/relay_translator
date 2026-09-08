@@ -261,6 +261,47 @@ fix — read the numbered section there before starting.
   open, since `shouldReap` takes a record and cannot see a live connection.
 - **An unexplained viewer socket, seen once** on the hosted relay. Also in that
   README, with the full note.
+- **The self-hosted relay's `isLive()` still answers ON AIR before any hello
+  arrives — the same defect the uplink-liveness fix closed on the hosted
+  Worker, one layer earlier, on the path someone would use running
+  `packages/relay`'s own binary as their remote relay instead of
+  `textrelay.cc`.** `isLive()` in `packages/relay/src/server.ts` is
+  `(publisher !== null && sttLive) || uplink !== null` — true from
+  socket-accept, before any hello says whether a session is actually running.
+  `onViewer`'s greeting, its `sync` reply, and `GET /health` all read
+  `isLive()` directly; the fan-out through `toViewers` (and so the fixed
+  `live: msg.live !== false` on the uplink hello) does not.
+
+  Concretely: the app boots idle with an uplink connected to a self-hosted
+  relay (a publisher works the same way). A viewer already attached is
+  correctly told `live: false` once the boot hello arrives. A **second**
+  viewer who opens the same link in that same idle window — via the initial
+  `hello` `onViewer` sends the moment its socket is accepted, or via `sync` —
+  is told `live: true`, because `isLive()` only needs the uplink socket to
+  exist, not a hello to have said anything. Two viewers, same relay, same
+  moment, two different answers — harder to diagnose than the one consistent
+  lie this task's fix replaced on the hosted path.
+
+  Not fixed as part of that task: it needs persistent last-hello state
+  `isLive()` does not have, on a path (the self-hosted relay, not the hosted
+  Worker) with no behavioural coverage of this specific defect, and the task
+  was scoped to the uplink hello handler alone.
+
+  **A connected asymmetry, found while tracing the above and not currently
+  reachable:** `stamp()` in the same file sets `liveSince` when a `hello` or
+  `status` message says `live: true`, but only the `status` branch clears it
+  when `live` is `false` — the `hello` branch never does. Every path that can
+  currently deliver a `live: false` uplink **hello** (app boot with no
+  session, or an idle settings change forwarded by `bridgeBroadcasts` in
+  `apps/standalone/src/main.ts`) already finds `liveSince` `undefined`,
+  because a genuine session stop clears it through the `status` message path,
+  not through a hello — so this asymmetry has no observable effect today.
+  **If `isLive()` above is ever rewritten to track last-hello state instead
+  of socket presence, this stops being inert:** a `false` hello that never
+  clears `liveSince` would leave a stale session clock running under a fixed
+  liveness check. Worth fixing in the same change that fixes `isLive()`, not
+  before — nothing exploits it while `isLive()` ignores `liveSince` from a
+  hello in the first place.
 
 ### Other
 

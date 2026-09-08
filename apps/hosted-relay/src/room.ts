@@ -307,7 +307,7 @@ export class Room {
       // room was re-marked live on every reconnect, every embedded-relay
       // restart, and every settings change while the app merely sat in the
       // tray. `!== false`, not `=== true`, for the same reason `translates`
-      // two lines up is `!== false`: an OLDER app's hello carries no `live`
+      // eleven lines up is `!== false`: an OLDER app's hello carries no `live`
       // field at all, and that has to keep reading as live - the way every
       // hello did before this field existed - rather than going dark for
       // every user who has not auto-updated yet the day this Worker deploys.
