@@ -44,6 +44,10 @@ export const CHANGELOG: ChangelogEntry[] = [
         kind: "fixed",
         text: "Speaker colours reach people watching over the internet. Two sources tagged with different colours arrived in the same colour on a phone, and only on a phone - on your own network it always worked, which is why it went unnoticed.",
       },
+      {
+        kind: "fixed",
+        text: "A speaker's name tag reaching people watching over the internet had no length limit. The field you type one into has always stopped you at 12 characters, and your own network has enforced that same limit since the feature shipped - but the internet relay did not, so anything reaching it directly, rather than through the app, could send a longer tag and take up more of a viewer's screen than any caption is meant to. Both paths cap it at 12 characters now.",
+      },
     ],
   },
   {
