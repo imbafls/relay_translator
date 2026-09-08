@@ -107,6 +107,35 @@
     trimRows();
   }
 
+  /**
+   * Who the stream belongs to. Chrome only: the reader keeps size, font and
+   * theme, and the caption text is not touched. The colour goes into --brand,
+   * NOT --accent - the reader owns that one, themeMatches() compares it and
+   * RESET reverts it, so a brand painted there would vanish on the next tap.
+   */
+  function applyBrand(name, colour) {
+    const bar = $("brandBar");
+    // The overlay carries captions and nothing else. Suppressed HERE and not
+    // only in CSS: `body.obs .hud-brand { display: none }` is real and stays,
+    // but a stylesheet rule is invisible to happy-dom, so a test asserting it
+    // would pass on markup that shows the brand to a whole Twitch audience.
+    if (obs) {
+      bar.hidden = true;
+      return;
+    }
+    const text = typeof name === "string" ? name.trim() : "";
+    // textContent, never innerHTML: this arrives over a socket from whoever
+    // holds the publish token, onto a page served publicly with no CSP
+    $("brandName").textContent = text;
+    bar.hidden = text.length === 0;
+    const safe = typeof colour === "string" && /^#[0-9a-f]{6}$/i.test(colour.trim())
+      ? colour.trim().toLowerCase()
+      : "";
+    // setProperty, never a style attribute - a value smuggling more CSS cannot
+    // bring it along. viewer.test.ts already pins this for speaker colours.
+    if (safe) document.documentElement.style.setProperty("--brand", safe);
+  }
+
   function themeMatches(name) {
     const t = THEMES[name];
     return style.theme === name && style.fg === t.fg && style.bg === t.bg;
@@ -576,6 +605,7 @@
         case "hello":
           serverTranslates = msg.translates !== false;
           applyStyle();
+          applyBrand(msg.brandName, msg.brandColor);
           $("hudLangs").textContent = langsLabel(msg);
           applyLive(msg.live, msg.since, msg.elapsedMs);
           // same as `status` below. A viewer disconnected while status

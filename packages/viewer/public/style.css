@@ -332,3 +332,19 @@ body.obs.idle .row.obs-live { opacity: 0; }
 /* the hold only means anything on the overlay, so the control only appears there */
 .obs-only { display: none; }
 body.obs .obs-only { display: flex; }
+
+/* Who the stream belongs to. Chrome only - the caption text below is the
+   reader's, and --brand is deliberately not --accent (see applyBrand). */
+.hud-brand { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.hud-brand-name {
+  color: var(--brand, var(--fg));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14ch;
+}
+/* The overlay is composited into a scene the streamer already brands, and an
+   element outside .row.obs-live never fades - it would sit on the broadcast
+   through every quiet stretch, which is what the idle fade exists to stop. */
+body.obs .hud-brand { display: none; }

@@ -761,3 +761,74 @@ describe("the overlay does not leave the last thing said on the broadcast", () =
     expect(faded(), "the phone viewer hid a transcript somebody may be reading").toBe(false);
   });
 });
+
+describe("whose captions these are", () => {
+  const brandBar = (): HTMLElement => $("brandBar");
+
+  it("names the stream when the hello carries one", () => {
+    boot();
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      brandName: "Omer's stream",
+      brandColor: "#e0a43a",
+    });
+
+    expect($("brandName").textContent).toBe("Omer's stream");
+    expect(brandBar().hidden).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--brand")).toBe("#e0a43a");
+  });
+
+  it("shows nothing at all when the stream is unbranded", () => {
+    boot();
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    expect(brandBar().hidden, "an unbranded stream reserved space for a name it does not have").toBe(true);
+  });
+
+  it("renders the name as text, never as markup", () => {
+    // the publisher is only as trustworthy as its token, and this page is
+    // served publicly with no CSP
+    boot();
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      brandName: "<img src=x onerror=alert(1)>",
+    });
+
+    expect(document.querySelector("#brandBar img")).toBeNull();
+    expect($("brandName").textContent).toBe("<img src=x onerror=alert(1)>");
+  });
+
+  it("leaves the reader's own accent alone", () => {
+    // --accent belongs to the theme the reader picked; themeMatches() compares
+    // it, and RESET reverts it. A brand painted there would be wiped.
+    boot();
+    const before = document.documentElement.style.getPropertyValue("--accent");
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      brandColor: "#ff0000",
+    });
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe(before);
+  });
+
+  it("stays off the broadcast overlay", () => {
+    // the streamer already brands that scene, and an element outside
+    // .row.obs-live never fades - it would sit there through every quiet stretch
+    boot("?obs=1");
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      brandName: "Omer's stream",
+    });
+    expect(brandBar().hidden, "the brand reached the broadcast overlay").toBe(true);
+  });
+});
