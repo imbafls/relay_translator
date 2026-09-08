@@ -12,6 +12,8 @@ packages/relay/sea/vps.env
 
 # scratch / tooling
 .firecrawl/
+# subagent-driven-development scratch: ledger, briefs, review packages
+.superpowers/
 
 # relay state / local data
 relay-state.json
