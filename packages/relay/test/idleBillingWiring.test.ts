@@ -24,8 +24,17 @@ import { SAMPLE_RATE } from "../src/deepgram";
  * `cfg.idleBillingStopMinutes` into its own `startRelay({...})` call) has no
  * test harness in this repo: main.ts is Electron main-process code with no
  * existing test file (grepped - only models.test.ts and renderer.test.ts
- * exist under apps/standalone/test/, neither imports main.ts), so that half
- * is verified by reading the call site instead.
+ * exist under apps/standalone/test/, neither imports main.ts).
+ *
+ * Fix-round-3 Finding 3: this comment used to end "so that half is verified
+ * by reading the call site instead" - but nothing below actually did that
+ * reading. Deleting `idleBillingStopMinutes: cfg.idleBillingStopMinutes`
+ * from main.ts's `startRelay({...})` call silently reinstates "a user's
+ * setting does nothing" - exactly the bug this file exists to guard against
+ * - and every test in this repo, this one included, still passed. The repo
+ * already reads main.ts as source text elsewhere (`speakerTag.test.ts`,
+ * `prepareOrder.test.ts`); the describe block below is that same reading,
+ * actually encoded as a check this time.
  */
 
 let relay: RelayHandle;
@@ -103,5 +112,52 @@ describe("RelayOptions.idleBillingStopMinutes reaches the session", () => {
       () => logs.some((l) => l.level === "error" && /pausing billed transcription/.test(l.message)),
       "the 90ms bound configured via RelayOptions never tripped - idleBillingStopMinutes is not reaching the session",
     );
+  });
+});
+
+/**
+ * Fix-round-3 Finding 3. The other half - main.ts actually threading
+ * `cfg.idleBillingStopMinutes` into its own `startRelay({...})` call -  had
+ * no guard of any kind, only a comment claiming it was "verified by reading
+ * the call site". Read it for real: extract the call's argument literal and
+ * assert it names the field. A rename of `startEmbeddedRelay` or its
+ * `startRelay({...})` call breaks this loudly, which is the right failure -
+ * same reasoning as `prepareOrder.test.ts`'s own narrow source read.
+ */
+describe("apps/standalone/src/main.ts actually threads idleBillingStopMinutes into startRelay", () => {
+  const root = path.resolve(__dirname, "..", "..", "..");
+  const main = fs.readFileSync(path.join(root, "apps/standalone/src/main.ts"), "utf8");
+
+  /** the argument object of startEmbeddedRelay's `relay = await startRelay({...})` call */
+  function startRelayCallLiteral(): string {
+    const marker = "relay = await startRelay(";
+    const at = main.indexOf(marker);
+    if (at < 0) {
+      throw new Error("startEmbeddedRelay's startRelay(...) call is gone - this guard needs re-pointing");
+    }
+    const open = main.indexOf("{", at);
+    if (open < 0) throw new Error("startRelay(...) call has no object literal argument to read");
+    let depth = 0;
+    for (let i = open; i < main.length; i += 1) {
+      if (main[i] === "{") depth += 1;
+      else if (main[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return main.slice(open, i + 1);
+      }
+    }
+    throw new Error("unbalanced braces reading the startRelay(...) call");
+  }
+
+  it("still finds the call this guard reads", () => {
+    // guards the guard: if this stops matching, the assertion below would be
+    // reading an empty/wrong literal and passing for the wrong reason
+    expect(startRelayCallLiteral()).toContain("port: cfg.relayPort");
+  });
+
+  it("names idleBillingStopMinutes, not just the session's own 60-minute default", () => {
+    expect(
+      startRelayCallLiteral(),
+      "main.ts's startRelay({...}) call no longer threads cfg.idleBillingStopMinutes - deleting it silently reinstates 'a user's setting does nothing'",
+    ).toMatch(/\bidleBillingStopMinutes\s*:\s*cfg\.idleBillingStopMinutes\b/);
   });
 });

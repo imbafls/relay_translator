@@ -290,6 +290,56 @@ describe("the uplink hello call sites in main.ts name live", () => {
 });
 
 /**
+ * Fix-round-3 Finding 3, second half. `fb93f57` gave `UplinkClient` an
+ * optional `live()` hook so a reconnect asks for the CURRENT liveness
+ * instead of replaying whatever `this.hello.live` was cached from - see that
+ * commit and `uplinkClient.test.ts`'s "a reconnect after the live state
+ * moved on without it". That test proves the CLIENT honours the hook when
+ * one is given; it says nothing about whether main.ts still passes one. The
+ * hook lives on a third literal this file's other two guards above don't
+ * read - the `new UplinkClient(url, {...})` constructor options, not the
+ * `uplink.connect`/`sendHello` hello literals - so deleting
+ * `live: () => sessionStartedAt !== undefined` from it reinstates the bug
+ * `fb93f57` fixed (a reconnect mid-backoff replays a stale liveness) with
+ * every existing test, this file's other guards included, still green.
+ */
+describe("apps/standalone/src/main.ts wires UplinkClient's live() reconnect hook", () => {
+  const file = "apps/standalone/src/main.ts";
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+
+  /** the options object literal passed as the second argument to `new UplinkClient(url, {...})` */
+  function uplinkClientOptionsLiteral(): string {
+    const marker = "new UplinkClient(";
+    const at = src.indexOf(marker);
+    if (at < 0) throw new Error("new UplinkClient(...) call is gone - this guard needs re-pointing");
+    const open = src.indexOf("{", at);
+    if (open < 0) throw new Error("new UplinkClient(...) call has no object literal argument to read");
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === "{") depth += 1;
+      else if (src[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return src.slice(open, i + 1);
+      }
+    }
+    throw new Error("unbalanced braces reading the UplinkClient(...) options literal");
+  }
+
+  it("still finds the options literal this guard reads", () => {
+    // guards the guard: if this stops matching, the assertion below reads an
+    // empty/wrong literal and passes for the wrong reason
+    expect(uplinkClientOptionsLiteral()).toContain("onState:");
+  });
+
+  it("names the live() reconnect hook, not just onState/onStats", () => {
+    expect(
+      uplinkClientOptionsLiteral(),
+      `${file} no longer wires live into new UplinkClient(...) - a reconnect mid-backoff would replay a stale cached liveness again (fb93f57)`,
+    ).toMatch(/\blive\s*:\s*\(\)\s*=>\s*sessionStartedAt\s*!==\s*undefined\b/);
+  });
+});
+
+/**
  * The same disease, one frame over. A hello is rebuilt by hand at nine places
  * across the four files below - field by field, never by spreading - and a
  * field added to the shared type alone reaches none of them. It compiles, it
