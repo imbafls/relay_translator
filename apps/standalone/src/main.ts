@@ -214,6 +214,12 @@ function startUplink(): void {
       broadcastStatus();
     },
     onStats: () => broadcastStatus(),
+    // open()'s automatic reconnect resends its cached hello, which can be
+    // stale by the time the socket actually reopens - a session that starts
+    // while the uplink is mid-backoff would otherwise report OFF AIR on
+    // reconnect. sessionStartedAt is read fresh on every open, not just the
+    // one this closure captured at boot.
+    live: () => sessionStartedAt !== undefined,
   });
   uplink.connect({
     languages: cfg.languages,

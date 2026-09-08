@@ -386,6 +386,43 @@ describe("whether the hello an uplink sends says anyone is actually streaming", 
   });
 });
 
+describe("a reconnect after the live state moved on without it", () => {
+  /**
+   * `open()`'s `ws.onopen` resends `this.hello` verbatim on every reconnect -
+   * fine for languages/brand/translates, which really are config and really
+   * are harmless to replay stale. `live` is not config, it is time-varying
+   * state: `bridgeBroadcasts` in main.ts only forwards a fresh `live` while
+   * `uplink.connected` is true, so a session that starts (or ends) during the
+   * gap between a drop and the automatic reconnect leaves `this.hello.live`
+   * stale for however long that gap lasts - a friend holding the link sees
+   * OFF AIR while captions are genuinely scrolling. Finding 3, review round 2.
+   */
+  it("asks for the current live state on reconnect instead of replaying the cached one", async () => {
+    let currentlyLive = false;
+    const c = new UplinkClient(`ws://127.0.0.1:${port}`, {
+      onState: () => {},
+      live: () => currentlyLive,
+    });
+    clients.push(c);
+    c.connect({ ...HELLO, live: false });
+    await until(() => frames.some((f) => f.type === "hello"), "the opening hello");
+
+    // a session starts while the socket is down - nothing calls connect() or
+    // sendHello() again, exactly like bridgeBroadcasts's forward being gated
+    // on `uplink.connected` for the whole length of the drop
+    currentlyLive = true;
+    accepted[0].close();
+    await until(() => accepted.length === 2, "the reconnect");
+    await until(() => frames.filter((f) => f.type === "hello").length === 2, "a second hello");
+
+    const secondHello = frames.filter((f) => f.type === "hello")[1];
+    expect(
+      secondHello.live,
+      "the reconnect resent the cached live:false instead of asking for the current value",
+    ).toBe(true);
+  });
+});
+
 describe("the hello a publisher client sends", () => {
   /**
    * relayClient.open had the identical bug as uplinkClient.open above: it

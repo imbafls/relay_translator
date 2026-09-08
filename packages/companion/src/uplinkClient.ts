@@ -38,6 +38,19 @@ export class UplinkClient {
       onState?: (state: UplinkClient["state"], detail?: string) => void;
       /** remote viewer count / RTT changed */
       onStats?: (stats: { remoteViewers: number; rttMs?: number }) => void;
+      /**
+       * Asked for the current liveness every time a socket opens (the first
+       * connect and every automatic reconnect). `open()` otherwise resends
+       * `this.hello` verbatim, which is fine for languages/brand/translates -
+       * genuine config, harmless to replay stale - but `live` is time-varying
+       * state: whoever owns this client (main.ts) only pushes a fresh `live`
+       * through `sendHello`/`connect` while the socket is already connected,
+       * so a session that starts or ends during a drop-to-reconnect gap would
+       * otherwise resurface as the cached value from before the drop. Absent,
+       * `open()` falls back to `this.hello.live` - today's behaviour, not a
+       * hardcoded `true`, so an owner that never wires this up is unaffected.
+       */
+      live?: () => boolean | undefined;
     } = {},
   ) {}
 
@@ -94,12 +107,17 @@ export class UplinkClient {
 
     ws.onopen = () => {
       this.attempt = 0;
+      // `this.hello` is a snapshot from the last connect()/sendHello() call,
+      // which can be well behind the moment this socket actually opens - see
+      // the `live` hook's doc comment. Ask for the current value instead of
+      // trusting the snapshot; fall back to it when nothing is wired up.
+      const freshLive = this.hooks.live ? this.hooks.live() : this.hello.live;
       this.send({
         type: "hello",
         languages: this.hello.languages,
         translates: this.hello.translates,
         since: this.hello.since,
-        live: this.hello.live,
+        live: freshLive,
         brandName: this.hello.brandName,
         brandColor: this.hello.brandColor,
       });
