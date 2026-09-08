@@ -1206,3 +1206,91 @@ export interface ControlEvent {
   type: "status";
   status: ControlStatus;
 }
+
+// ---------------------------------------------------------------------------
+// Log redaction - runs on the client, before a log ever leaves the machine
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip anything that could authenticate or identify this install out of
+ * `relay.log` before it can be attached to a feedback report and uploaded.
+ *
+ * This has to live here, in `packages/shared`, and has to run before the
+ * upload exists - not in the Worker that would receive it. Redacting
+ * server-side would mean the secret had already left the machine, and
+ * "Keys never leave your machine, and neither does your audio."
+ * (packages/viewer/public/home.html) would be false in the only sense that
+ * matters. There is no telemetry and no account either - this is the only
+ * thing standing between a pasted API key and someone else's inbox.
+ *
+ * Rule order, and why it is not arbitrary:
+ *
+ * 1. `token=` / `key=` query parameters are redacted whole, first, by
+ *    POSITION rather than by the shape of the value. `CLAUDE.md` records a
+ *    past redaction that masked a token FIELD and left the same token
+ *    sitting in a URL elsewhere in the payload - the fix there was to give
+ *    query parameters their own rule, and the same reasoning applies to
+ *    ordering here: if a shape-specific rule (hex-length, `AIza`-prefix) ran
+ *    first and the value in the URL doesn't fit that shape exactly - longer,
+ *    shorter, or a token format this build has never seen - the
+ *    shape-specific rule simply won't match it, and it would sail through
+ *    untouched. Matching by position (immediately after `token=`/`key=`, up
+ *    to the next URL delimiter) can't be fooled that way.
+ * 2. Windows account names in a path are redacted next, before the generic
+ *    hex/key rules below. An account name that happens to be hex-looking
+ *    would otherwise be swallowed by the 32-hex relay-token rule and come
+ *    out mislabelled `<redacted>` instead of `<user>` - still hidden, but
+ *    the wrong marker, and it stops the username rule from ever running
+ *    (there is nothing 32-hex left in the path for it to see).
+ * 3. RFC1918 addresses, Gemini-shaped keys, Deepgram-shaped keys and bare
+ *    32-hex relay tokens follow. The two hex-length rules cannot collide
+ *    with each other: hex digits are all `\w` characters, so `\b` only
+ *    anchors at the very start and end of a hex run, never in the middle of
+ *    one - a 40-hex Deepgram key has no internal boundary for the 32-hex
+ *    rule to match against once rule 3's own 40-hex pass has already
+ *    consumed it.
+ *
+ * Every replacement is a fixed marker - `<redacted>`, `<user>`, `<lan-ip>` -
+ * never a partial mask. A mask that keeps a few characters of a 32-hex token
+ * visible has not redacted it, it has published most of it.
+ */
+export function redactLog(text: string): string {
+  let out = text;
+
+  // 1. token=/key= query parameters, redacted whole regardless of shape.
+  out = out.replace(/([?&])(token|key)=[^&\s"'<>]*/gi, "$1$2=<redacted>");
+
+  // 2. Windows account name in a path, e.g.
+  // C:\Users\omert\AppData\Local\... -> C:\Users\<user>\AppData\Local\...
+  // Runs before the hex/key rules below - see the ordering note above.
+  // Both separators because a file:// URL (Node/Electron emit these in some
+  // stack traces) renders the same path with forward slashes. Case-sensitive
+  // on "Users" - Windows always capitalizes it that way in a real path -
+  // specifically so this does not also fire on an unrelated lowercase
+  // "/users/<id>" REST path segment, e.g. a GitHub API URL.
+  out = out.replace(/([\\/]Users[\\/])[^\\/\r\n]+/g, "$1<user>");
+
+  // 3a. RFC1918 private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+  out = out.replace(
+    /\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b/g,
+    "<lan-ip>",
+  );
+
+  // 3b. Gemini-shaped API key: "AIza" + 35 more [A-Za-z0-9_-] characters
+  // (Google's documented format, 39 total). Bounded but not exact-length -
+  // nothing in this codebase validates the length of a pasted Gemini key
+  // (`validateKey` in apps/standalone/src/main.ts round-trips it to Google
+  // instead of checking its shape), so an exact {35} count would silently
+  // match nothing - not even a fragment - against a key even one character
+  // longer than expected, and the whole key would sail through.
+  out = out.replace(/\bAIza[\w-]{35,60}\b/g, "<redacted>");
+
+  // 3c. Deepgram-shaped API key: 40 hex characters.
+  out = out.replace(/\b[0-9a-f]{40}\b/gi, "<redacted>");
+
+  // 3d. Relay token: 32 hex characters (generateToken() in
+  // packages/relay/src/config.ts is 16 random bytes, hex-encoded).
+  out = out.replace(/\b[0-9a-f]{32}\b/gi, "<redacted>");
+
+  return out;
+}
