@@ -1225,30 +1225,65 @@ export interface ControlEvent {
  *
  * Rule order, and why it is not arbitrary:
  *
- * 1. `token=` / `key=` query parameters are redacted whole, first, by
- *    POSITION rather than by the shape of the value. `CLAUDE.md` records a
- *    past redaction that masked a token FIELD and left the same token
- *    sitting in a URL elsewhere in the payload - the fix there was to give
- *    query parameters their own rule, and the same reasoning applies to
- *    ordering here: if a shape-specific rule (hex-length, `AIza`-prefix) ran
- *    first and the value in the URL doesn't fit that shape exactly - longer,
- *    shorter, or a token format this build has never seen - the
- *    shape-specific rule simply won't match it, and it would sail through
- *    untouched. Matching by position (immediately after `token=`/`key=`, up
- *    to the next URL delimiter) can't be fooled that way.
- * 2. Windows account names in a path are redacted next, before the generic
+ * 1. `token=` / `key=` / `secret=` / `auth=` / `password=` / `sig=` /
+ *    `signature=` query parameters are redacted whole, first, by POSITION
+ *    rather than by the shape of the value. The name may carry a prefix
+ *    (`access_token`, `apiKey`, `publisherToken` all match - the parameter
+ *    name only has to *end* in one of those words) since a shape rule can't
+ *    be relied on to recognise every value shape this build will ever see.
+ *    `CLAUDE.md` records a past redaction that masked a token FIELD and left
+ *    the same token sitting in a URL elsewhere in the payload - the fix
+ *    there was to give query parameters their own rule, and the same
+ *    reasoning applies to ordering here: if a shape-specific rule
+ *    (hex-length, `AIza`-prefix) ran first and the value in the URL doesn't
+ *    fit that shape exactly - longer, shorter, or a token format this build
+ *    has never seen - the shape-specific rule simply won't match it, and it
+ *    would sail through untouched. Matching by position (immediately after
+ *    the parameter name, up to the next URL delimiter) can't be fooled that
+ *    way. The value alternation also recognises an already-placed
+ *    `<redacted>` marker, so redacting an already-redacted line is a no-op
+ *    instead of prepending a second marker - see point 5 below for why that
+ *    mattered.
+ * 2. `/watch/<token>` paths are redacted whole next, mirroring
+ *    `maskViewerLink` above: a hosted-relay viewer link's token IS the whole
+ *    auth model (see that function's comment), and `/watch/` is the one
+ *    place that token is guaranteed to show up as an opaque URL path segment
+ *    rather than inside a header or a JSON body.
+ * 3. Basic-auth credentials embedded in a URL (`//user:pass@host`) are
+ *    redacted next, again by position.
+ * 4. Windows account names in a path are redacted next, before the generic
  *    hex/key rules below. An account name that happens to be hex-looking
  *    would otherwise be swallowed by the 32-hex relay-token rule and come
  *    out mislabelled `<redacted>` instead of `<user>` - still hidden, but
  *    the wrong marker, and it stops the username rule from ever running
- *    (there is nothing 32-hex left in the path for it to see).
- * 3. RFC1918 addresses, Gemini-shaped keys, Deepgram-shaped keys and bare
+ *    (there is nothing 32-hex left in the path for it to see). The name
+ *    captured from the first match is then redacted everywhere else it
+ *    appears on the line too - a per-user subfolder derived from the same
+ *    name, or a second mention, would otherwise survive.
+ * 5. RFC1918 addresses, Gemini-shaped keys, Deepgram-shaped keys and bare
  *    32-hex relay tokens follow. The two hex-length rules cannot collide
- *    with each other: hex digits are all `\w` characters, so `\b` only
- *    anchors at the very start and end of a hex run, never in the middle of
- *    one - a 40-hex Deepgram key has no internal boundary for the 32-hex
- *    rule to match against once rule 3's own 40-hex pass has already
- *    consumed it.
+ *    with each other: hex characters are a subset of `[0-9A-Za-z]`, so an
+ *    alphanumeric lookaround only anchors at the very start and end of a hex
+ *    run, never in the middle of one - a 40-hex Deepgram key has no internal
+ *    boundary for the 32-hex rule to match against once this rule's own
+ *    40-hex pass has already consumed it.
+ *
+ *    That boundary is deliberately an alphanumeric lookaround, not `\b`
+ *    (word-character) as it used to be. `\b` treats `_` as part of the
+ *    "word", so `\b[0-9a-f]{32}\b` could never anchor inside a value like
+ *    the hosted relay's own `p1_<rid>_<secret>` / `v1_<rid>_<secret>` tokens
+ *    (`apps/hosted-relay/src/tokens.ts`) - the secret half is exactly 32 hex
+ *    characters, but the `_` on either side is a word character too, so the
+ *    whole token used to sail through untouched wherever it appeared: a
+ *    `/watch/` path (also covered by point 2 above, independently), a
+ *    `Bearer` header, a JSON body, or an env-shaped line. That gap is the
+ *    *same property* that made `\b` safe against internal collisions in a
+ *    contiguous hex run: both are consequences of where `\b` refuses to
+ *    anchor. Restricting the boundary to alphanumeric characters keeps the
+ *    collision-safety (hex characters are still a subset of alphanumeric, so
+ *    there is still no internal boundary inside a pure hex run) while
+ *    treating `_` as a real delimiter, so an underscore-delimited secret is
+ *    found wherever it sits.
  *
  * Every replacement is a fixed marker - `<redacted>`, `<user>`, `<lan-ip>` -
  * never a partial mask. A mask that keeps a few characters of a 32-hex token
@@ -1257,40 +1292,76 @@ export interface ControlEvent {
 export function redactLog(text: string): string {
   let out = text;
 
-  // 1. token=/key= query parameters, redacted whole regardless of shape.
-  out = out.replace(/([?&])(token|key)=[^&\s"'<>]*/gi, "$1$2=<redacted>");
+  // 1. token=/key=/secret=/auth=/password=/sig=/signature= query parameters,
+  // redacted whole regardless of shape. [\w-]* lets the name carry a prefix
+  // (access_token, apiKey, publisherToken); the value alternation also
+  // matches an already-placed marker so re-running this rule on an
+  // already-redacted line is a no-op instead of prepending a second marker.
+  out = out.replace(
+    /([?&])([\w-]*(?:token|key|secret|auth|password|sig|signature))=(?:<redacted>|[^&\s"'<>]+)/gi,
+    "$1$2=<redacted>",
+  );
 
-  // 2. Windows account name in a path, e.g.
+  // 2. /watch/<token> paths - the hosted relay's viewer link IS the secret
+  // (see maskViewerLink above); mirrors that function's own rule.
+  out = out.replace(/(\/watch\/)[^/?#\s"'<>]+/g, "$1<redacted>");
+
+  // 3. Basic-auth credentials embedded in a URL: scheme://user:pass@host.
+  out = out.replace(/\/\/[^/\s:@]+:[^/\s@]+@/g, "//<redacted>@");
+
+  // 4. Windows account name in a path, e.g.
   // C:\Users\omert\AppData\Local\... -> C:\Users\<user>\AppData\Local\...
   // Runs before the hex/key rules below - see the ordering note above.
   // Both separators because a file:// URL (Node/Electron emit these in some
-  // stack traces) renders the same path with forward slashes. Case-sensitive
-  // on "Users" - Windows always capitalizes it that way in a real path -
-  // specifically so this does not also fire on an unrelated lowercase
-  // "/users/<id>" REST path segment, e.g. a GitHub API URL.
-  out = out.replace(/([\\/]Users[\\/])[^\\/\r\n]+/g, "$1<user>");
+  // stack traces) renders the same path with forward slashes. Requires
+  // Windows-shaped context (a drive letter, a UNC prefix, or a bare
+  // backslash) immediately before Users/users, matched case-insensitively,
+  // so a lowercase c:\users\<name> is caught too without also matching an
+  // unrelated REST path like /users/<id> (e.g. a GitHub API URL) - that path
+  // has neither a drive letter nor a backslash before its "users" segment.
+  const windowsUserRe = /((?:[A-Za-z]:[\\/]|\\\\[^\\/\r\n]+[\\/]|\\)Users[\\/])([^\\/\r\n]+)/gi;
+  let firstUser: string | undefined;
+  out = out.replace(windowsUserRe, (_match: string, prefix: string, user: string) => {
+    if (firstUser === undefined) firstUser = user;
+    return `${prefix}<user>`;
+  });
+  // A per-user subfolder derived from the same name, or a second mention of
+  // it elsewhere on the line, would otherwise survive - redact every other
+  // occurrence of the name captured from the first match too.
+  if (firstUser !== undefined) {
+    const escaped = firstUser.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`\\b${escaped}\\b`, "g"), "<user>");
+  }
 
-  // 3a. RFC1918 private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+  // 5a. RFC1918 private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
   out = out.replace(
     /\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b/g,
     "<lan-ip>",
   );
 
-  // 3b. Gemini-shaped API key: "AIza" + 35 more [A-Za-z0-9_-] characters
-  // (Google's documented format, 39 total). Bounded but not exact-length -
-  // nothing in this codebase validates the length of a pasted Gemini key
-  // (`validateKey` in apps/standalone/src/main.ts round-trips it to Google
-  // instead of checking its shape), so an exact {35} count would silently
-  // match nothing - not even a fragment - against a key even one character
-  // longer than expected, and the whole key would sail through.
-  out = out.replace(/\bAIza[\w-]{35,60}\b/g, "<redacted>");
+  // 5b. Gemini-shaped API key: "AIza" + 35 or more [A-Za-z0-9_-] characters
+  // (Google's documented format is 39 total, but nothing in this codebase
+  // validates a pasted Gemini key's length - `validateKey` in
+  // apps/standalone/src/main.ts round-trips it to Google instead of checking
+  // its shape). No trailing `\b` and no upper bound: the base64url alphabet
+  // AIza keys are drawn from includes "-", so roughly 1 in 64 real keys end
+  // in one, and a trailing `\b` right after a non-word character that is
+  // itself followed by another non-word character can never anchor - the
+  // whole key used to sail through verbatim, not just a fragment of it. An
+  // upper bound has the identical failure mode for any key even one
+  // character longer than the cap. 35 consecutive [\w-] after the literal
+  // "AIza" is already the signal, and an unbounded greedy match can't run
+  // away past the next real delimiter (whitespace, quote, line end).
+  out = out.replace(/AIza[\w-]{35,}/g, "<redacted>");
 
-  // 3c. Deepgram-shaped API key: 40 hex characters.
-  out = out.replace(/\b[0-9a-f]{40}\b/gi, "<redacted>");
+  // 5c. Deepgram-shaped API key: 40 hex characters. Bounded by an
+  // alphanumeric lookaround, not `\b` - see the ordering note above for why.
+  out = out.replace(/(?<![0-9A-Za-z])[0-9a-f]{40}(?![0-9A-Za-z])/gi, "<redacted>");
 
-  // 3d. Relay token: 32 hex characters (generateToken() in
-  // packages/relay/src/config.ts is 16 random bytes, hex-encoded).
-  out = out.replace(/\b[0-9a-f]{32}\b/gi, "<redacted>");
+  // 5d. Relay token: 32 hex characters (generateToken() in
+  // packages/relay/src/config.ts is 16 random bytes, hex-encoded - also the
+  // secret half of a hosted-relay p1_/v1_ token, apps/hosted-relay/src/tokens.ts).
+  out = out.replace(/(?<![0-9A-Za-z])[0-9a-f]{32}(?![0-9A-Za-z])/gi, "<redacted>");
 
   return out;
 }

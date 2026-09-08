@@ -29,6 +29,24 @@ describe("removes each kind of secret, not just marks it", () => {
     expect(out).not.toContain(secret);
   });
 
+  it("removes a Gemini-shaped key ending in a hyphen (fix for finding 2)", () => {
+    // the base64url alphabet AIza keys are drawn from includes "-", so
+    // roughly 1 in 64 real keys end in one; the old /\bAIza[\w-]{35,60}\b/g
+    // has a non-word char (the trailing "-") right before a word boundary
+    // that can never anchor, so the whole key used to sail through verbatim
+    const secret = "AIzaSyD_0123456789abcdefghijklmnopqrst-";
+    const out = redactLog(`key ${secret}`);
+    expect(out).not.toContain(secret);
+  });
+
+  it("removes a Gemini-shaped key longer than the old 60-character cap", () => {
+    // the old rule's {35,60} upper bound made a total miss - not a partial
+    // match - out of any key longer than 60 characters after "AIza"
+    const secret = "AIza" + "x".repeat(61);
+    const out = redactLog(`GEMINI_API_KEY=${secret}`);
+    expect(out).not.toContain(secret);
+  });
+
   it("removes a relay token (32 hex - generateToken() is 16 random bytes, hex-encoded)", () => {
     const secret = crypto.randomBytes(16).toString("hex");
     expect(secret).toHaveLength(32);
@@ -57,6 +75,28 @@ describe("removes each kind of secret, not just marks it", () => {
     const line = `wss://relay.example.com/ws?token=${secret}`;
     const out = redactLog(line);
     expect(out).not.toContain(secret);
+  });
+
+  it("redacts a widened query-parameter name like access_token, not just exact token/key (finding 7)", () => {
+    const secret = "xk9-Qm2vT7bNc4Lp8HjWr1YsFo6DdAe0z";
+    const line = `https://api.example.com/v1?access_token=${secret}`;
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+  });
+
+  it("redacts apiKey via the widened query-parameter name pattern (finding 7)", () => {
+    const secret = "xk9-Qm2vT7bNc4Lp8HjWr1YsFo6DdAe0z";
+    const line = `https://x.example.com/y?apiKey=${secret}`;
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+  });
+
+  it("redacts basic-auth credentials embedded in a URL (finding 7)", () => {
+    const secret = "hunter2";
+    const line = `https://user:${secret}@example.com/path`;
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+    expect(out).toBe("https://<redacted>@example.com/path");
   });
 
   it("removes a 192.168.x.x RFC1918 address", () => {
@@ -89,9 +129,28 @@ describe("removes each kind of secret, not just marks it", () => {
     const line =
       "C:\\Users\\omert\\AppData\\Local\\@callout-relaystandalone-updater\\pending\\callout-relay-Setup-0.5.11.exe";
     const out = redactLog(line);
-    expect(out).not.toContain(`Users\\${secret}\\`);
+    // finding 6: assert the secret is fully ABSENT, not merely that one
+    // composed substring ("Users\<secret>\") is gone - a check that narrow
+    // cannot see a second surviving occurrence of the same secret
+    expect(out).not.toContain(secret);
     // the rest of the path - the actually useful diagnostic content - survives
     expect(out).toContain("C:\\Users\\<user>\\AppData\\Local\\@callout-relaystandalone-updater\\pending\\");
+  });
+
+  it("removes a lowercase c:\\users\\ Windows path (finding 3)", () => {
+    const secret = "omert";
+    const line = "c:\\users\\omert\\AppData\\Local\\Temp\\relay.log";
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+    expect(out).toBe("c:\\users\\<user>\\AppData\\Local\\Temp\\relay.log");
+  });
+
+  it("redacts a second occurrence of the account name elsewhere on the line (finding 4)", () => {
+    const secret = "omert";
+    const line = "C:\\Users\\omert\\AppData\\Local\\Temp\\omert-cache\\x";
+    const out = redactLog(line);
+    expect(out).not.toContain(secret);
+    expect(out).toBe("C:\\Users\\<user>\\AppData\\Local\\Temp\\<user>-cache\\x");
   });
 
   it("tags a hex-shaped Windows account name <user>, not <redacted>", () => {
@@ -104,6 +163,46 @@ describe("removes each kind of secret, not just marks it", () => {
     const out = redactLog(line);
     expect(out).not.toContain(hexUser);
     expect(out).toContain("C:\\Users\\<user>\\AppData\\Local\\Temp\\relay.log");
+  });
+
+  describe("hosted-relay token (finding 1, CRITICAL) - apps/hosted-relay/src/tokens.ts", () => {
+    // p1_<rid>_<secret> / v1_<rid>_<secret> - the secret half is exactly
+    // generateToken()'s 32 hex, but "_" is a \w character, so the old
+    // \b[0-9a-f]{32}\b rule could never anchor inside it and the whole
+    // token sailed through untouched wherever it appeared.
+    function hostedToken(kind: "p1" | "v1") {
+      const rid = crypto.randomBytes(8).toString("hex"); // 16 hex chars
+      const secret = crypto.randomBytes(16).toString("hex"); // 32 hex chars
+      return { rid, secret, token: `${kind}_${rid}_${secret}` };
+    }
+
+    it("removes the secret from a v1 token in a /watch/ path", () => {
+      const { secret, token } = hostedToken("v1");
+      const line = `https://textrelay.cc/watch/${token}`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+    });
+
+    it("removes the secret from a p1 token in a Bearer header", () => {
+      const { secret, token } = hostedToken("p1");
+      const line = `Authorization: Bearer ${token}`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+    });
+
+    it("removes the secret from a p1 token inside a JSON body", () => {
+      const { secret, token } = hostedToken("p1");
+      const line = `{"publisherToken":"${token}"}`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+    });
+
+    it("removes the secret from a p1 token in an env-shaped line", () => {
+      const { secret, token } = hostedToken("p1");
+      const line = `RELAY_PUBLISHER_TOKEN=${token}`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+    });
   });
 });
 
@@ -127,16 +226,56 @@ describe("ordinary lines survive unchanged", () => {
 
   it("does not treat a lowercase /users/<id> REST path as a Windows account name", () => {
     // e.g. a GitHub API URL a future feature might log - "users" here is a
-    // path segment, not %USERPROFILE%, and Windows always capitalizes its
-    // own directory as "Users"
+    // path segment, not %USERPROFILE%, and it has neither a drive letter nor
+    // a backslash before it, unlike a real (even lowercased) Windows path
     const line = "GET https://api.github.com/users/imbafls -> 200";
     expect(redactLog(line)).toBe(line);
   });
 
-  it("is stable when run twice - a redacted line has nothing left to redact", () => {
-    const line = `key=${"a".repeat(40)} token=${crypto.randomBytes(16).toString("hex")}`;
+  it("leaves a 64-hex sha256 checksum untouched (no 40- or 32-char slice taken)", () => {
+    const sha256 = "2092615dc04874e4051066966782913064c9bfaa01bc241b37e46a2f562e087e";
+    expect(sha256).toHaveLength(64);
+    const line = `checksum sha256=${sha256}`;
+    expect(redactLog(line)).toBe(line);
+  });
+
+  it("leaves a base64 sha512 digest untouched", () => {
+    const sha512 = "lXdvTxe2RjwUa4rUJvpHXSAiI5+AlaQ4TyJaCed/CvEVWrSoUNr3Jpw1D4uc6OJvlOdaQqbUENydv0G4EJ0Blg==";
+    const line = `sha512: ${sha512}`;
+    expect(redactLog(line)).toBe(line);
+  });
+
+  it("redacts only the account name in a full electron-updater-style block", () => {
+    const sha512 = "lXdvTxe2RjwUa4rUJvpHXSAiI5+AlaQ4TyJaCed/CvEVWrSoUNr3Jpw1D4uc6OJvlOdaQqbUENydv0G4EJ0Blg==";
+    const sha256 = "2092615dc04874e4051066966782913064c9bfaa01bc241b37e46a2f562e087e";
+    const block = [
+      "C:\\Users\\omert\\AppData\\Local\\@callout-relaystandalone-updater\\pending\\callout-relay-Setup-0.5.11.exe",
+      `sha512=${sha512} size=87563200`,
+      `checksum sha256=${sha256}`,
+      "releaseUrl https://github.com/imbafls/callout-relay/releases/latest",
+    ].join("\r\n");
+    const expected = block.replace("omert", "<user>");
+    const out = redactLog(block);
+    expect(out).not.toContain("omert");
+    expect(out).toBe(expected);
+  });
+
+  it("is idempotent on an already-redacted query-parameter value, in a real URL (finding 5)", () => {
+    // the old rule's value class excluded "<" and ">", so re-running it
+    // against its own "<redacted>" marker matched a zero-width value and
+    // PREPENDED a second marker instead of leaving the line alone. The old
+    // test named for this used "key=<hex> token=<hex>" with no "?" or "&",
+    // so the query rule it was meant to exercise never actually fired -
+    // this uses a real URL so the query rule is the one under test.
+    const secret1 = crypto.randomBytes(16).toString("hex");
+    const secret2 = "a".repeat(40);
+    const line = `wss://textrelay.cc/ws?token=${secret1}&key=${secret2}`;
     const once = redactLog(line);
-    expect(redactLog(once)).toBe(once);
+    expect(once).not.toContain(secret1);
+    expect(once).not.toContain(secret2);
+    expect(once).toBe("wss://textrelay.cc/ws?token=<redacted>&key=<redacted>");
+    const twice = redactLog(once);
+    expect(twice).toBe(once);
   });
 
   it("returns empty input unchanged", () => {
