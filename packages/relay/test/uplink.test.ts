@@ -329,6 +329,11 @@ describe("whose captions a late joiner is looking at", () => {
     );
   });
 
+  it("tells a viewer already watching when the uplink says nobody is actually streaming", async () => {
+    const greeting = await announced({ brandName: "SuprKernel Callouts", live: false });
+    expect(greeting.live, "the hello rebuild hardcoded live regardless of what the uplink said").toBe(false);
+  });
+
   it("caps and validates that brand, the way the publisher hello already does", async () => {
     // Straight off a socket. Both sibling hops sanitise - `publisherHello()`
     // on the LAN path and the hosted relay's `safeBrandName`/`safeColor` on
