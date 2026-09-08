@@ -837,11 +837,12 @@ describe("whose captions these are", () => {
     // one they set earlier - apps/hosted-relay/src/room.ts:306 documents the
     // same contract for the room state this hello is built from, and stores
     // unconditionally so a genuinely cleared colour arrives as undefined.
-    // This also has to reject a colour smuggling more than a hex value: the
-    // relay only validates one of the two paths that reach a viewer
-    // (packages/relay/src/server.ts:795 forwards an uplink publisher's hello
-    // unvalidated), so the viewer is the one guard between an untrusted value
-    // and --brand on this path.
+    // This also has to reject a colour smuggling more than a hex value. Both
+    // relay paths sanitise it now - publisherHello() and the uplink handler in
+    // packages/relay/src/server.ts, and safeColor in the hosted Worker - but
+    // this page is served with no CSP and cannot know which relay build it is
+    // attached to, so it validates for itself rather than inheriting a check
+    // somebody else is supposed to have made.
     boot();
     push({
       type: "hello",

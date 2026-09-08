@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { WebSocket } from "ws";
 import { startRelay } from "../src/server";
 import type { RelayHandle } from "../src/server";
+import { MAX_BRAND_NAME } from "@callout-relay/shared";
 
 /**
  * The path that carries captions to a phone: the app's local relay fans a
@@ -263,5 +264,98 @@ describe("what survives the hop to an internet viewer", () => {
     const line = await phone.until(isType("subtitle"), "the caption");
     expect(line.speaker, "the name did not survive either").toBe("OMER");
     expect(line.color, "the colour was dropped on the way to the viewer").toBe("#e0a43a");
+  });
+});
+
+/**
+ * The case the whole branding design is shaped around, and the one test the
+ * spec asked for by name that was never written. A brand rides `hello` because
+ * `hello` is the only frame a late joiner is guaranteed to receive: somebody
+ * opening the link twenty minutes in has to see what somebody there at the
+ * start saw.
+ *
+ * Nothing behavioural covered the uplink -> viewer hello rebuild in
+ * `server.ts` before this. `speakerTag.test.ts` reads the hello LITERALS and
+ * so cannot see whether the brand was ever stored to spread into them, and
+ * that is the half this drives: real relay, real sockets, the brand announced
+ * before the viewer that reads it exists.
+ */
+describe("whose captions a late joiner is looking at", () => {
+  /**
+   * Announce a brand on the uplink and return the hello a viewer that was
+   * ALREADY watching received.
+   *
+   * The wait is not politeness. Nothing acknowledges an uplink hello, so
+   * connecting the late viewer straight after the send would race a socket
+   * upgrade against a message and pass or fail on scheduling. A viewer
+   * attached beforehand is the relay telling us it has processed the hello.
+   */
+  async function announced(brand: Record<string, unknown>): Promise<Msg> {
+    const watching = await connect(url(remote, "/ws/viewer", remote.state.viewerToken));
+    const up = await connect(url(remote, "/ws/uplink", remote.state.publisherToken));
+    await up.until(isType("ready"), "ready");
+    up.ws.send(
+      JSON.stringify({
+        type: "hello",
+        languages: { source: "en", target: "vi" },
+        translates: true,
+        since: 1_788_000_000_000,
+        ...brand,
+      }),
+    );
+    return watching.until(
+      (m) => m.type === "hello" && typeof m.brandName === "string" && (m.brandName as string).length > 0,
+      "the announced brand reaching a viewer that was already watching",
+    );
+  }
+
+  /** the phone that opens the link after the stream started */
+  async function lateJoiner(): Promise<Msg> {
+    // a second viewer on the same token replaces the first, which is exactly
+    // what a friend opening the link a while in looks like from here
+    const late = await connect(url(remote, "/ws/viewer", remote.state.viewerToken));
+    return late.until(isType("hello"), "the greeting a late joiner gets");
+  }
+
+  it("greets a viewer who opened the link afterwards with the brand", async () => {
+    await announced({ brandName: "SuprKernel Callouts", brandColor: "#e0a43a" });
+    const greeting = await lateJoiner();
+
+    expect(greeting.brandName, "a late joiner was never told whose captions these are").toBe(
+      "SuprKernel Callouts",
+    );
+    expect(greeting.brandColor, "the brand colour was dropped on the way to a late joiner").toBe(
+      "#e0a43a",
+    );
+  });
+
+  it("caps and validates that brand, the way the publisher hello already does", async () => {
+    // Straight off a socket. Both sibling hops sanitise - `publisherHello()`
+    // on the LAN path and the hosted relay's `safeBrandName`/`safeColor` on
+    // the internet one - and the relay binary that accepts this socket is
+    // built and attached to every release, so the 24-character cap the spec,
+    // both sanitisers and the changelog all promise has to hold here too.
+    const relayed = await announced({
+      brandName: "x".repeat(200_000),
+      brandColor: "#fff; background: url(http://evil/)",
+    });
+    expect(
+      (relayed.brandName as string).length,
+      "an uncapped name reached a viewer that was already watching",
+    ).toBe(MAX_BRAND_NAME);
+    expect(
+      relayed.brandColor,
+      "a colour carrying its own CSS reached a viewer that was already watching",
+    ).toBeUndefined();
+
+    const greeting = await lateJoiner();
+    expect(
+      (greeting.brandName as string).length,
+      "the relay stored an uncapped name and replayed it to a late joiner",
+    ).toBe(MAX_BRAND_NAME);
+    expect(
+      greeting.brandColor,
+      "the relay stored a colour that is not #rrggbb and replayed it to a late joiner",
+    ).toBeUndefined();
   });
 });

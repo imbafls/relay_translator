@@ -792,7 +792,20 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       if (msg.type === "hello") {
         currentLanguages = { ...msg.languages };
         currentTranslates = msg.translates !== false;
-        currentBrand = { brandName: msg.brandName, brandColor: msg.brandColor };
+        // Sanitised, not trusted - the same rule `publisherHello()` applies to
+        // the same two fields a few hundred lines up, and the one the hosted
+        // relay applies on the internet path. This socket is the uplink of a
+        // relay binary that ships with every release and accepts whoever holds
+        // the publisher token, and what lands here is spread into the hello
+        // every LAN and internet viewer of this relay gets - including the one
+        // that opens the link an hour in. Stored raw, the 24-character cap the
+        // spec, both sibling sanitisers and the changelog all promise did not
+        // exist on this path at all: a 200 KB name and a colour carrying its
+        // own CSS were kept and replayed verbatim.
+        currentBrand = {
+          brandName: safeBrandName(msg.brandName),
+          brandColor: safeSpeakerColor(msg.brandColor),
+        };
         toViewers({
           type: "hello",
           languages: currentLanguages,
