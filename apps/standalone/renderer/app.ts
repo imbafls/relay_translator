@@ -613,6 +613,8 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       channels,
       channelLabels: channels > 1 ? channelLabels(sources) : undefined,
       channelColors: channels > 1 ? channelColors(sources) : undefined,
+      brandName: config.brandName,
+      brandColor: config.brandColor,
     });
 
     level = 0;
@@ -1142,12 +1144,28 @@ async function copyText(text: string, what: string): Promise<void> {
  * and is told nothing. Disabled with the reason on screen is the honest state.
  */
 function renderCaptionSettings(): void {
-  const live = session === "live" || session === "starting";
+  // this renderer owns its own session locally (setState/recomputeState), but
+  // that only ever moves in response to a real start/stop here - and there is
+  // no way to drive a real one under happy-dom (no media devices, no socket).
+  // The main process's own view of the session arrives over the same `status`
+  // broadcast that carries relay/usage info, so trusting it too - not only the
+  // local state machine - is what makes "live" mean the same thing whichever
+  // side observed it first, and is what a test can actually reach.
+  const remoteLive = status?.session.state === "live" || status?.session.state === "starting";
+  const live = session === "live" || session === "starting" || remoteLive;
   for (const id of ["filterToggle", "badgesToggle"]) {
     ($(id) as HTMLButtonElement).disabled = live;
   }
   $("captionsLock").hidden = !live;
   renderSourceNames(live);
+
+  const brandInput = inp("brandNameInput");
+  if (document.activeElement !== brandInput) brandInput.value = config?.brandName || "";
+  brandInput.disabled = live;
+  const brandColour = safeSpeakerColor(config?.brandColor) || SPEAKER_COLORS[0];
+  inp("brandColorInput").value = brandColour;
+  inp("brandColorInput").disabled = live;
+  $("brandSwatch").style.background = brandColour;
 
   // ?settings=1 pins the viewer's HUD. In OBS that HUD is hover-only and a
   // browser source never hovers, so without this the display settings are
@@ -2278,6 +2296,18 @@ function bind(): void {
       void saveAndApply({ sourceColors: colours }, { restart: true });
     };
   }
+  // "change" not "input", for the same reason as the speaker fields: this
+  // restarts a session, and every keystroke rebuilding the publisher would be
+  // its own kind of broken
+  inp("brandNameInput").onchange = () => {
+    void saveAndApply({ brandName: inp("brandNameInput").value.trim() }, { restart: true });
+  };
+  inp("brandColorInput").onchange = () => {
+    void saveAndApply(
+      { brandColor: safeSpeakerColor(inp("brandColorInput").value) || "" },
+      { restart: true },
+    );
+  };
   $("openCaptionView").onclick = () => {
     const url = captionSettingsUrl();
     if (url) void cr.openExternal(url);

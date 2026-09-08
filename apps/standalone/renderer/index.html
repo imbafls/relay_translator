@@ -133,6 +133,14 @@
             <p class="hint">Pick the devices themselves under 01 SOURCE.</p>
           </div>
           <div class="field">
+            <div class="field-label">STREAM NAME<span class="field-status dim">SHOWN TO VIEWERS</span></div>
+            <p class="hint">What the header on a viewer&#39;s page says this stream is. Blank shows nothing at all. It does not change how captions look - size, font and theme belong to the device reading them.</p>
+            <div class="field-row">
+              <input id="brandNameInput" type="text" class="uinput mono" maxlength="24" autocomplete="off" spellcheck="false" placeholder="unbranded" />
+              <label class="swatch" title="Accent colour"><span id="brandSwatch"></span><input id="brandColorInput" type="color" /></label>
+            </div>
+          </div>
+          <div class="field">
             <div class="field-label">CAPTION APPEARANCE<span class="field-status dim">SET ON EACH VIEWER</span></div>
             <p class="hint">Size, font and colours belong to the device that is watching, so a phone and an OBS source can differ. In OBS the view&#39;s AA button only appears on hover — opening it from here pins it.</p>
             <div class="field-row">

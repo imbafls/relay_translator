@@ -1458,3 +1458,35 @@ describe("settings leads with the question people came to answer", () => {
     expect(groups.slice(0, 2)).toEqual(["reach", "viewers"]);
   });
 });
+
+describe("setting what viewers are told the stream is called", () => {
+  const doc = () => new DOMParser().parseFromString(html, "text/html");
+
+  it("lives with the other things viewers see", () => {
+    // renderer.test.ts already fails if a subject is split across groups; this
+    // is what viewers see, so it belongs with captions and speaker names
+    const settings = doc().getElementById("settings") as HTMLElement;
+    const group = (id: string) =>
+      settings.querySelector(`#${id}`)?.closest("[data-group]")?.getAttribute("data-group") ?? null;
+    expect(group("brandNameInput")).toBe("viewers");
+    expect(group("brandColorInput")).toBe("viewers");
+  });
+
+  it("locks while live, because the hello is sent once", async () => {
+    // the brand rides the publisher hello, which relayClient sends on open and
+    // never again - so editing it mid-session would change nothing and say so
+    // nowhere. Same reason the speaker-name fields disable.
+    await bootWith({ setupDone: true, brandName: "Omer's stream" });
+    expect(pushStatus, "boot() never registered for status").toBeTypeOf("function");
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: { localViewerUrl: "", remoteViewerUrl: "", uplinkState: "off" },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect((document.getElementById("brandNameInput") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("brandColorInput") as HTMLInputElement).disabled).toBe(true);
+  });
+});

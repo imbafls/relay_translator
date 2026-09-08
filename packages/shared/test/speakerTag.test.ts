@@ -100,35 +100,40 @@ describe("a caption keeps its speaker tag at every hop", () => {
  * picked up and checked automatically instead of needing a fourth
  * hand-written assertion.
  */
+/**
+ * the object literal a call is handed, or "" if it is handed anything else
+ *
+ * This used to scan forward to the first `{` it could find. That is only
+ * correct while every call site happens to pass a literal inline: rewrite one
+ * as `uplink.sendHello(buildHello(cfg, msg))` and the scan sails past the call
+ * entirely and checks whatever block comes next - a function body, an object
+ * three statements away - reporting it green. The argument has to BE the
+ * literal, not merely be followed by one somewhere downstream, so the first
+ * non-space character after the `(` has to be the `{`.
+ *
+ * Shared by every call-site guard below rather than reimplemented per file:
+ * the property being checked - "the argument at this call is a literal naming
+ * these fields" - is the same one each time, only the call pattern and the
+ * file differ.
+ */
+function literalFrom(text: string, from: number): string {
+  let open = from;
+  while (open < text.length && /\s/.test(text[open])) open += 1;
+  if (text[open] !== "{") return "";
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (text[i] === "{") depth += 1;
+    else if (text[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(open, i + 1);
+    }
+  }
+  return "";
+}
+
 describe("the uplink hears the stream's brand at every hello main.ts hands it", () => {
   const file = "apps/standalone/src/main.ts";
   const src = fs.readFileSync(path.join(root, file), "utf8");
-
-  /**
-   * the object literal this call is handed, or "" if it is handed anything else
-   *
-   * This used to scan forward to the first `{` it could find. That is only
-   * correct while every call site happens to pass a literal inline: rewrite one
-   * as `uplink.sendHello(buildHello(cfg, msg))` and the scan sails past the call
-   * entirely and checks whatever block comes next - a function body, an object
-   * three statements away - reporting it green. The argument has to BE the
-   * literal, not merely be followed by one somewhere downstream, so the first
-   * non-space character after the `(` has to be the `{`.
-   */
-  function literalFrom(text: string, from: number): string {
-    let open = from;
-    while (open < text.length && /\s/.test(text[open])) open += 1;
-    if (text[open] !== "{") return "";
-    let depth = 0;
-    for (let i = open; i < text.length; i += 1) {
-      if (text[i] === "{") depth += 1;
-      else if (text[i] === "}") {
-        depth -= 1;
-        if (depth === 0) return text.slice(open, i + 1);
-      }
-    }
-    return "";
-  }
 
   const callSites = Array.from(src.matchAll(/uplink\.(?:connect|sendHello)\(/g)).map((m) => ({
     line: src.slice(0, m.index).split("\n").length,
@@ -140,6 +145,48 @@ describe("the uplink hears the stream's brand at every hello main.ts hands it", 
     // guards the guard: a count that moves means a call site was added or
     // removed, and this file's coverage needs a second look either way
     expect(callSites.map((c) => c.line), "uplink.connect/sendHello call sites").toHaveLength(3);
+  });
+
+  it.each(callSites)(`${file}:$line names both brandName and brandColor`, ({ line, literal }) => {
+    expect(
+      literal,
+      `${file}:${line} call site does not pass a literal, so this guard cannot see the brand it carries - inline the hello or teach the guard to follow the builder`,
+    ).not.toBe("");
+
+    // a spread carries whatever the hello holds, now and later, so it passes
+    if (/\.\.\./.test(literal)) return;
+
+    const missing = ["brandName", "brandColor"].filter((f) => !new RegExp(`\\b${f}\\b\\s*:`).test(literal));
+    expect(missing, `${file}:${line} enumerates the hello and omits: ${missing.join(", ")}`).toEqual([]);
+  });
+});
+
+/**
+ * The same drop, one hop further out. `renderer/app.ts` is not in `HELLO_HOPS`
+ * below - that list is the four files a caption or hello moves through after
+ * it leaves this app, and `startSession()`'s own `relayClient.connect(...)`
+ * literal is where the brand is supposed to ENTER that chain in the first
+ * place. Nothing upstream of it can lose a field it never carried, so a gap
+ * here is invisible to every guard downstream: `currentBrand` on the embedded
+ * relay just stays empty, forever, and `bridgeBroadcasts()` then forwards that
+ * emptiness up to the hosted relay too.
+ *
+ * Same machinery as the `main.ts` guard above, pointed at the one call site
+ * `renderer/app.ts` has.
+ */
+describe("the embedded relay hears the stream's brand at the renderer's own hello", () => {
+  const file = "apps/standalone/renderer/app.ts";
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+
+  const callSites = Array.from(src.matchAll(/relayClient\.connect\(/g)).map((m) => ({
+    line: src.slice(0, m.index).split("\n").length,
+    literal: literalFrom(src, (m.index as number) + m[0].length),
+  }));
+
+  it("still finds exactly the one relayClient.connect call site", () => {
+    // same reasoning as the uplink count above: a call site appearing or
+    // disappearing needs this guard's attention either way
+    expect(callSites.map((c) => c.line), "relayClient.connect call sites").toHaveLength(1);
   });
 
   it.each(callSites)(`${file}:$line names both brandName and brandColor`, ({ line, literal }) => {
