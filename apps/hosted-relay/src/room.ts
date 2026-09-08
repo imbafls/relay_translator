@@ -60,6 +60,20 @@ export function safeSpeaker(value: unknown): string | undefined {
   return value.slice(0, MAX_SPEAKER_TAG);
 }
 
+/** the longest brand name this relay will pass on; mirrors shared's MAX_BRAND_NAME */
+export const MAX_BRAND_NAME = 24;
+
+/**
+ * What a stream calls itself. A local copy for the same reason as the two
+ * above: this Worker carries no dependencies, and a number and a trim are
+ * cheaper than the first import into a bundle that has none.
+ */
+export function safeBrandName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().slice(0, MAX_BRAND_NAME);
+  return v.length > 0 ? v : undefined;
+}
+
 /** what a room is, between messages */
 interface RoomState {
   publisherSecret: string;
@@ -68,6 +82,10 @@ interface RoomState {
   languages: { source: string; target: string };
   translates: boolean;
   live: boolean;
+  /** what the publisher calls this stream; replayed to every viewer that joins */
+  brandName?: string;
+  /** `#rrggbb`, sanitised on the way in */
+  brandColor?: string;
   /** epoch ms the current session started, for the viewer's clock */
   since?: number;
   /** last caption id seen, so a reconnecting uplink cannot rewind viewers */
@@ -243,6 +261,8 @@ export class Room {
           live: room.live,
           translates: room.translates,
           since: room.since,
+          brandName: room.brandName,
+          brandColor: room.brandColor,
         });
         this.broadcastViewerCount();
       }
@@ -283,6 +303,11 @@ export class Room {
       room.translates = msg.translates !== false;
       room.since = typeof msg.since === "number" ? msg.since : Date.now();
       room.live = true;
+      // Unconditional, not `if (msg.brandName)`: an absent brand on a later
+      // hello is how a streamer clears one they set earlier, and that has to
+      // work the same as setting it.
+      room.brandName = safeBrandName(msg.brandName);
+      room.brandColor = safeColor(msg.brandColor);
       await this.save(room);
       this.broadcast(TAG_VIEWER, {
         type: "hello",
@@ -290,6 +315,8 @@ export class Room {
         live: true,
         translates: room.translates,
         since: room.since,
+        brandName: room.brandName,
+        brandColor: room.brandColor,
       });
       return;
     }

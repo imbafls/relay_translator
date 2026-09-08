@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_SPEAKER_TAG, safeColor, safeSpeaker } from "../src/room";
+import { MAX_BRAND_NAME, MAX_SPEAKER_TAG, safeBrandName, safeColor, safeSpeaker } from "../src/room";
 
 /**
  * The publisher is only as trustworthy as the token it holds, and everything it
@@ -50,6 +50,27 @@ describe("what the hosted relay will pass on", () => {
       expect(safeColor("javascript:alert(1)")).toBeUndefined();
       expect(safeColor(undefined)).toBeUndefined();
       expect(safeColor(123456)).toBeUndefined();
+    });
+  });
+
+  describe("a brand name", () => {
+    it("is capped at the same 24 the app uses", () => {
+      expect(MAX_BRAND_NAME).toBe(24);
+      expect(safeBrandName("x".repeat(500))).toHaveLength(24);
+    });
+
+    it("keeps an ordinary name and trims a padded one", () => {
+      expect(safeBrandName("Omer's stream")).toBe("Omer's stream");
+      expect(safeBrandName("  Relay  ")).toBe("Relay");
+    });
+
+    it("treats blank and non-strings as unbranded", () => {
+      expect(safeBrandName("")).toBeUndefined();
+      expect(safeBrandName("   ")).toBeUndefined();
+      expect(safeBrandName(undefined)).toBeUndefined();
+      // a number would reach `.trim` and throw inside the fan-out, and on a
+      // Durable Object that means the hello reaches nobody
+      expect(safeBrandName(42)).toBeUndefined();
     });
   });
 });
