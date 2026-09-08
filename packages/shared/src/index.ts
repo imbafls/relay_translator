@@ -1267,13 +1267,26 @@ export interface ControlEvent {
  *    (there is nothing 32-hex left in the path for it to see). Every
  *    context-qualified name on the line is collected first, from the
  *    original text, then each one is redacted everywhere it appears via a
- *    single whole-word pass - a per-user subfolder derived from the same
- *    name, a second mention, or a second, different account name entirely,
- *    would otherwise survive. That single pass (rather than writing the
- *    `<user>` marker and then re-scanning for bare occurrences of the name)
- *    is also what keeps this idempotent for an account literally named
- *    "user": a second scan's `\buser\b` would otherwise match the "user"
+ *    single pass - a per-user subfolder derived from the same name, a
+ *    second mention, or a second, different account name entirely, would
+ *    otherwise survive. That single pass (rather than writing the `<user>`
+ *    marker and then re-scanning for bare occurrences of the name) is also
+ *    what keeps this idempotent for an account literally named "user": a
+ *    second scan's boundary-anchored "user" would otherwise match the "user"
  *    text inside the marker it had just written, producing `<<user>>`.
+ *
+ *    That boundary is a Unicode-aware lookaround
+ *    (`(?<![\p{L}\p{N}_])…(?![\p{L}\p{N}_])`, `u` flag), not `\b`. `\b` only
+ *    anchors at a transition between a word character (`[A-Za-z0-9_]`) and a
+ *    non-word one, so an account name whose first or last character falls
+ *    outside that class - an accented letter, a CJK name, a trailing "." -
+ *    means the transition never happens on that side and the whole
+ *    alternation fails to match, leaving the name on the line everywhere,
+ *    not just at the boundary. A lookaround needs no transition, only the
+ *    absence of a letter/digit/underscore on the outside, so it anchors
+ *    regardless of what script the matched name is in - the same reasoning
+ *    as the hex rules' alphanumeric lookaround in point 5 below, widened
+ *    from ASCII alphanumerics to `\p{L}`/`\p{N}` so it covers any script.
  * 5. RFC1918 addresses, Gemini-shaped keys, Deepgram-shaped keys and bare
  *    32-hex relay tokens follow. The two hex-length rules cannot collide
  *    with each other: hex characters are a subset of `[0-9A-Za-z]`, so an
@@ -1379,7 +1392,22 @@ export function redactLog(text: string): string {
       .sort((a, b) => b.length - a.length)
       .map((user) => user.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join("|");
-    out = out.replace(new RegExp(`\\b(?:${alternation})\\b`, "g"), "<user>");
+    // Fix-round-3 Finding 2. `\b` only anchors at a transition between a
+    // word character ([A-Za-z0-9_]) and a non-word one. An account name
+    // whose first or last character falls outside that class - an accented
+    // letter, a CJK name, a trailing "." - means that transition never
+    // happens on that side, so the whole alternation fails to match and the
+    // name survives everywhere on the line, not just at the boundary. A
+    // lookaround-based boundary doesn't need a transition, only the absence
+    // of a letter/digit/underscore on the outside, so it anchors correctly
+    // regardless of what the matched name itself starts or ends with - the
+    // same reasoning already used for the hex rules below (see point 5
+    // above), extended from ASCII alphanumerics to `\p{L}`/`\p{N}` so it
+    // covers a name in any script, not just ASCII.
+    out = out.replace(
+      new RegExp(`(?<![\\p{L}\\p{N}_])(?:${alternation})(?![\\p{L}\\p{N}_])`, "gu"),
+      "<user>",
+    );
   }
 
   // 5a. RFC1918 private addresses: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.

@@ -242,6 +242,50 @@ describe("removes each kind of secret, not just marks it", () => {
     expect(out).toContain("C:\\Users\\<user>\\AppData\\Local\\Temp\\relay.log");
   });
 
+  describe("account names whose first or last character is not [A-Za-z0-9_] (fix-round-3 finding 2)", () => {
+    // `\b(?:${alternation})\b` used ASCII `\b`, which only anchors at a
+    // transition between a word character ([A-Za-z0-9_]) and a non-word one.
+    // A name whose first or last character falls outside that class means
+    // the transition the boundary needs never happens, so the whole
+    // alternation fails to match and the name survives - everywhere on the
+    // line, not just at the boundary itself.
+    it("removes an account name with a leading accented letter (Ö)", () => {
+      const secret = "Ömer";
+      const line = `C:\\Users\\${secret}\\AppData\\Local\\pending`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+      expect(out).toBe("C:\\Users\\<user>\\AppData\\Local\\pending");
+    });
+
+    it("removes a CJK account name (no ASCII characters at all)", () => {
+      const secret = "张伟";
+      const line = `C:\\Users\\${secret}\\AppData\\Local`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+      expect(out).toBe("C:\\Users\\<user>\\AppData\\Local");
+    });
+
+    it("removes an account name ending in a non-word character (trailing '.')", () => {
+      // the captured name is "omer." (the collector reads up to the next
+      // path separator) - "." is non-word, and the character after it in
+      // the path is "\", also non-word, so the trailing \b could never
+      // anchor between two non-word characters either
+      const secret = "omer.";
+      const line = `C:\\Users\\${secret}\\AppData`;
+      const out = redactLog(line);
+      expect(out).not.toContain(secret);
+      expect(out).toBe("C:\\Users\\<user>\\AppData");
+    });
+
+    it("is idempotent for a non-ASCII account name", () => {
+      const line = "C:\\Users\\Ömer\\AppData\\Local\\pending";
+      const once = redactLog(line);
+      const twice = redactLog(once);
+      expect(twice).toBe(once);
+      expect(once).not.toContain("Ömer");
+    });
+  });
+
   describe("hosted-relay token (finding 1, CRITICAL) - apps/hosted-relay/src/tokens.ts", () => {
     // p1_<rid>_<secret> / v1_<rid>_<secret> - the secret half is exactly
     // generateToken()'s 32 hex, but "_" is a \w character, so the old
