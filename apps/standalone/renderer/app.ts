@@ -1144,15 +1144,7 @@ async function copyText(text: string, what: string): Promise<void> {
  * and is told nothing. Disabled with the reason on screen is the honest state.
  */
 function renderCaptionSettings(): void {
-  // this renderer owns its own session locally (setState/recomputeState), but
-  // that only ever moves in response to a real start/stop here - and there is
-  // no way to drive a real one under happy-dom (no media devices, no socket).
-  // The main process's own view of the session arrives over the same `status`
-  // broadcast that carries relay/usage info, so trusting it too - not only the
-  // local state machine - is what makes "live" mean the same thing whichever
-  // side observed it first, and is what a test can actually reach.
-  const remoteLive = status?.session.state === "live" || status?.session.state === "starting";
-  const live = session === "live" || session === "starting" || remoteLive;
+  const live = session === "live" || session === "starting";
   for (const id of ["filterToggle", "badgesToggle"]) {
     ($(id) as HTMLButtonElement).disabled = live;
   }
@@ -1162,10 +1154,19 @@ function renderCaptionSettings(): void {
   const brandInput = inp("brandNameInput");
   if (document.activeElement !== brandInput) brandInput.value = config?.brandName || "";
   brandInput.disabled = live;
-  const brandColour = safeSpeakerColor(config?.brandColor) || SPEAKER_COLORS[0];
-  inp("brandColorInput").value = brandColour;
+  // the <input type="color"> itself always needs a real #rrggbb to seed the
+  // picker, but the swatch preview is a separate layer on top of it (see
+  // index.html's .swatch markup) and must not claim a colour is set when none
+  // is: a brand with no colour reaches the viewer with --brand removed
+  // entirely (packages/viewer/public/app.js's applyBrand), which falls back to
+  // plain var(--fg) text, never SPEAKER_COLORS[0]'s amber. var(--mute) is this
+  // panel's existing vocabulary for "not set" as a fill (see .start:disabled
+  // .start-dot, .meter i), so the swatch uses that instead of inventing a
+  // colour nobody chose.
+  const setBrandColour = safeSpeakerColor(config?.brandColor);
+  inp("brandColorInput").value = setBrandColour || SPEAKER_COLORS[0];
   inp("brandColorInput").disabled = live;
-  $("brandSwatch").style.background = brandColour;
+  $("brandSwatch").style.background = setBrandColour || "var(--mute)";
 
   // ?settings=1 pins the viewer's HUD. In OBS that HUD is hover-only and a
   // browser source never hovers, so without this the display settings are

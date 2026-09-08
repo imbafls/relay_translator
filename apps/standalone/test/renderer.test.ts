@@ -60,7 +60,13 @@ function bridge(config: AppConfig) {
       current = { ...current, ...patch };
       return current;
     },
-    prepareSession: async () => ({ viewerUrl: "", localViewerUrl: "", relayUrl: "" }),
+    // matches RendererBridge.prepareSession's real shape (preload.ts):
+    // publisherUrl and config are not optional, and startSession() reads both
+    // (config = prep.config) - a click that drives a real START through this
+    // mock left config undefined and renderIdle()'s config.stt read threw an
+    // unhandled rejection once the preflight failed and setState("error", ...)
+    // tried to redraw the stage.
+    prepareSession: async () => ({ publisherUrl: "ws://127.0.0.1:0/publish", viewerUrl: "", obsUrl: "", phoneUrl: "", config: current }),
     rotateLink: async () => {
       calls.rotated.push(Date.now());
       return undefined;
@@ -1476,17 +1482,34 @@ describe("setting what viewers are told the stream is called", () => {
     // the brand rides the publisher hello, which relayClient sends on open and
     // never again - so editing it mid-session would change nothing and say so
     // nowhere. Same reason the speaker-name fields disable.
+    //
+    // Driven through the real START button, not a pushed status payload:
+    // startSession()'s second statement is setState("starting"), synchronous
+    // and before its first await, so the lock is observable immediately with
+    // no settle(). status.session.state is not an independent signal - it is
+    // this same renderer's own session report, echoed back by the main
+    // process - so it cannot be what proves the lock.
     await bootWith({ setupDone: true, brandName: "Omer's stream" });
-    expect(pushStatus, "boot() never registered for status").toBeTypeOf("function");
-    pushStatus!({
-      companion: { version: "test" },
-      session: { state: "live" },
-      relay: { localViewerUrl: "", remoteViewerUrl: "", uplinkState: "off" },
-      usage: undefined,
-    });
-    await settle(40);
+    (document.getElementById("startStop") as HTMLButtonElement).click();
 
     expect((document.getElementById("brandNameInput") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("brandColorInput") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("shows the configured name, and clears it by sending an explicit empty string, not undefined", async () => {
+    // ConfigStore.merge (packages/companion/src/config.ts) skips undefined and
+    // null - a regression to `|| undefined` in the onchange handler would be
+    // silently swallowed there and the brand would never actually clear.
+    await bootWith({ setupDone: true, brandName: "Omer's stream" });
+    const field = document.getElementById("brandNameInput") as HTMLInputElement;
+    expect(field.value, "the populate path from config was never asserted before this test").toBe(
+      "Omer's stream",
+    );
+
+    field.value = "";
+    field.dispatchEvent(new Event("change"));
+    await settle(40);
+
+    expect(calls.setConfig).toContainEqual({ brandName: "" });
   });
 });

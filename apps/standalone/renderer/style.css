@@ -229,6 +229,7 @@ button:disabled { cursor: default; }
 .uinput-lg { font-size: 15px; padding-bottom: 8px; border-bottom-color: var(--ink); }
 .uinput-lg::placeholder { color: var(--mute); }
 .uinput::-webkit-outer-spin-button, .uinput::-webkit-inner-spin-button { -webkit-appearance: none; }
+.uinput:disabled { color: var(--mute); }
 .mono-btn { font: 10.5px var(--mono); color: var(--dim); white-space: nowrap; }
 .mono-btn:hover { color: var(--ink); }
 .ulink { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font: inherit; }
