@@ -77,3 +77,66 @@ describe("a caption keeps its speaker tag at every hop", () => {
     });
   }
 });
+
+/**
+ * Same defect shape, a fourth file the guard above cannot see. `main.ts`
+ * never writes a `type: "hello"` object literal of its own - it hands a
+ * hello-shaped object straight to `uplink.connect()` or `uplink.sendHello()`
+ * and the uplink client stamps the type on before it hits the wire. The HOPS
+ * guard keys on `type: "hello"` (or `"subtitle"`) text appearing in one of
+ * four named files, so it is structurally blind to a call site that carries
+ * neither the type nor a file of its own worth adding to that list.
+ *
+ * The drop this exists to catch: `bridgeBroadcasts()` forwards the embedded
+ * relay's own live hello up to the uplink by hand-copying `languages`,
+ * `translates` and `since` off `msg` and leaving `brandName`/`brandColor`
+ * behind - legal and silent, because both fields are optional. That hello
+ * fires every time the publisher goes live, so the hosted room's brand -
+ * set correctly by the connect hello in `startUplink()` - would be wiped
+ * back to blank the instant a viewer had a reason to look.
+ *
+ * This finds every `uplink.connect(`/`uplink.sendHello(` call in the file by
+ * pattern, not by line number, so a fourth call site added tomorrow is
+ * picked up and checked automatically instead of needing a fourth
+ * hand-written assertion.
+ */
+describe("the uplink hears the stream's brand at every hello main.ts hands it", () => {
+  const file = "apps/standalone/src/main.ts";
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+
+  /** the object literal opening at the first `{` at or after `from` */
+  function literalFrom(text: string, from: number): string {
+    let open = from;
+    while (open < text.length && text[open] !== "{") open += 1;
+    let depth = 0;
+    for (let i = open; i < text.length; i += 1) {
+      if (text[i] === "{") depth += 1;
+      else if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return text.slice(open, i + 1);
+      }
+    }
+    return "";
+  }
+
+  const callSites = Array.from(src.matchAll(/uplink\.(?:connect|sendHello)\(/g)).map((m) => ({
+    line: src.slice(0, m.index).split("\n").length,
+    literal: literalFrom(src, m.index as number),
+  }));
+
+  it("still finds exactly the three known uplink hello call sites", () => {
+    // guards the guard: a count that moves means a call site was added or
+    // removed, and this file's coverage needs a second look either way
+    expect(callSites.map((c) => c.line), "uplink.connect/sendHello call sites").toHaveLength(3);
+  });
+
+  it.each(callSites)(`${file}:$line names both brandName and brandColor`, ({ line, literal }) => {
+    expect(literal, `no object literal found for the uplink call at ${file}:${line}`).not.toBe("");
+
+    // a spread carries whatever the hello holds, now and later, so it passes
+    if (/\.\.\./.test(literal)) return;
+
+    const missing = ["brandName", "brandColor"].filter((f) => !new RegExp(`\\b${f}\\b\\s*:`).test(literal));
+    expect(missing, `${file}:${line} enumerates the hello and omits: ${missing.join(", ")}`).toEqual([]);
+  });
+});

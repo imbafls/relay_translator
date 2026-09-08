@@ -284,7 +284,16 @@ function bridgeBroadcasts(): void {
     } else if (msg.type === "status") {
       uplink.sendStatus(msg.live, msg.message, msg.since);
     } else if (msg.type === "hello" && msg.live) {
-      uplink.sendHello({ languages: msg.languages, translates: msg.translates !== false, since: msg.since });
+      uplink.sendHello({
+        languages: msg.languages,
+        translates: msg.translates !== false,
+        since: msg.since,
+        // see the same note above for `color`: this hop forwards the relay's
+        // own live hello, so the brand comes from `msg`, not `cfg` - the
+        // uplink's own connect/config-driven hellos already source it there
+        brandName: msg.brandName,
+        brandColor: msg.brandColor,
+      });
     }
   });
 }
