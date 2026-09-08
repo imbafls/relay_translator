@@ -334,8 +334,11 @@ body.obs.idle .row.obs-live { opacity: 0; }
 body.obs .obs-only { display: flex; }
 
 /* Who the stream belongs to. Chrome only - the caption text below is the
-   reader's, and --brand is deliberately not --accent (see applyBrand). */
-.hud-brand { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+   reader's, and --brand is deliberately not --accent (see applyBrand).
+   margin-left matches .hud-langs/.hud-aa - every HUD sibling supplies its own
+   separation, since .hud itself has no gap. (No `gap` here: #brandBar has
+   exactly one child - v1 forbids the avatar a second child would need.) */
+.hud-brand { display: inline-flex; align-items: center; margin-left: 14px; min-width: 0; }
 .hud-brand-name {
   color: var(--brand, var(--fg));
   font-weight: 600;

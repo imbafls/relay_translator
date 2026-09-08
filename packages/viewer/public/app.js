@@ -133,7 +133,12 @@
       : "";
     // setProperty, never a style attribute - a value smuggling more CSS cannot
     // bring it along. viewer.test.ts already pins this for speaker colours.
+    // An absent/invalid colour REMOVES the declaration rather than leaving an
+    // earlier one painted: room.ts documents that an absent brand on a later
+    // hello is how a streamer clears one they set earlier, and that has to
+    // work the same for the colour as it does for the name.
     if (safe) document.documentElement.style.setProperty("--brand", safe);
+    else document.documentElement.style.removeProperty("--brand");
   }
 
   function themeMatches(name) {
@@ -604,6 +609,13 @@
       switch (msg.type) {
         case "hello":
           serverTranslates = msg.translates !== false;
+          // Order matters: applyStyle() must run BEFORE applyBrand(), not
+          // after. applyStyle unconditionally rewrites --accent from the
+          // reader's own saved style, so running it last would silently
+          // overwrite any --accent a buggy applyBrand had just written -
+          // hiding exactly the regression viewer.test.ts's "leaves the
+          // reader's own accent alone" test (see "whose captions these are")
+          // exists to catch, and turning that test vacuous.
           applyStyle();
           applyBrand(msg.brandName, msg.brandColor);
           $("hudLangs").textContent = langsLabel(msg);

@@ -831,4 +831,39 @@ describe("whose captions these are", () => {
     });
     expect(brandBar().hidden, "the brand reached the broadcast overlay").toBe(true);
   });
+
+  it("clears a colour the streamer just removed, instead of leaving it painted", () => {
+    // an absent or invalid colour on a later hello is how a streamer clears
+    // one they set earlier - apps/hosted-relay/src/room.ts:306 documents the
+    // same contract for the room state this hello is built from, and stores
+    // unconditionally so a genuinely cleared colour arrives as undefined.
+    // This also has to reject a colour smuggling more than a hex value: the
+    // relay only validates one of the two paths that reach a viewer
+    // (packages/relay/src/server.ts:795 forwards an uplink publisher's hello
+    // unvalidated), so the viewer is the one guard between an untrusted value
+    // and --brand on this path.
+    boot();
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      brandName: "Omer's stream",
+      brandColor: "#e0a43a",
+    });
+    expect(document.documentElement.style.getPropertyValue("--brand")).toBe("#e0a43a");
+
+    push({
+      type: "hello",
+      languages: { source: "en", target: "vi" },
+      live: true,
+      translates: true,
+      brandName: "Omer's stream",
+      brandColor: "red; background: url(javascript:alert(1))",
+    });
+    expect(
+      document.documentElement.style.getPropertyValue("--brand"),
+      "a cleared or invalid colour stayed painted from the hello before it",
+    ).toBe("");
+  });
 });
