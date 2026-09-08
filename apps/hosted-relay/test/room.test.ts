@@ -159,3 +159,58 @@ describe("a brand arriving on the hosted relay's uplink", () => {
     expect(s.stored().brandColor, "a cleared colour stayed in the record").toBeUndefined();
   });
 });
+
+describe("whether a hello arriving on the hosted relay's uplink means anyone is streaming", () => {
+  /**
+   * Before this, `webSocketMessage` did `room.live = true` unconditionally on
+   * every hello - so the room was re-marked live on every uplink reconnect,
+   * every embedded-relay restart and every settings change while the app sat
+   * idle in the tray. A hello is now expected to say so itself.
+   */
+  it("marks the room live when the hello says so", async () => {
+    const s = stand();
+    await s.hello({ live: true });
+
+    expect(s.relayed()?.live, "a viewer watching was not told the stream is live").toBe(true);
+    expect(s.stored().live, "a late joiner would not be told the stream is live").toBe(true);
+  });
+
+  it("leaves the room not-live when the hello says the app is merely running", async () => {
+    const s = stand();
+    await s.hello({ live: false });
+
+    expect(
+      s.relayed()?.live,
+      "a viewer watching was told ON AIR by a hello that explicitly said otherwise",
+    ).toBe(false);
+    expect(
+      s.stored().live,
+      "a late joiner would be told ON AIR by a hello that explicitly said otherwise",
+    ).toBe(false);
+  });
+
+  /**
+   * `msg.live === true` (the literal in the task brief) would read an older
+   * app's hello - which carries no `live` field at all, since the field is
+   * new - as `false`, permanently. That is every install on the day this
+   * Worker deploys: nobody has auto-updated yet, and this room would go from
+   * "always live on a hello" (the old, buggy, but at-least-truthful-for-real-
+   * streamers behaviour) to "never live" for every one of them. `translates`
+   * a few lines above this handles the identical situation with
+   * `msg.translates !== false`; `live` follows the same rule so an absent
+   * field reads exactly as it did before this change.
+   */
+  it("treats an older app's hello with no live field as live, for backward compatibility", async () => {
+    const s = stand();
+    await s.hello(); // no `live` field at all - what a pre-this-change app sends
+
+    expect(
+      s.relayed()?.live,
+      "an older app's hello stopped meaning ON AIR the moment this Worker deployed",
+    ).toBe(true);
+    expect(
+      s.stored().live,
+      "an older app's hello stopped meaning ON AIR the moment this Worker deployed",
+    ).toBe(true);
+  });
+});

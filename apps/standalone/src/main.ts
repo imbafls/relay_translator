@@ -219,6 +219,10 @@ function startUplink(): void {
     languages: cfg.languages,
     translates: translationActive(cfg),
     since: sessionStartedAt,
+    // startUplink() runs at app boot, not at session start - without this the
+    // hosted room reads the hello alone as the liveness signal and shows ON
+    // AIR to anyone holding the link while the app merely sits in the tray
+    live: sessionStartedAt !== undefined,
     brandName: cfg.brandName,
     brandColor: cfg.brandColor,
   });
@@ -288,6 +292,10 @@ function bridgeBroadcasts(): void {
         languages: msg.languages,
         translates: msg.translates !== false,
         since: msg.since,
+        // this branch is already gated on `msg.live`, so this is always true;
+        // named explicitly (not hardcoded) so the guard in speakerTag.test.ts
+        // can see this hop carries the field at all
+        live: msg.live,
         // see the same note above for `color`: this hop forwards the relay's
         // own live hello, so the brand comes from `msg`, not `cfg` - the
         // uplink's own connect/config-driven hellos already source it there
@@ -468,6 +476,9 @@ async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
         languages: cfg.languages,
         translates: translationActive(cfg),
         since: sessionStartedAt,
+        // same reasoning as startUplink()'s connect() above: a settings change
+        // while idle must not read as "back on air" to anyone holding the link
+        live: sessionStartedAt !== undefined,
         brandName: cfg.brandName,
         brandColor: cfg.brandColor,
       });

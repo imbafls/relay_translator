@@ -832,7 +832,14 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         toViewers({
           type: "hello",
           languages: currentLanguages,
-          live: true,
+          // Same fix as apps/hosted-relay/src/room.ts, for the self-hosted
+          // flavour of the identical role: this hello used to mark every
+          // local viewer of THIS relay live unconditionally the moment an
+          // uplink said anything at all. `!== false` rather than `=== true`
+          // for the same backward-compatibility reason as room.ts - an
+          // older app's uplink hello carries no `live` field, and that has
+          // to keep reading as live rather than going dark for it.
+          live: msg.live !== false,
           translates: currentTranslates,
           since: msg.since,
           ...currentBrand,

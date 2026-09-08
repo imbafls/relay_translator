@@ -343,6 +343,49 @@ describe("the hello an uplink sends", () => {
   });
 });
 
+describe("whether the hello an uplink sends says anyone is actually streaming", () => {
+  /**
+   * The room this uplink talks to marks itself live the instant a hello
+   * arrives, and `startUplink()` opens this connection at app boot - not at
+   * session start. Without this field on the wire, a friend holding the link
+   * sees ON AIR from an app that is merely running in the tray. `open()`
+   * rebuilds this hello field by field out of `this.hello` rather than
+   * spreading it (same shape as the brand test above), so `live` has to be
+   * named explicitly or it reaches nothing.
+   */
+  it("puts live:false on the hello it opens with when no session is running", async () => {
+    const c = makeClient();
+    c.connect({ ...HELLO, live: false });
+    await until(() => frames.some((f) => f.type === "hello"), "the opening hello");
+
+    const hello = frames.find((f) => f.type === "hello")!;
+    expect(hello.live).toBe(false);
+  });
+
+  it("puts live:true on the hello it opens with when a session is running", async () => {
+    const c = makeClient();
+    c.connect({ ...HELLO, live: true });
+    await until(() => frames.some((f) => f.type === "hello"), "the opening hello");
+
+    const hello = frames.find((f) => f.type === "hello")!;
+    expect(hello.live).toBe(true);
+  });
+
+  it("carries an updated live on the re-hello sendHello sends", async () => {
+    const c = makeClient();
+    c.connect({ ...HELLO, live: false });
+    await until(() => live().length === 1, "the connection");
+    c.sendHello({ ...HELLO, live: true });
+    await until(
+      () => frames.filter((f) => f.type === "hello").length === 2,
+      "a second hello",
+    );
+
+    const hello = frames.filter((f) => f.type === "hello")[1];
+    expect(hello.live).toBe(true);
+  });
+});
+
 describe("the hello a publisher client sends", () => {
   /**
    * relayClient.open had the identical bug as uplinkClient.open above: it

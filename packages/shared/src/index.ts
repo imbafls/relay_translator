@@ -1034,7 +1034,7 @@ export type PublisherToServer =
 // ---------------------------------------------------------------------------
 
 export type UplinkToServer =
-  | ({ type: "hello"; languages: Languages; translates: boolean; since?: number } & Brand)
+  | ({ type: "hello"; languages: Languages; translates: boolean; since?: number; live?: boolean } & Brand)
   | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
   | { type: "status"; live: boolean; message?: string; since?: number }
   | { type: "ping" };

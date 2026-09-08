@@ -302,7 +302,16 @@ export class Room {
       }
       room.translates = msg.translates !== false;
       room.since = typeof msg.since === "number" ? msg.since : Date.now();
-      room.live = true;
+      // A hello is the liveness signal - `startUplink()` connects at app boot,
+      // not at session start, so this used to be unconditional `true` and the
+      // room was re-marked live on every reconnect, every embedded-relay
+      // restart, and every settings change while the app merely sat in the
+      // tray. `!== false`, not `=== true`, for the same reason `translates`
+      // two lines up is `!== false`: an OLDER app's hello carries no `live`
+      // field at all, and that has to keep reading as live - the way every
+      // hello did before this field existed - rather than going dark for
+      // every user who has not auto-updated yet the day this Worker deploys.
+      room.live = msg.live !== false;
       // Unconditional, not `if (msg.brandName)`: an absent brand on a later
       // hello is how a streamer clears one they set earlier, and that has to
       // work the same as setting it.
@@ -312,7 +321,7 @@ export class Room {
       this.broadcast(TAG_VIEWER, {
         type: "hello",
         languages: room.languages,
-        live: true,
+        live: room.live,
         translates: room.translates,
         since: room.since,
         brandName: room.brandName,

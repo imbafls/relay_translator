@@ -16,6 +16,8 @@ export class UplinkClient {
     languages: Languages;
     translates: boolean;
     since?: number;
+    /** whether a session is actually running - absent from an older app's hello */
+    live?: boolean;
     brandName?: string;
     brandColor?: string;
   } = {
@@ -50,6 +52,7 @@ export class UplinkClient {
     languages: Languages;
     translates: boolean;
     since?: number;
+    live?: boolean;
     brandName?: string;
     brandColor?: string;
   }): void {
@@ -96,6 +99,7 @@ export class UplinkClient {
         languages: this.hello.languages,
         translates: this.hello.translates,
         since: this.hello.since,
+        live: this.hello.live,
         brandName: this.hello.brandName,
         brandColor: this.hello.brandColor,
       });
@@ -189,6 +193,7 @@ export class UplinkClient {
     languages: Languages;
     translates: boolean;
     since?: number;
+    live?: boolean;
     brandName?: string;
     brandColor?: string;
   }): void {

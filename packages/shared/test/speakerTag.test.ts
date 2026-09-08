@@ -204,6 +204,92 @@ describe("the embedded relay hears the stream's brand at the renderer's own hell
 });
 
 /**
+ * A third field with the identical failure shape as `color` and the brand
+ * pair above, on the one hop that matters most for it: whether the uplink
+ * hello says anyone is actually streaming.
+ *
+ * This is deliberately NOT folded into `BRAND_FIELDS`/`HELLO_HOPS` below.
+ * Adding `"live"` there would check it against every hello literal in all
+ * four `HELLO_HOPS` files, and two of the four make that the wrong question:
+ * `relayClient.ts`'s publisher hello has no liveness concept at all - the
+ * embedded relay derives `live` itself from `isLive()` - so a broad check
+ * would fail there for a field that was never supposed to exist on that hop.
+ * `server.ts`'s viewer-facing hellos and `room.ts`'s viewer-facing hello
+ * already carry `live` for an unrelated reason (telling a joining viewer
+ * whether the stream is on air), so a broad check would pass trivially on
+ * those two literals whether or not this fix landed - a guard that is green
+ * for the wrong reason is worse than no guard, because it reads as coverage.
+ *
+ * The actual hop that has to carry `live` is narrower: the uplink hello
+ * `uplinkClient.ts` puts on the wire, and the two `main.ts` call sites that
+ * hand it the value. Modelled on the brand call-site guard just above -
+ * `literalFrom` and the "argument has to BE the literal" reasoning are
+ * shared with it - rather than on the `HELLO_HOPS`/`helloLiterals` machinery,
+ * because that machinery's whole point is "check this field on every hello
+ * in these four files", which is exactly what must not happen here.
+ */
+describe("the uplink hello uplinkClient.ts builds by hand names live", () => {
+  const file = "packages/companion/src/uplinkClient.ts";
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+
+  // `open()`'s `ws.onopen` rebuilds the hello field by field out of
+  // `this.hello` before handing it to `this.send(...)`; `sendHello()` spreads
+  // `...hello` into the same call and so is exempt below, the same way a
+  // spread is exempt everywhere else in this file. Keying on `this.send(`
+  // rather than a `type: "hello"` literal search follows the call-site
+  // pattern above: the argument at the call has to BE the literal.
+  const callSites = Array.from(src.matchAll(/this\.send\(/g))
+    .map((m) => ({
+      line: src.slice(0, m.index).split("\n").length,
+      literal: literalFrom(src, (m.index as number) + m[0].length),
+    }))
+    .filter((c) => /type:\s*"hello"/.test(c.literal));
+
+  it("still finds exactly the two uplink hello literals", () => {
+    // guards the guard: a count that moves means a hello literal was added or
+    // removed and needs a second look. Two, not one: `open()`'s onopen builds
+    // one by hand (checked below) and `sendHello()` spreads its argument into
+    // the other, which the per-site assertion exempts rather than this count.
+    expect(callSites.map((c) => c.line), "hello literals in uplinkClient.ts").toHaveLength(2);
+  });
+
+  it.each(callSites)(`${file}:$line names live`, ({ line, literal }) => {
+    // a spread carries whatever the hello holds, now and later, so it passes
+    if (/\.\.\./.test(literal)) return;
+    expect(literal, `${file}:${line} builds a hello and omits: live`).toMatch(/\blive\b\s*:/);
+  });
+});
+
+describe("the uplink hello call sites in main.ts name live", () => {
+  const file = "apps/standalone/src/main.ts";
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+
+  const callSites = Array.from(src.matchAll(/uplink\.(?:connect|sendHello)\(/g)).map((m) => ({
+    line: src.slice(0, m.index).split("\n").length,
+    literal: literalFrom(src, (m.index as number) + m[0].length),
+  }));
+
+  it("still finds exactly the three known uplink hello call sites", () => {
+    // same three call sites the brand guard above counts: startUplink()'s
+    // connect, applyConfig()'s re-hello, and bridgeBroadcasts()'s forward of
+    // the embedded relay's own live hello
+    expect(callSites.map((c) => c.line), "uplink.connect/sendHello call sites").toHaveLength(3);
+  });
+
+  it.each(callSites)(`${file}:$line names live`, ({ line, literal }) => {
+    expect(
+      literal,
+      `${file}:${line} call site does not pass a literal, so this guard cannot see whether it carries live - inline the hello or teach the guard to follow the builder`,
+    ).not.toBe("");
+
+    // a spread carries whatever the hello holds, now and later, so it passes
+    if (/\.\.\./.test(literal)) return;
+
+    expect(literal, `${file}:${line} builds a hello and omits: live`).toMatch(/\blive\b\s*:/);
+  });
+});
+
+/**
  * The same disease, one frame over. A hello is rebuilt by hand at nine places
  * across the four files below - field by field, never by spreading - and a
  * field added to the shared type alone reaches none of them. It compiles, it
