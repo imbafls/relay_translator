@@ -29,7 +29,7 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "0.6.0",
-    date: "2026-09-07",
+    date: "2026-09-08",
     headline: "A link you send now says whose it is",
     changes: [
       {
