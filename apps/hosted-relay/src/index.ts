@@ -27,6 +27,13 @@ interface Env {
    * without one; absent means unlimited, which is what production was.
    */
   CLAIM_LIMIT?: RateLimit;
+  /** feedback a person chose to send: a message, and optionally their own redacted log */
+  FEEDBACK: R2Bucket;
+  /**
+   * Rate limit on POST /feedback. Optional for the same reason CLAIM_LIMIT
+   * is: `wrangler dev` and the tests run without one; absent means unlimited.
+   */
+  FEEDBACK_LIMIT?: RateLimit;
 }
 
 /**
@@ -132,6 +139,131 @@ export function claimRateKey(request: Request): string {
   return request.headers.get("CF-Connecting-IP")?.trim() || ANON_CLAIMER;
 }
 
+// ---------------------------------------------------------------------------
+// POST /feedback - a report a person chose to send, written once into R2
+// ---------------------------------------------------------------------------
+
+/** a person's own message box has no reason to be bigger than this */
+const FEEDBACK_MESSAGE_MAX = 8 * 1024;
+/** relay.log caps itself at 1 MB (packages/relay/src/session.ts) - headroom without being unbounded */
+const FEEDBACK_LOG_MAX = 1.5 * 1024 * 1024;
+/**
+ * The `Content-Length` ceiling checked before a single byte of the body is
+ * read. Message plus log plus slack for JSON structure, field names and
+ * escaping - generous enough that a legitimate report is never bounced on
+ * encoding overhead, not so generous that the pre-read check stops meaning
+ * anything.
+ */
+const FEEDBACK_BODY_MAX = FEEDBACK_MESSAGE_MAX + FEEDBACK_LOG_MAX + 64 * 1024;
+
+interface FeedbackReport {
+  message: string;
+  appVersion: string;
+  log?: string;
+}
+
+/**
+ * A well-formed report, or undefined. Checked by hand rather than trusted -
+ * the earlier checks in `handleFeedback` only bound the declared size and the
+ * content type, not the shape of what is actually inside.
+ */
+function parseFeedback(body: unknown): FeedbackReport | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const b = body as Record<string, unknown>;
+  if (typeof b.message !== "string" || typeof b.appVersion !== "string") return undefined;
+
+  const message = b.message.trim();
+  const appVersion = b.appVersion.trim();
+  if (!message || message.length > FEEDBACK_MESSAGE_MAX) return undefined;
+  if (!appVersion) return undefined;
+
+  if (b.log === undefined) return { message, appVersion };
+  if (typeof b.log !== "string" || b.log.length > FEEDBACK_LOG_MAX) return undefined;
+  return { message, appVersion, log: b.log };
+}
+
+/**
+ * A short reference id for one feedback report, so a person can quote it if
+ * they write in about it. Generated fresh per send from the runtime's own
+ * CSPRNG and never derived from anything about the machine - it is not a
+ * room token (see tokens.ts, which is about room credentials specifically)
+ * and does not need that format, and it is not stored anywhere on the
+ * client either.
+ */
+function newFeedbackId(): string {
+  const buf = new Uint8Array(8);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** `YYYY/MM/DD`, UTC - Cloudflare's edge has no local timezone to prefer */
+function utcDayPrefix(now: Date): string {
+  return now.toISOString().slice(0, 10).replace(/-/g, "/");
+}
+
+async function handleFeedback(request: Request, env: Env): Promise<Response> {
+  // 1. Rate-limit check FIRST, before anything else runs - same reasoning as
+  // `claim` above: a refused request has to cost nothing, and an R2 write
+  // that happens is a write that bills.
+  const allowed = env.FEEDBACK_LIMIT
+    ? (await env.FEEDBACK_LIMIT.limit({ key: claimRateKey(request) })).success
+    : true;
+  if (!allowed) {
+    return json({ error: "too much feedback from here - try again in a minute" }, 429);
+  }
+
+  // 2. Refuse on the DECLARED size, before a single byte of the body is
+  // read. A 413 that has already buffered the body has not saved anything.
+  // A missing or non-numeric Content-Length falls through rather than being
+  // treated as oversized - the per-field caps in parseFeedback still bound
+  // the actual content once it is read.
+  const declaredLength = Number(request.headers.get("Content-Length"));
+  if (declaredLength > FEEDBACK_BODY_MAX) {
+    return json({ error: "feedback too large" }, 413);
+  }
+
+  // 3. JSON only.
+  const contentType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return json({ error: "expected application/json" }, 415);
+  }
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return json({ error: "invalid JSON" }, 400);
+  }
+
+  const report = parseFeedback(raw);
+  if (!report) {
+    return json({ error: "invalid feedback" }, 400);
+  }
+
+  const id = newFeedbackId();
+  const now = new Date();
+  const prefix = utcDayPrefix(now);
+
+  // Store nothing that identifies a machine: no IP, no user agent, no
+  // install id - just what the person typed, the version they're running,
+  // and when. The id lives only in this record; it is generated per send and
+  // does not persist anywhere on the client, so it cannot be used to link a
+  // later send back to this one.
+  await env.FEEDBACK.put(
+    `${prefix}/${id}.json`,
+    JSON.stringify({ message: report.message, appVersion: report.appVersion, timestamp: now.toISOString() }),
+    { httpMetadata: { contentType: "application/json" } },
+  );
+
+  if (report.log !== undefined) {
+    await env.FEEDBACK.put(`${prefix}/${id}.log`, report.log, {
+      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    });
+  }
+
+  return json({ id });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -175,6 +307,9 @@ export default {
         const rid = newRoomId();
         return roomFetch(env, rid, { op: "claim", rid });
       }
+
+      case "feedback":
+        return handleFeedback(request, env);
 
       case "health": {
         // per-room when a token is given, so a streamer can check their own;

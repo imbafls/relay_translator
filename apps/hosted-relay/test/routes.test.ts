@@ -69,6 +69,12 @@ describe("the endpoints the desktop app already calls", () => {
     expect(resolveRoute("/claim", "POST").kind).toBe("claim");
     expect(resolveRoute("/claim", "GET").kind).toBe("not-found");
   });
+
+  it("routes POST /feedback and refuses every other method", () => {
+    expect(resolveRoute("/feedback", "POST").kind).toBe("feedback");
+    expect(resolveRoute("/feedback", "GET").kind).toBe("not-found");
+    expect(resolveRoute("/feedback", "PUT").kind).toBe("not-found");
+  });
 });
 
 describe("room credentials", () => {

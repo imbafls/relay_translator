@@ -66,3 +66,21 @@ interface ResponseInit {
 interface RateLimit {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
+
+/**
+ * The slice of the R2 binding this Worker uses: writing a feedback record and
+ * (optionally) an attached log, nothing else. There is no `get`/`list` here
+ * because nothing this Worker serves ever reads a report back out - that
+ * happens with a script running under its own Cloudflare API token, outside
+ * the Worker. Declared locally for the same reason as the rest of this file:
+ * no dependency on @cloudflare/workers-types, and `npx wrangler deploy`
+ * type-checks the real shape at publish time regardless of what is declared
+ * here.
+ */
+interface R2Bucket {
+  put(
+    key: string,
+    value: string,
+    options?: { httpMetadata?: { contentType?: string } },
+  ): Promise<unknown>;
+}

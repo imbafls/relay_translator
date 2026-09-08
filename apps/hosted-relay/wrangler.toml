@@ -50,6 +50,15 @@ binding = "ASSETS"
 # it, because the behaviour lives in the platform and not in the code.
 run_worker_first = true
 
+# Feedback a person chose to send: a message, and optionally their own log
+# after it has been redacted on their machine. Written once, read rarely, up
+# to 1.5 MB - which is R2's shape and not KV's or D1's. This is the first
+# storage this Worker has ever had; the no-dependencies rule is about npm
+# packages, and a platform binding is not one.
+[[r2_buckets]]
+binding = "FEEDBACK"
+bucket_name = "callout-relay-feedback"
+
 [[durable_objects.bindings]]
 name = "ROOM"
 class_name = "Room"
@@ -77,4 +86,22 @@ namespace_id = "1001"
 
   [ratelimits.simple]
   limit = 5
+  period = 60
+
+# POST /feedback writes into R2 for anybody who asks, checked first for the
+# same reason CLAIM_LIMIT is checked before a room is minted: a refused
+# request has to cost nothing, and an R2 write that happens is a write that
+# bills. Its own namespace, separate from CLAIM_LIMIT's - the two endpoints
+# have nothing to do with each other and should not share a counter.
+# `period` may only be 10 or 60.
+#
+# Three a minute per address: a genuine report is one press after picking
+# through phrasing, not a retry loop. That leaves room for a mistaken second
+# send without leaving room for a script to fill the bucket.
+[[ratelimits]]
+name = "FEEDBACK_LIMIT"
+namespace_id = "1002"
+
+  [ratelimits.simple]
+  limit = 3
   period = 60

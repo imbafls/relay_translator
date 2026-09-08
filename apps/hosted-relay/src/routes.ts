@@ -54,6 +54,7 @@ export type Route =
   | { kind: "ws-viewer" }
   | { kind: "health" }
   | { kind: "claim" }
+  | { kind: "feedback" }
   | { kind: "viewer-token" }
   | { kind: "rotate-viewer-token" }
   /** the version the landing page reads, and the installer its button points at */
@@ -91,6 +92,9 @@ export function resolveRoute(pathname: string, method = "GET"): Route {
   if (pathname === "/ws/viewer") return { kind: "ws-viewer" };
 
   if (pathname === "/claim") return method === "POST" ? { kind: "claim" } : { kind: "not-found" };
+  // a report a person chose to send; GET (or anything else) 404s the same
+  // way the other write-only routes above do
+  if (pathname === "/feedback") return method === "POST" ? { kind: "feedback" } : { kind: "not-found" };
   if (pathname === "/admin/viewer-token") {
     return method === "GET" ? { kind: "viewer-token" } : { kind: "not-found" };
   }
