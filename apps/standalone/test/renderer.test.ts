@@ -2013,4 +2013,39 @@ describe("sending a feedback report", () => {
 
     expect(feedbackSends).toEqual([]);
   });
+
+  it("clamps a redacted log that grew past the Worker's cap, instead of 413ing the whole report (minor 7)", async () => {
+    // Redaction can GROW text (query.test.ts's own case: "?k=1" -> "?k=<redacted>").
+    // apps/hosted-relay's FEEDBACK_LOG_MAX is 1.5 * 1024 * 1024 bytes, checked
+    // against the WHOLE request's Content-Length before a byte is parsed - so
+    // an oversized log 413s the message too, not just the attachment. A log
+    // built almost entirely of short key= assignments (pathological, not a
+    // real relay.log shape) grows by roughly 2.7x per occurrence
+    // ("&key=1" -> "&key=<redacted>"), enough to cross the cap from a raw
+    // log still under relay.log's own 1 MB self-cap.
+    const FEEDBACK_LOG_MAX_BYTES = 1.5 * 1024 * 1024;
+    fakeRelayLog = "&key=1".repeat(Math.ceil((1024 * 1024) / 6));
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("log grew past the cap after redaction");
+
+    includeLogEl().click();
+    await settle(60);
+
+    const shownBytes = new TextEncoder().encode(previewEl().textContent || "").length;
+    expect(
+      shownBytes,
+      `preview was ${shownBytes} bytes, over the Worker's ${FEEDBACK_LOG_MAX_BYTES}-byte cap - sending it would 413 the whole report, message included`,
+    ).toBeLessThanOrEqual(FEEDBACK_LOG_MAX_BYTES);
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackSends).toHaveLength(1);
+    const sentLog = lastPayload().log as string;
+    const sentBytes = new TextEncoder().encode(sentLog).length;
+    expect(sentBytes, `sent log was ${sentBytes} bytes, over the Worker's cap`).toBeLessThanOrEqual(
+      FEEDBACK_LOG_MAX_BYTES,
+    );
+  });
 });

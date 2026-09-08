@@ -1305,6 +1305,35 @@ async function claimRoom(): Promise<void> {
 }
 
 /**
+ * Minor 7 (fix-round-3). Mirrors `apps/hosted-relay/src/index.ts`'s
+ * `FEEDBACK_LOG_MAX` (1.5 * 1024 * 1024) - the Worker takes no dependency on
+ * `@callout-relay/shared`, so that file keeps its own local copy of this
+ * number with a comment saying why; this is the same shape on this side of
+ * the wire.
+ *
+ * Redaction can GROW text (a query parameter like `?k=1` becomes
+ * `?k=<redacted>`), so a log dense enough with short matched values could
+ * cross the Worker's cap after redaction even though `relay.log` itself
+ * stays under its own 1 MB self-cap. The Worker checks the WHOLE request's
+ * declared size before reading a byte, so an oversized log 413s the entire
+ * report - the message included, not just the attachment. Unreachable with
+ * an ordinary relay.log; this closes the gap anyway.
+ */
+const FEEDBACK_LOG_MAX_BYTES = 1.5 * 1024 * 1024;
+
+/**
+ * Clamp `text` to at most `maxBytes` of UTF-8, decoding back to a string. A
+ * cut that lands inside a multi-byte character comes back with a trailing
+ * replacement character rather than throwing - acceptable for a log that is
+ * already being truncated.
+ */
+function clampUtf8Bytes(text: string, maxBytes: number): string {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= maxBytes) return text;
+  return new TextDecoder().decode(bytes.slice(0, maxBytes));
+}
+
+/**
  * Recompute #feedbackPreview from relay.log, redacted, or clear it.
  *
  * Reads through `cr.readRelayLog()` and runs redactLog() on the result
@@ -1334,7 +1363,8 @@ async function refreshFeedbackPreview(): Promise<void> {
   }
   const raw = await cr.readRelayLog();
   if (token !== feedbackPreviewToken) return; // superseded by a later tick/untick
-  const redacted = redactLog(raw);
+  // clamp AFTER redaction, since redaction is what can grow it past the cap
+  const redacted = clampUtf8Bytes(redactLog(raw), FEEDBACK_LOG_MAX_BYTES);
   feedbackLogPreview = redacted || undefined;
   pre.textContent = redacted || "(nothing logged yet - there is no log to attach)";
   pre.hidden = false;
