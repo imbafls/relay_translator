@@ -28,6 +28,25 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.0",
+    date: "2026-09-07",
+    headline: "A link you send now says whose it is",
+    changes: [
+      {
+        kind: "added",
+        text: "You can give your stream a name and a colour, under SETTINGS in WHAT VIEWERS SEE. Anyone opening your link sees it in the header, so a link forwarded to somebody who was not there when you sent it still says who it is from. Leave it blank and nothing shows.",
+      },
+      {
+        kind: "changed",
+        text: "Your name and colour do not change how captions are drawn. Size, font, theme and how many lines to keep still belong to the person reading, on their own device - somebody who needs bigger text keeps it.",
+      },
+      {
+        kind: "fixed",
+        text: "Speaker colours reach people watching over the internet. Two sources tagged with different colours arrived in the same colour on a phone, and only on a phone - on your own network it always worked, which is why it went unnoticed.",
+      },
+    ],
+  },
+  {
     version: "0.5.13",
     date: "2026-09-07",
     headline: "The download fix in 0.5.12 was corrupting the thing it downloaded",
