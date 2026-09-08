@@ -96,8 +96,12 @@ namespace_id = "1001"
 # `period` may only be 10 or 60.
 #
 # Three a minute per address: a genuine report is one press after picking
-# through phrasing, not a retry loop. That leaves room for a mistaken second
-# send without leaving room for a script to fill the bucket.
+# through phrasing, not a retry loop. What the limit actually buys is bounded
+# to that one address: it stops a stuck retry loop and a bored passer-by
+# hammering the endpoint from a single machine. It is not a defence against a
+# distributed attacker - a botnet spread across many addresses pays this
+# limit once per address, so no per-IP number can bound the total, only the
+# per-address rate a human plausibly needs.
 [[ratelimits]]
 name = "FEEDBACK_LIMIT"
 namespace_id = "1002"

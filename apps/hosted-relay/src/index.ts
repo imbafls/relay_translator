@@ -147,6 +147,8 @@ export function claimRateKey(request: Request): string {
 const FEEDBACK_MESSAGE_MAX = 8 * 1024;
 /** relay.log caps itself at 1 MB (packages/relay/src/session.ts) - headroom without being unbounded */
 const FEEDBACK_LOG_MAX = 1.5 * 1024 * 1024;
+/** a version string is "0.6.0", not a payload - every field needs its own cap, not just message */
+const FEEDBACK_VERSION_MAX = 64;
 /**
  * The `Content-Length` ceiling checked before a single byte of the body is
  * read. Message plus log plus slack for JSON structure, field names and
@@ -175,7 +177,7 @@ function parseFeedback(body: unknown): FeedbackReport | undefined {
   const message = b.message.trim();
   const appVersion = b.appVersion.trim();
   if (!message || message.length > FEEDBACK_MESSAGE_MAX) return undefined;
-  if (!appVersion) return undefined;
+  if (!appVersion || appVersion.length > FEEDBACK_VERSION_MAX) return undefined;
 
   if (b.log === undefined) return { message, appVersion };
   if (typeof b.log !== "string" || b.log.length > FEEDBACK_LOG_MAX) return undefined;
@@ -214,11 +216,16 @@ async function handleFeedback(request: Request, env: Env): Promise<Response> {
 
   // 2. Refuse on the DECLARED size, before a single byte of the body is
   // read. A 413 that has already buffered the body has not saved anything.
-  // A missing or non-numeric Content-Length falls through rather than being
-  // treated as oversized - the per-field caps in parseFeedback still bound
-  // the actual content once it is read.
-  const declaredLength = Number(request.headers.get("Content-Length"));
-  if (declaredLength > FEEDBACK_BODY_MAX) {
+  // A missing or non-numeric Content-Length is refused the same as an
+  // oversized one, not waved through: this endpoint has exactly one caller
+  // (the desktop app's own upload) and a real `fetch()` call with a string
+  // body always sets Content-Length on the wire - there is no legitimate
+  // chunked-transfer client to make room for. Letting an unreadable length
+  // fall through instead would mean the isolate buffers the whole body with
+  // nothing bounding it until parseFeedback runs.
+  const rawLength = request.headers.get("Content-Length");
+  const declaredLength = rawLength === null ? NaN : Number(rawLength);
+  if (!Number.isFinite(declaredLength) || declaredLength > FEEDBACK_BODY_MAX) {
     return json({ error: "feedback too large" }, 413);
   }
 
@@ -249,16 +256,32 @@ async function handleFeedback(request: Request, env: Env): Promise<Response> {
   // and when. The id lives only in this record; it is generated per send and
   // does not persist anywhere on the client, so it cannot be used to link a
   // later send back to this one.
-  await env.FEEDBACK.put(
-    `${prefix}/${id}.json`,
-    JSON.stringify({ message: report.message, appVersion: report.appVersion, timestamp: now.toISOString() }),
-    { httpMetadata: { contentType: "application/json" } },
-  );
+  try {
+    await env.FEEDBACK.put(
+      `${prefix}/${id}.json`,
+      JSON.stringify({ message: report.message, appVersion: report.appVersion, timestamp: now.toISOString() }),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+  } catch {
+    // Nothing was written. Safe for the caller to retry - a retry mints a
+    // fresh id, so there is no way for this path to leave a duplicate.
+    return json({ error: "feedback could not be stored" }, 502);
+  }
 
   if (report.log !== undefined) {
-    await env.FEEDBACK.put(`${prefix}/${id}.log`, report.log, {
-      httpMetadata: { contentType: "text/plain; charset=utf-8" },
-    });
+    try {
+      await env.FEEDBACK.put(`${prefix}/${id}.log`, report.log, {
+        httpMetadata: { contentType: "text/plain; charset=utf-8" },
+      });
+    } catch {
+      // The report itself DID get stored, under `id`, one line up. Returning
+      // it here (rather than a bare error) and answering 502 instead of 200
+      // does two things at once: it tells the caller the log half failed,
+      // and it tells them not to retry - a retry would re-send the message
+      // that already made it, minting a second id and writing a duplicate
+      // report for the sake of the log alone.
+      return json({ error: "feedback stored, log upload failed", id }, 502);
+    }
   }
 
   return json({ id });

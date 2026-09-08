@@ -9,13 +9,20 @@ import worker from "../src/index";
  * day to day once 0.7.0 ships, so what this endpoint gets wrong nobody
  * notices until they go looking.
  *
- * Three things have to hold, in order of how expensive a mistake would be:
+ * Four things have to hold, in order of how expensive a mistake would be:
  *   1. A refused request must cost nothing - same reasoning as /claim's rate
  *      limit, checked first, before anything else runs.
  *   2. An oversized request must be refused by its DECLARED size, before the
  *      body is ever read - a 413 that already buffered the body saved
- *      nothing.
- *   3. Nothing written to R2 may identify the machine that sent it - no IP,
+ *      nothing. That includes a request whose declared size cannot even be
+ *      read (missing or non-numeric Content-Length): there is exactly one
+ *      caller of this endpoint and a real `fetch()` call always sets it, so
+ *      an unreadable length is refused the same as an oversized one.
+ *   3. Every field has its own cap, not just the overall body. Staying under
+ *      the declared-size ceiling does not mean any one field is reasonably
+ *      sized - a version string with no cap of its own is exactly how a
+ *      request that looks fine at the door writes something huge.
+ *   4. Nothing written to R2 may identify the machine that sent it - no IP,
  *      no user agent, no install id. The reference id is generated per send
  *      and is not a fingerprint.
  *
@@ -31,7 +38,9 @@ interface Put {
   contentType?: string;
 }
 
-function envWith(opts: { allow?: boolean } = {}): { env: Env; puts: Put[] } {
+function envWith(
+  opts: { allow?: boolean; failPut?: "json" | "log" } = {},
+): { env: Env; puts: Put[] } {
   const puts: Put[] = [];
   const env = {
     ROOM: {
@@ -45,6 +54,12 @@ function envWith(opts: { allow?: boolean } = {}): { env: Env; puts: Put[] } {
         value: unknown,
         options?: { httpMetadata?: { contentType?: string } },
       ) => {
+        const isLog = key.endsWith(".log");
+        // A rejected R2 put, on demand - the real binding can fail (quota,
+        // a transient platform error), and until this stub could reject
+        // nothing here exercised that path at all.
+        if (opts.failPut === "json" && !isLog) throw new Error("R2 put failed (json)");
+        if (opts.failPut === "log" && isLog) throw new Error("R2 put failed (log)");
         puts.push({ key, value, contentType: options?.httpMetadata?.contentType });
         return {};
       },
@@ -57,11 +72,26 @@ function envWith(opts: { allow?: boolean } = {}): { env: Env; puts: Put[] } {
   return { env, puts };
 }
 
+/**
+ * A real HTTP request always carries the true `Content-Length` on the wire,
+ * even though `new Request()` in this test runtime does not populate it on
+ * `.headers` by itself (confirmed separately: a plain `new Request(url,
+ * {body})` has no Content-Length header at all until something actually
+ * sends it). Setting it here from the real encoded byte length is what makes
+ * this helper stand in for a genuine caller - `post()` without an explicit
+ * override behaves like the one real client this endpoint has, not like the
+ * header-less case Finding 2 is about.
+ */
 function post(body: unknown, headers: Record<string, string> = {}): Request {
+  const raw = JSON.stringify(body);
   return new Request("https://relay.example/feedback", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": String(new TextEncoder().encode(raw).length),
+      ...headers,
+    },
+    body: raw,
   });
 }
 
@@ -93,6 +123,52 @@ describe("POST /feedback", () => {
     expect(puts, "an oversized request still wrote to R2").toHaveLength(0);
   });
 
+  it("refuses a request with no Content-Length header, before reading the body", async () => {
+    // Not routed through post() - that helper deliberately sets a real
+    // Content-Length to stand in for a genuine caller. This constructs the
+    // header-less case directly: no application caller of this endpoint
+    // omits it, but a request that manages to arrive without one must not
+    // be waved through to `request.json()` on the strength of a `Number(null)
+    // === 0` fallthrough.
+    let bodyRead = false;
+    const req = {
+      url: "https://relay.example/feedback",
+      method: "POST",
+      headers: new Headers({ "Content-Type": "application/json" }),
+      json: async () => {
+        bodyRead = true;
+        throw new Error("body should not have been read");
+      },
+    } as unknown as Request;
+    const { env, puts } = envWith({ allow: true });
+
+    const res = await worker.fetch(req, env);
+
+    expect(res.status).toBe(413);
+    expect(bodyRead, "the body was read despite no declared length").toBe(false);
+    expect(puts).toHaveLength(0);
+  });
+
+  it("refuses a request with a non-numeric Content-Length, before reading the body", async () => {
+    let bodyRead = false;
+    const req = {
+      url: "https://relay.example/feedback",
+      method: "POST",
+      headers: new Headers({ "Content-Type": "application/json", "Content-Length": "garbage" }),
+      json: async () => {
+        bodyRead = true;
+        throw new Error("body should not have been read");
+      },
+    } as unknown as Request;
+    const { env, puts } = envWith({ allow: true });
+
+    const res = await worker.fetch(req, env);
+
+    expect(res.status).toBe(413);
+    expect(bodyRead).toBe(false);
+    expect(puts).toHaveLength(0);
+  });
+
   it("refuses a non-JSON content type with 415", async () => {
     const { env, puts } = envWith({ allow: true });
     const req = post({ message: "hi", appVersion: "0.6.0" }, { "Content-Type": "text/plain" });
@@ -111,9 +187,11 @@ describe("POST /feedback", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const body = (await res.json()) as { id: string };
-    expect(typeof body.id).toBe("string");
-    expect(body.id.length).toBeGreaterThanOrEqual(8);
-    expect(body.id).toMatch(/^[a-f0-9]+$/);
+    // The exact contract: 16 lowercase hex characters (8 random bytes).
+    // Task 8 is told to rely on this shape - a looser check here (e.g. "at
+    // least 8 characters") would stay green even if the id generator's
+    // entropy were quietly halved.
+    expect(body.id).toMatch(/^[a-f0-9]{16}$/);
 
     expect(puts).toHaveLength(1);
     expect(puts[0].key).toMatch(new RegExp(`^\\d{4}/\\d{2}/\\d{2}/${body.id}\\.json$`));
@@ -121,6 +199,19 @@ describe("POST /feedback", () => {
     expect(record.message).toBe("captions stopped after 2 hours");
     expect(record.appVersion).toBe("0.6.0");
     expect(typeof record.timestamp).toBe("string");
+  });
+
+  it("refuses an oversized appVersion with 400 and writes nothing", async () => {
+    // Well under FEEDBACK_BODY_MAX (~1.57 MB) so the request clears the
+    // declared-size check - the point is that a request that looks
+    // reasonably sized overall can still carry one field that is not.
+    const { env, puts } = envWith({ allow: true });
+    const hugeVersion = "9".repeat(100 * 1024); // 100 KB - a version string is never this
+
+    const res = await worker.fetch(post({ message: "hi", appVersion: hugeVersion }), env);
+
+    expect(res.status).toBe(400);
+    expect(puts).toHaveLength(0);
   });
 
   it("also writes the attached log under the matching key", async () => {
@@ -147,6 +238,15 @@ describe("POST /feedback", () => {
 
     await worker.fetch(post({ message: "hi", appVersion: "0.6.0" }), env);
 
+    // A green run here proves nothing on its own: `puts` starts empty and
+    // stays empty for plenty of reasons that have nothing to do with this
+    // behaviour (a 404, a rate-limit refusal). It only guards the intended
+    // thing - "no log means no .log write" - once it is read together with
+    // "stores a well-formed report", above, which pins `puts` to exactly one
+    // entry and confirms that entry is the .json one, for the same request
+    // shape. This test was previously green even during RED (the route
+    // didn't exist, `puts` was vacuously empty) without being flagged as
+    // such; noted accurately here rather than repeating that gap.
     expect(puts.some((p) => p.key.endsWith(".log"))).toBe(false);
   });
 
@@ -190,5 +290,39 @@ describe("POST /feedback", () => {
 
     expect(res.status).toBe(400);
     expect(puts).toHaveLength(0);
+  });
+
+  it("returns 502 and stores nothing when the .json put itself fails", async () => {
+    const { env, puts } = envWith({ allow: true, failPut: "json" });
+
+    const res = await worker.fetch(post({ message: "hi", appVersion: "0.6.0" }), env);
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; id?: string };
+    // Nothing was stored, so there is no id to hand back - and no id means
+    // a client that treats "there's an id" as "it's safe to move on" cannot
+    // be fooled into thinking a failed report succeeded.
+    expect(body.id).toBeUndefined();
+    expect(typeof body.error).toBe("string");
+    expect(puts).toHaveLength(0);
+  });
+
+  it("returns 502 with the id when the log put fails after the json put succeeds", async () => {
+    const { env, puts } = envWith({ allow: true, failPut: "log" });
+
+    const res = await worker.fetch(
+      post({ message: "hi", appVersion: "0.6.0", log: "boot\n" }),
+      env,
+    );
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; id?: string };
+    // The .json half DID land - the id it landed under is returned so the
+    // caller knows a retry would create a duplicate report rather than
+    // finishing this one.
+    expect(body.id).toMatch(/^[a-f0-9]{16}$/);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].key.endsWith(".json")).toBe(true);
+    expect(puts[0].key).toContain(body.id as string);
   });
 });
