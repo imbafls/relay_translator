@@ -883,3 +883,183 @@ describe("a speech socket that comes back", () => {
     session.stop();
   });
 });
+
+describe("a quiet session stops paying for silence", () => {
+  /**
+   * Task 5. `audio()` billed every chunk the socket accepted, times the
+   * channel count, for ever - silence is indistinguishable from speech both
+   * here and at Deepgram, which bills streamed audio rather than recognised
+   * words. A loopback / Stereo Mix source does not disappear when the game
+   * closes; it keeps streaming digital silence at 32 kB/s per channel, and
+   * nothing but a person noticing and pressing STOP ever stopped the meter.
+   *
+   * The gate is locally-measured peak level, not STT finals - a design keyed
+   * on finals deadlocks, because no audio forwarded means no final can ever
+   * arrive to turn it back on. The detector has to keep running while
+   * forwarding is off, which is what the second test below actually pins.
+   */
+
+  // only Date is faked - the gate itself has no timers of its own to fake
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 16 kHz mono s16le, 100 ms frame - the size capture actually posts */
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+  /** every sample well above SILENCE_PEAK_FLOOR (150) */
+  const loudFrame = (): Buffer => {
+    const samples = SR * 0.1;
+    const b = Buffer.alloc(samples * 2);
+    for (let i = 0; i < samples; i++) b.writeInt16LE(20000, i * 2);
+    return b;
+  };
+
+  function makeGated(idleBillingStopMinutes: number) {
+    const sent: Buffer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const stats = { seconds: 0, localSeconds: 0 };
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        // a stand-in that always accepts, so a call reaching it is
+        // unambiguous - only whether the gate lets audio() call it at all
+        // is under test here, not the socket itself
+        makeStt: (events: SttEvents) => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: (chunk: Buffer) => {
+              sent.push(chunk);
+              return true;
+            },
+            close() {},
+          };
+        },
+        idleBillingStopMinutes,
+        sttStats: stats,
+        toViewers: () => {},
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    return { session, sent, logs, stats };
+  }
+
+  it("stops reaching the STT seam once silence outlasts the configured period, and says why once", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    // a 1-minute bound so the test does not need to fake an hour to reach it
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0); // let the mock stt's onOpen fire
+
+    g.session.audio(silentFrame()); // seeds the "last loud" clock at t0
+    vi.setSystemTime(t0 + 30_000);
+    g.session.audio(silentFrame()); // still under the 60s bound
+    expect(g.sent.length, "audio under the bound should still reach the seam").toBe(2);
+    expect(g.stats.seconds, "audio under the bound should still be billed").toBeGreaterThan(0);
+    const billedBeforeTrip = g.stats.seconds;
+
+    vi.setSystemTime(t0 + 65_000); // past the 60s bound
+    g.session.audio(silentFrame()); // this is the chunk that trips it
+
+    expect(g.sent.length, "the chunk that tripped the bound still reached the seam").toBe(2);
+    expect(g.stats.seconds, "billed seconds kept growing after the bound tripped").toBe(billedBeforeTrip);
+
+    // more silence after the trip must not reach the seam either
+    vi.setSystemTime(t0 + 70_000);
+    g.session.audio(silentFrame());
+    expect(g.sent.length, "silence kept reaching the STT seam after the bound tripped").toBe(2);
+
+    const errors = g.logs.filter((l) => l.level === "error");
+    expect(errors.length, `error-level logs were: ${errors.map((e) => e.message).join(" | ") || "(none)"}`).toBe(1);
+    expect(errors[0].message).toMatch(/silen/i);
+    // names the elapsed time, not just "silence happened"
+    expect(errors[0].message).toMatch(/\d+m/);
+
+    g.session.stop();
+  });
+
+  it("resumes forwarding the instant a chunk clears the floor again", async () => {
+    // This is the test that would have caught a design gated on STT finals:
+    // once forwarding is off, no final can ever arrive to turn it back on,
+    // so the session would be wedged silent for ever instead of recovering
+    // here.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trips the bound
+    expect(g.sent.length, "setup: the bound should already be tripped here").toBe(1);
+
+    vi.setSystemTime(t0 + 66_000);
+    g.session.audio(loudFrame());
+
+    expect(g.sent.length, "a chunk above the floor was not forwarded the instant it arrived").toBe(2);
+    expect(g.stats.seconds, "the recovered chunk was not billed").toBeGreaterThan(0);
+
+    g.session.stop();
+  });
+
+  it("never cuts off ordinary speech, even past the configured period", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1); // 1-minute bound
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // five chunks of continuous "speech", 20s apart - 80s total, well past
+    // the 60s bound, but every chunk resets the "last loud" clock so the
+    // bound should never trip
+    let at = t0;
+    for (let i = 0; i < 5; i++) {
+      at += 20_000;
+      vi.setSystemTime(at);
+      g.session.audio(loudFrame());
+    }
+
+    expect(g.sent.length, "speech was cut off even though it never went quiet").toBe(5);
+    expect(g.logs.some((l) => l.level === "error"), "an error was logged even though nothing was ever silent").toBe(
+      false,
+    );
+
+    g.session.stop();
+  });
+
+  it("idleBillingStopMinutes: 0 disables the bound entirely", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(0);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 3 * 60 * 60 * 1000); // 3 hours of unbroken silence
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 6 * 60 * 60 * 1000);
+    g.session.audio(silentFrame());
+
+    expect(g.sent.length, "0 should disable the gate, not just delay it").toBe(3);
+    expect(g.logs.some((l) => l.level === "error"), "0 should mean no gate at all, not only no logging").toBe(
+      false,
+    );
+
+    g.session.stop();
+  });
+});

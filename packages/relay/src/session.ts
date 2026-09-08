@@ -6,6 +6,7 @@ import {
   clampChannels,
   isLocalStt,
   maskProfanity,
+  DEFAULT_CONFIG,
 } from "@callout-relay/shared";
 import {
   SAMPLE_RATE,
@@ -82,6 +83,41 @@ const STT_REOPEN_TAIL_MS = 30_000;
 
 const GAP_MS = 500;
 
+/**
+ * A chunk's peak sample has to clear this many units, out of a possible
+ * 32767, to count as "audio" for the idle-billing gate in `audio()`. Chosen
+ * low on purpose - about -47 dBFS. Digital silence from a loopback / Stereo
+ * Mix source with nothing playing reads as exact zero, or at most a few LSBs
+ * of mixer noise, nowhere near this; a real voice, even a quiet or distant
+ * one, clears it easily. The failure mode worth documenting for whoever
+ * tunes this later is the other direction: set it too high and a genuinely
+ * quiet speaker gets billed silence and their captions stop, which is worse
+ * than the bug this gate exists to fix.
+ */
+const SILENCE_PEAK_FLOOR = 150;
+
+/**
+ * Peak absolute sample in a chunk of 16-bit signed PCM (interleaved across
+ * however many channels this session captures - a real sample on any one of
+ * them is enough to call the chunk "audio").
+ *
+ * Peak, not RMS. RMS averages a whole chunk's energy down, so a chunk that is
+ * mostly quiet with one loud burst at the very end - the onset of a word
+ * after a pause - can read as below the floor even though real speech is
+ * sitting right there. Peak catches that first sample. It is also the
+ * cheaper of the two: one comparison per sample, no multiply-accumulate and
+ * no square root.
+ */
+function peakAmplitude(chunk: Buffer): number {
+  let peak = 0;
+  for (let i = 0; i + 1 < chunk.length; i += 2) {
+    const sample = chunk.readInt16LE(i);
+    const abs = sample < 0 ? -sample : sample;
+    if (abs > peak) peak = abs;
+  }
+  return peak;
+}
+
 export interface GeminiStats {
   count: number;
   cacheHits: number;
@@ -140,6 +176,15 @@ export interface SessionDeps {
   onTranslateError?(message: string): void;
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
+  /**
+   * Minutes of unbroken silence - measured locally, per chunk peak against
+   * SILENCE_PEAK_FLOOR, never from STT finals - before `audio()` stops
+   * forwarding to the STT engine and stops counting billed seconds. `0`
+   * disables the bound entirely. Undefined falls back to
+   * `DEFAULT_CONFIG.idleBillingStopMinutes` (60), so an embedder that never
+   * sets this still gets the bound rather than an unmetered leak.
+   */
+  idleBillingStopMinutes?: number;
 }
 
 /**
@@ -219,6 +264,25 @@ export class PublisherSession {
    * total muted time too high.
    */
   private silentMs = 0;
+  /**
+   * Wall clock of the last chunk whose peak cleared SILENCE_PEAK_FLOOR.
+   * Seeded on the session's first chunk regardless of whether it was loud -
+   * same reason `streamWallStart` is seeded rather than left at 0: diffing
+   * against the epoch on the very first chunk would read as the session
+   * having been silent since 1970 and trip the bound immediately.
+   */
+  private lastAboveFloorAt = 0;
+  /**
+   * Whether chunks are currently being forwarded to the STT engine and
+   * counted toward billed seconds. Flips to false once
+   * `idleBillingStopMinutes` of unbroken silence has passed, and back to
+   * true the instant a chunk clears the floor again - see `audio()`. This is
+   * the ONLY thing the idle-billing gate touches: the session stays live,
+   * capture keeps running, and powerSaveBlocker is untouched, so a streamer
+   * who stepped away for lunch gets working captions again the moment they
+   * start talking, not a session they have to notice is dead and restart.
+   */
+  private billingOpen = true;
   /** whether Gemini runs for this session */
   translates = true;
   readonly local: boolean;
@@ -543,6 +607,44 @@ export class PublisherSession {
     if (this.streamWallStart === 0) this.streamWallStart = now;
     else if (now - this.lastAudioAt > GAP_MS) this.silentMs += now - this.lastAudioAt;
     this.lastAudioAt = now;
+
+    // Idle-billing gate. Runs on every chunk, whether or not forwarding is
+    // currently open - that is what makes recovery possible. A design gated
+    // on STT finals instead cannot work: once forwarding stops, no audio
+    // reaches the engine, so no final can ever arrive to turn it back on and
+    // the session would be wedged silent for ever. Locally-measured level has
+    // no such trap, and it targets the real failure mode more precisely
+    // anyway - a loopback source streaming digital silence after the game
+    // closed - since a streamer speaking a language the engine mistranscribes
+    // is still producing audio worth paying for.
+    if (this.lastAboveFloorAt === 0) this.lastAboveFloorAt = now;
+    if (peakAmplitude(chunk) > SILENCE_PEAK_FLOOR) {
+      const wasClosed = !this.billingOpen;
+      this.lastAboveFloorAt = now;
+      this.billingOpen = true;
+      if (wasClosed) {
+        this.deps.log("info", "audio above the silence floor again - resuming billed transcription");
+      }
+    } else {
+      const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes ?? 0;
+      if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
+        this.billingOpen = false;
+        const silentMinutes = Math.round((now - this.lastAboveFloorAt) / 60_000);
+        // written once, on the transition - not on every silent chunk after
+        // it, which at capture's own chunk rate would flood relay.log and
+        // evict everything before it long before this line was ever read
+        this.deps.log(
+          "error",
+          `no audio above the silence floor for ${silentMinutes}m - pausing billed transcription until sound returns`,
+        );
+      }
+    }
+    // gate stops here: nothing below this line runs while it is shut, which
+    // is what actually stops the spend - the STT engine never sees these
+    // bytes, and the stats block below (the only place seconds are counted)
+    // never runs either
+    if (!this.billingOpen) return;
+
     // bill what was actually sent. This ran before the send and ignored its
     // result, so a stream that had closed under us kept charging for audio the
     // readyState guard was dropping on the floor.

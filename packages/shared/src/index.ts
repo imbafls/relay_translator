@@ -60,6 +60,8 @@ export interface AppConfig {
    *  console keeps the words as heard, so you can see what the STT actually got).
    *  Source language only - the translated line is not filtered. */
   profanityFilter: boolean;
+  /** minutes of unbroken silence before the relay stops paying to transcribe it; 0 disables */
+  idleBillingStopMinutes?: number;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
   /** false = never check for updates in the background (manual CHECK still works) */
@@ -103,6 +105,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   translationEnabled: false,
   showLatency: true,
   profanityFilter: true,
+  idleBillingStopMinutes: 60,
   linkMode: "unique",
   autoUpdate: true,
   obsOverlay: false,
