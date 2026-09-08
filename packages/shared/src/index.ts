@@ -1369,7 +1369,14 @@ export function redactLog(text: string): string {
     windowsUsers.add(m[1]);
   }
   if (windowsUsers.size > 0) {
+    // Longest first. JS alternation takes the FIRST branch that succeeds, not
+    // the longest, so with "bob" ahead of "bob-smith" the pattern matches "bob"
+    // inside "bob-smith" - the trailing \b succeeds because "-" is non-word -
+    // and never backtracks to the longer branch, publishing "-smith" in the
+    // clear. A directory listing hands back names alphabetically, so the bad
+    // order is the ordinary one, and "jane-smith" is an ordinary account name.
     const alternation = [...windowsUsers]
+      .sort((a, b) => b.length - a.length)
       .map((user) => user.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join("|");
     out = out.replace(new RegExp(`\\b(?:${alternation})\\b`, "g"), "<user>");

@@ -190,6 +190,20 @@ describe("removes each kind of secret, not just marks it", () => {
     );
   });
 
+  it("redacts a longer account name whole when a shorter one is its prefix", () => {
+    // JS alternation takes the FIRST branch that succeeds, not the longest. So
+    // if "bob" is collected before "bob-smith", `\b(?:bob|bob-smith)\b` matches
+    // "bob" inside "bob-smith" - the trailing \b succeeds because "-" is a
+    // non-word character - and the engine never backtracks to the longer
+    // branch. "-smith" would then be published in the clear. A directory scan
+    // returns names alphabetically, so "bob" before "bob-smith" is the ordinary
+    // case, not a contrived one, and "jane-smith" is an ordinary account name.
+    const line = "C:\\Users\\bob\\a; C:\\Users\\bob-smith\\b";
+    const out = redactLog(line);
+    expect(out).not.toContain("smith");
+    expect(out).toBe("C:\\Users\\<user>\\a; C:\\Users\\<user>\\b");
+  });
+
   it("does not double-mark when the account name is literally 'user' (round 2 finding 2)", () => {
     // \buser\b matches inside the just-written "<user>" marker itself
     // ("<" and ">" are non-word, so \b anchors right next to them), turning
