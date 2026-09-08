@@ -734,7 +734,7 @@ describe("whose captions these are", () => {
       translates: true,
       brandName: "Omer's stream",
     });
-    expect(brandBar().hidden || document.body.classList.contains("obs")).toBe(true);
+    expect(brandBar().hidden, "the brand reached the broadcast overlay").toBe(true);
   });
 });
 ```
@@ -771,6 +771,14 @@ and add the function beside `applyStyle`:
    */
   function applyBrand(name, colour) {
     const bar = $("brandBar");
+    // The overlay carries captions and nothing else. Suppressed HERE and not
+    // only in CSS: `body.obs .hud-brand { display: none }` is real and stays,
+    // but a stylesheet rule is invisible to happy-dom, so a test asserting it
+    // would pass on markup that shows the brand to a whole Twitch audience.
+    if (obs) {
+      bar.hidden = true;
+      return;
+    }
     const text = typeof name === "string" ? name.trim() : "";
     // textContent, never innerHTML: this arrives over a socket from whoever
     // holds the publish token, onto a page served publicly with no CSP
