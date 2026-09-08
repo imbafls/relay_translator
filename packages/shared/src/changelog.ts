@@ -42,7 +42,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         kind: "fixed",
-        text: "A phone or browser link now shows OFF AIR while the app is open but no session is running. It used to mark the room live on every uplink reconnect, every relay restart, and every settings change - even while the app just sat idle in the tray - so anyone holding the link could see ON AIR when nothing was actually being streamed.",
+        text: "A phone or browser link now shows OFF AIR while the app is open but no session is running. It used to mark the room live on every uplink reconnect, every relay restart, and every settings change - even while the app just sat idle in the tray - so anyone holding the link could see ON AIR when nothing was actually being streamed. This depends on your own app being on 0.7.0: until you update, anyone holding your link still sees the old always-on-air behavior, the same way it worked before this fix.",
       },
       {
         kind: "fixed",
