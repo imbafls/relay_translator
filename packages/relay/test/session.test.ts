@@ -1064,6 +1064,122 @@ describe("a quiet session stops paying for silence", () => {
   });
 });
 
+describe("fix-round finding 4: the floor's value and peak-over-RMS are both pinned", () => {
+  /**
+   * test/session.test.ts:899-905 (pre-fix-round). Every existing test used
+   * loudFrame() at a uniform 20000 and silentFrame() at exact 0.
+   * SILENCE_PEAK_FLOOR could be retuned from 150 to 3000 - cutting off a
+   * quiet speaker, the exact failure mode the design comment documents - and
+   * all four of those tests would still pass. Swapping peakAmplitude for an
+   * RMS would not go red either, so the design decision the report defends
+   * at length had no guard. These two cases fix both: one frame pins the
+   * floor's actual value, the other pins peak over RMS specifically.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+  /** every sample at exactly 200 - just above SILENCE_PEAK_FLOOR (150) */
+  const justAboveFloorFrame = (): Buffer => {
+    const samples = SR * 0.1;
+    const b = Buffer.alloc(samples * 2);
+    for (let i = 0; i < samples; i++) b.writeInt16LE(200, i * 2);
+    return b;
+  };
+  /**
+   * ~2s of silence with a single sample at the very end reading 20000 - the
+   * onset of a word right after a long pause. Under peak this reads as loud
+   * (20000 > SILENCE_PEAK_FLOOR); under RMS the same chunk averages to
+   * 20000/sqrt(32000) =~ 112, UNDER the floor - exactly the divergence
+   * peakAmplitude's own doc comment defends against.
+   */
+  const onsetFrame = (): Buffer => {
+    const samples = SR * 2; // 2s - long enough for RMS to average the one loud sample away
+    const b = Buffer.alloc(samples * 2);
+    b.writeInt16LE(20000, (samples - 1) * 2);
+    return b;
+  };
+
+  function makeGated(idleBillingStopMinutes: number) {
+    const sent: Buffer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents): SttStream => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: (chunk: Buffer) => {
+              sent.push(chunk);
+              return true;
+            },
+            keepAlive: () => {},
+            close() {},
+          };
+        },
+        idleBillingStopMinutes,
+        sttStats: { seconds: 0, localSeconds: 0 },
+        toViewers: () => {},
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    return { session, sent, logs };
+  }
+
+  it("pins the floor's value: a peak just above SILENCE_PEAK_FLOOR counts as audio", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1); // 60s bound
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame()); // seeds the clock
+    vi.setSystemTime(t0 + 65_000); // past the bound
+    g.session.audio(justAboveFloorFrame());
+
+    expect(g.sent.length, "a peak just above the floor was treated as silence and never reached the seam").toBe(2);
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "the bound tripped even though the peak cleared the floor",
+    ).toBe(false);
+
+    g.session.stop();
+  });
+
+  it("pins peak over RMS: a single loud sample near the end of an otherwise silent chunk counts as audio", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame()); // seeds the clock
+    vi.setSystemTime(t0 + 65_000); // past the bound
+    g.session.audio(onsetFrame());
+
+    expect(
+      g.sent.length,
+      "an RMS average would have read this chunk as silence and tripped the bound - it must not",
+    ).toBe(2);
+    expect(g.logs.some((l) => l.level === "error")).toBe(false);
+
+    g.session.stop();
+  });
+});
+
 describe("fix-round finding 3: an isolated impulse must not indefinitely delay the bound", () => {
   /**
    * session.ts:621-623. Peak is right for REOPENING the gate - one real
