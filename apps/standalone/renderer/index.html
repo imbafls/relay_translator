@@ -212,6 +212,32 @@
                 </div>
               </div>
             </details>
+            <!--
+              This is the last build Relay gets - after this, nobody is watching.
+              SEND FEEDBACK is how a problem report reaches the person who built
+              it once that's true. Nothing is sent until SEND is pressed: no
+              scheduler, no auto-send on a crash, no opt-in toggle. If a log is
+              attached, the box below is the REDACTED text, byte-for-byte the
+              same string that goes out - not a re-read, not a fresh redaction
+              at send time. It always goes to the project's own hosted relay,
+              never to `relayUrl` above: that field can be empty (a fresh,
+              LAN-only install) or point at somebody's self-hosted relay, which
+              has no /feedback route at all.
+            -->
+            <div class="field">
+              <div class="field-label">SEND FEEDBACK<span class="field-status dim">GOES TO THE DEVELOPER</span></div>
+              <p class="hint">This is the last version of Relay that gets updates, so this is how a problem reaches anyone after that. Nothing leaves this PC until you press SEND.</p>
+              <div class="field-row">
+                <textarea id="feedbackMessage" class="uinput mono" maxlength="8192" rows="4" placeholder="What went wrong?" spellcheck="false"></textarea>
+              </div>
+              <button id="feedbackIncludeLog" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>INCLUDE MY LOG</button>
+              <p class="hint">Redacted on this PC before you ever see it - keys, tokens, links and your Windows account name are stripped. What's shown below is exactly what would be sent, and nothing is sent until SEND.</p>
+              <pre id="feedbackPreview" class="log mono" style="max-height:160px" hidden></pre>
+              <div class="field-row">
+                <button id="sendFeedback" class="mono-btn">SEND FEEDBACK</button>
+                <span id="feedbackNote" class="field-status dim"></span>
+              </div>
+            </div>
         </div>
         <div class="keys-actions">
           <button id="settingsSave" class="ink-btn">SAVE</button>

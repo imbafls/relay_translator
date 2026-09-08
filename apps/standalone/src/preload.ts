@@ -43,6 +43,13 @@ export interface RendererBridge {
   onCommand(cb: (cmd: "start" | "stop" | "setup") => void): void;
   onConfigChanged(cb: (cfg: AppConfig) => void): void;
   onStatus(cb: (status: ControlStatus) => void): void;
+  /**
+   * The raw, unredacted text of relay.log. This is the ONLY thing main.ts
+   * exposes for SEND FEEDBACK - the renderer redacts it (redactLog), shows
+   * the result in the preview, and posts to the hosted relay itself, only on
+   * the SEND press. Nothing about sending crosses this bridge.
+   */
+  readRelayLog(): Promise<string>;
 }
 
 contextBridge.exposeInMainWorld("cr", {
@@ -73,4 +80,5 @@ contextBridge.exposeInMainWorld("cr", {
   installUpdate: () => ipcRenderer.invoke("updates:install"),
   onUpdate: (cb: (status: UpdateStatus) => void) =>
     ipcRenderer.on("update:changed", (_e, status) => cb(status)),
+  readRelayLog: () => ipcRenderer.invoke("log:read"),
 } satisfies RendererBridge);

@@ -105,6 +105,7 @@ function bridge(config: AppConfig) {
     onStatus: (cb: (s: unknown) => void) => {
       pushStatus = cb;
     },
+    readRelayLog: async () => fakeRelayLog,
   };
 }
 
@@ -129,6 +130,19 @@ let fakeDevices: { kind: string; deviceId: string; label: string; groupId: strin
 let setConfigFails = false;
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
+/** what cr.readRelayLog() answers - the raw, unredacted relay.log text */
+let fakeRelayLog = "";
+/**
+ * Every POST SEND FEEDBACK actually made. Real network I/O for this feature
+ * happens in the renderer itself (not through the `cr` bridge - main.ts gains
+ * no send capability, see preload.ts), so this stands in for `fetch`, the
+ * same way `bridge()` stands in for the IPC boundary. Empty until SEND is
+ * pressed is exactly what proves nothing leaves the machine before that.
+ */
+let feedbackPosts: { url: string; body: unknown }[] = [];
+/** what the mocked fetch() answers SEND FEEDBACK's request with */
+let feedbackResponse: { status: number; body?: unknown } = { status: 200, body: { id: "a1b2c3d4e5f6a7b8" } };
+const realFetch = globalThis.fetch;
 
 async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
   calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [], claimed: [], rotated: [] };
@@ -172,12 +186,27 @@ async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Prom
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
+  feedbackPosts = [];
+  feedbackResponse = { status: 200, body: { id: "a1b2c3d4e5f6a7b8" } };
+  // stands in for the network boundary submitFeedback() talks to directly -
+  // see the comment on `feedbackPosts` above for why this isn't on `cr`
+  (globalThis as unknown as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
+    feedbackPosts.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const status = feedbackResponse.status;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => feedbackResponse.body,
+    } as Response;
+  };
 });
 
 afterEach(() => {
   fakeDevices = [];
   setConfigFails = false;
   claimFails = null;
+  fakeRelayLog = "";
+  (globalThis as unknown as { fetch: typeof fetch }).fetch = realFetch;
   for (const t of timers) clearInterval(t);
   timers = [];
   vi.restoreAllMocks();
@@ -1615,5 +1644,188 @@ describe("the topbar during a dead speech pipeline", () => {
     await settle(40);
 
     expect(statusText(), "an absent sttLive must not read as dead").toBe("ON AIR");
+  });
+});
+
+/**
+ * SEND FEEDBACK - the last build this product gets ships with a way for a
+ * problem report to reach the owner after nobody is watching it any more.
+ * The product's own promise ("Keys never leave your machine, and neither
+ * does your audio", "No account, no telemetry") is why this only works when
+ * a person presses SEND: no scheduler, no crash auto-send, no opt-in toggle.
+ * The preview exists so that promise is checkable, not just trusted - so
+ * these tests pin two things above all else: nothing goes out before SEND,
+ * and what goes out is exactly what was shown.
+ */
+describe("sending a feedback report", () => {
+  const openSettings = async (): Promise<void> => {
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+  };
+  const messageEl = (): HTMLTextAreaElement => document.getElementById("feedbackMessage") as HTMLTextAreaElement;
+  const includeLogEl = (): HTMLElement => document.getElementById("feedbackIncludeLog") as HTMLElement;
+  const previewEl = (): HTMLElement => document.getElementById("feedbackPreview") as HTMLElement;
+  const sendBtn = (): HTMLButtonElement => document.getElementById("sendFeedback") as HTMLButtonElement;
+  const noteText = (): string => document.getElementById("feedbackNote")?.textContent || "";
+  const type = (text: string): void => {
+    messageEl().value = text;
+    messageEl().dispatchEvent(new Event("input"));
+  };
+
+  /** 40 lowercase hex characters - the exact shape redactLog.test.ts uses for a Deepgram-style key */
+  const SECRET = "df".repeat(20);
+
+  it("keeps SEND FEEDBACK inside THIS APP, not split into another group", async () => {
+    // same guard style as "settings keeps a subject in one place" above -
+    // this is about the app, not about what viewers see
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const settings = doc.getElementById("settings") as HTMLElement;
+    const groupOf = (id: string): string | null =>
+      settings.querySelector(`#${id}`)?.closest("[data-group]")?.getAttribute("data-group") ?? null;
+    const ids = ["feedbackMessage", "feedbackIncludeLog", "feedbackPreview", "sendFeedback"];
+    const where = ids.map((id) => `${id}=${groupOf(id) ?? "(none)"}`);
+    expect(ids.every((id) => groupOf(id) === "app"), `not all in data-group="app": ${where.join("  ")}`).toBe(true);
+  });
+
+  it("redacts a secret out of the log before it is ever shown on screen", async () => {
+    fakeRelayLog = `[info] connected to wss://textrelay.cc/ws?token=${SECRET}\n[info] deepgram key ${SECRET} accepted`;
+    await bootWith({ setupDone: true });
+    await openSettings();
+
+    includeLogEl().click();
+    await settle(40);
+
+    expect(previewEl().textContent, "the secret survived redaction").not.toContain(SECRET);
+    expect(previewEl().textContent, "nothing was redacted at all").toMatch(/redacted/i);
+  });
+
+  it("sends nothing until SEND is pressed - not on open, not on typing, not on ticking the box", async () => {
+    fakeRelayLog = `deepgram key ${SECRET}`;
+    await bootWith({ setupDone: true });
+    await openSettings();
+    expect(feedbackPosts, "opening settings alone sent something").toEqual([]);
+
+    type("captions froze after twenty minutes");
+    await settle(40);
+    expect(feedbackPosts, "typing the message sent something").toEqual([]);
+
+    includeLogEl().click();
+    await settle(40);
+    expect(feedbackPosts, "ticking the log checkbox sent something").toEqual([]);
+  });
+
+  it("carries no log field at all when the box is left unticked", async () => {
+    fakeRelayLog = `deepgram key ${SECRET}`;
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("no log, please");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackPosts).toHaveLength(1);
+    expect(feedbackPosts[0].body, "an unticked box must omit `log`, not send it empty").not.toHaveProperty("log");
+    expect((feedbackPosts[0].body as { message: string }).message).toBe("no log, please");
+  });
+
+  it("sends exactly the string the preview showed, not a fresh read of the log", async () => {
+    fakeRelayLog = `deepgram key ${SECRET}`;
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("with my log");
+    includeLogEl().click();
+    await settle(40);
+    const shown = previewEl().textContent;
+    expect(shown, "the preview never populated").toBeTruthy();
+
+    // the log changes AFTER the preview was drawn, before SEND is pressed - if
+    // submitFeedback ever re-read or re-redacted at send time instead of
+    // reusing what was shown, the payload would carry THIS text instead
+    fakeRelayLog = "a line that was never shown in the preview";
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackPosts).toHaveLength(1);
+    expect((feedbackPosts[0].body as { log?: string }).log, "the payload does not match what was previewed").toBe(shown);
+    expect((feedbackPosts[0].body as { log?: string }).log).not.toContain("never shown in the preview");
+  });
+
+  it("always posts to the project's own hosted relay, never to a configured relayUrl", async () => {
+    // a fresh install has relayUrl unset (LAN-only by construction), and a
+    // self-hosted relay has no /feedback route at all - either way, feedback
+    // has to reach the one place that implements it
+    await bootWith({ setupDone: true, relayUrl: "wss://someone-elses-relay.example.com" });
+    await openSettings();
+    type("still works with a self-hosted relay configured");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackPosts).toHaveLength(1);
+    const expected = `${HOSTED_RELAY_URL.replace(/^ws/, "http")}/feedback`;
+    expect(feedbackPosts[0].url).toBe(expected);
+  });
+
+  it("reports success with the reference id", async () => {
+    feedbackResponse = { status: 200, body: { id: "a1b2c3d4e5f6a7b8" } };
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("worked fine, just checking in");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(noteText()).toContain("a1b2c3d4e5f6a7b8");
+  });
+
+  it("treats a 502 that carries an id as delivered - the report landed even though the log did not attach", async () => {
+    feedbackResponse = { status: 502, body: { error: "feedback stored, log upload failed", id: "deadbeefdeadbeef" } };
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("log attach test");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(noteText()).toContain("deadbeefdeadbeef");
+    // cleared, because a landed report must never be retried - retrying would
+    // duplicate it just to retry the log attachment
+    expect(messageEl().value, "a delivered report was left sitting there to be resent").toBe("");
+  });
+
+  it("treats a 502 with no id as nothing stored, and keeps the message so it can be retried", async () => {
+    feedbackResponse = { status: 502, body: { error: "feedback could not be stored" } };
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("please retry me");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(noteText().toLowerCase()).toContain("could not be stored");
+    expect(messageEl().value, "nothing was stored, yet the message was thrown away").toBe("please retry me");
+  });
+
+  it("surfaces the rate-limit message from the server", async () => {
+    feedbackResponse = { status: 429, body: { error: "too much feedback from here - try again in a minute" } };
+    await bootWith({ setupDone: true });
+    await openSettings();
+    type("again");
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(noteText()).toContain("try again in a minute");
+  });
+
+  it("refuses to send an empty message, and makes no request at all", async () => {
+    await bootWith({ setupDone: true });
+    await openSettings();
+
+    sendBtn().click();
+    await settle(40);
+
+    expect(feedbackPosts).toEqual([]);
   });
 });

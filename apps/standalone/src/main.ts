@@ -595,6 +595,22 @@ function registerIpc(): void {
     return viewerUrl();
   });
 
+  /**
+   * SEND FEEDBACK. This is the ONLY new thing main.ts gains for it - reading
+   * relay.log's raw text, unredacted. The renderer runs redactLog on the
+   * result before it is ever shown, and posts to the hosted relay itself,
+   * only on the SEND press - nothing here sends anything anywhere. Never
+   * throws: a missing file (nothing has been logged yet) or a locked one is
+   * "no log", not a broken feature.
+   */
+  ipcMain.handle("log:read", (): string => {
+    try {
+      return fs.readFileSync(path.join(defaultDataDir(), "relay.log"), "utf8");
+    } catch {
+      return "";
+    }
+  });
+
   // local STT models: status is part of every status broadcast; downloads
   // run in the background and report progress the same way
   ipcMain.handle("models:status", () => models.status());
