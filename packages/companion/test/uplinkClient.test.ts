@@ -342,3 +342,34 @@ describe("the hello an uplink sends", () => {
     expect(hello.brandName).toBe("Omer's stream");
   });
 });
+
+describe("the hello a publisher client sends", () => {
+  /**
+   * relayClient.open had the identical bug as uplinkClient.open above: it
+   * rebuilds the hello field by field out of `this.hello` rather than
+   * spreading it, so a field added to the type alone reaches nothing. This is
+   * the branding sibling of the uplink test above, for the client that serves
+   * LAN and OBS viewers directly - the path that works on a fresh install.
+   */
+  it("carries the brand on the hello it opens with", async () => {
+    const c = new RelayPublisherClient(`ws://127.0.0.1:${port}`);
+    try {
+      c.connect({
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        latencyVisible: true,
+        brandName: "Omer's stream",
+        brandColor: "#e0a43a",
+      });
+      await until(() => frames.some((f) => f.type === "hello"), "the opening hello");
+
+      const hello = frames.find((f) => f.type === "hello")!;
+      expect(hello.brandName).toBe("Omer's stream");
+      expect(hello.brandColor).toBe("#e0a43a");
+    } finally {
+      c.disconnect();
+    }
+  });
+});
