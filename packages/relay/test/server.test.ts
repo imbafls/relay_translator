@@ -304,3 +304,53 @@ describe("what the relay says once the speech pipeline has died", () => {
     ws2.close();
   });
 });
+
+describe("a stream that says what it is called", () => {
+  /**
+   * The brand rides the hello because that is the only frame a viewer joining
+   * late is guaranteed to get. A viewer that connects AFTER the publisher is
+   * the case that matters - it is the one a link handed out mid-stream hits.
+   */
+  const viewerUrl = (): string =>
+    `ws://127.0.0.1:${handle.port}/ws/viewer?token=${handle.state.viewerToken}`;
+
+  const announce = async (brand: Record<string, unknown>): Promise<WebSocket> => {
+    const pub = await open(publisherUrl());
+    pub.send(
+      JSON.stringify({
+        type: "hello",
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        channels: 1,
+        ...brand,
+      }),
+    );
+    return pub;
+  };
+
+  it("tells a viewer who connects afterwards", async () => {
+    const pub = await announce({ brandName: "Omer's stream", brandColor: "#e0a43a" });
+    const viewer = await open(viewerUrl());
+    const hello = await waitFor(viewer, "hello");
+
+    expect(hello?.brandName).toBe("Omer's stream");
+    expect(hello?.brandColor).toBe("#e0a43a");
+    pub.close();
+    viewer.close();
+  });
+
+  it("drops a colour that is not plainly #rrggbb, and caps a long name", async () => {
+    const pub = await announce({
+      brandName: "x".repeat(200),
+      brandColor: "#fff; background: url(http://evil/)",
+    });
+    const viewer = await open(viewerUrl());
+    const hello = await waitFor(viewer, "hello");
+
+    expect(hello?.brandName).toHaveLength(24);
+    expect(hello?.brandColor).toBeUndefined();
+    pub.close();
+    viewer.close();
+  });
+});

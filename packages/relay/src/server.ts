@@ -8,7 +8,9 @@ import {
   DEFAULT_CONFIG,
   clampChannels,
   safeSpeakerColor,
+  safeBrandName,
   MAX_SPEAKER_TAG,
+  Brand,
   PublisherToServer,
   ServerToPublisher,
   ServerToUplink,
@@ -166,6 +168,11 @@ function publisherHello(msg: PublisherToServer & { type: "hello" }): SessionConf
     channelColors: Array.isArray(raw.channelColors)
       ? raw.channelColors.map((c) => safeSpeakerColor(c) ?? "")
       : undefined,
+    // the brand is drawn on a public page and chosen by whoever holds the
+    // publish token: capped, and a colour that is not plainly #rrggbb is
+    // dropped rather than escaped - same rule as channelColors above
+    brandName: safeBrandName(raw.brandName),
+    brandColor: safeSpeakerColor(raw.brandColor),
   };
 }
 
@@ -223,6 +230,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const viewers = new Map<string, WebSocket>();
   let currentLanguages = { ...DEFAULT_CONFIG.languages };
   let currentTranslates = DEFAULT_CONFIG.translationEnabled !== false;
+  let currentBrand: Brand = {};
   const broadcastListeners = new Set<(msg: ServerToViewer) => void>();
   /** epoch ms when the current stream went live (viewers run a session clock from it) */
   let liveSince: number | undefined;
@@ -320,6 +328,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     sttLive = true;
     currentLanguages = { ...cfg.languages };
     currentTranslates = cfg.translationEnabled !== false;
+    currentBrand = { brandName: cfg.brandName, brandColor: cfg.brandColor };
     const session = new PublisherSession(cfg, {
       deepgramApiKey: opts.deepgramApiKey,
       geminiApiKey: opts.geminiApiKey,
@@ -667,6 +676,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           languages,
           live: true,
           translates: currentTranslates,
+          ...currentBrand,
         });
       }
     });
@@ -687,20 +697,35 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     viewers.set(token, ws);
     viewersChanged();
 
-    ws.send(
-      JSON.stringify({
-        type: "hello",
-        languages: currentLanguages,
-        live: isLive(),
-        translates: currentTranslates,
-        since: isLive() ? liveSince : undefined,
-        // these two hellos are built by hand rather than through stamp(), so
-        // they have to carry the elapsed time as well or a viewer joining an
-        // in-progress stream falls straight back to subtracting the streamer's
-        // clock from its own
-        elapsedMs: isLive() ? elapsed() : undefined,
-      } satisfies ServerToViewer),
-    );
+    // Sent past the handshake write rather than inside it. A caller that opens
+    // the socket, awaits "open", and only then attaches a "message" handler -
+    // every test in this file, and any Node client written the same way -
+    // can otherwise never see this frame: on this stack the 101 response and
+    // an immediately-following send reach the client close enough together
+    // that "open" resolves and the frame is delivered before that caller's
+    // await has returned control to attach the listener, so it is emitted to
+    // nobody - measured with setImmediate too, which still lost it every
+    // time; a real timer-phase turn (setTimeout 0) did not, repeatedly. A
+    // real browser page attaches onmessage synchronously, before the socket even
+    // opens, so this never bites the phone/OBS viewer this frame is for.
+    setTimeout(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(
+        JSON.stringify({
+          type: "hello",
+          languages: currentLanguages,
+          live: isLive(),
+          translates: currentTranslates,
+          since: isLive() ? liveSince : undefined,
+          // these two hellos are built by hand rather than through stamp(), so
+          // they have to carry the elapsed time as well or a viewer joining an
+          // in-progress stream falls straight back to subtracting the streamer's
+          // clock from its own
+          elapsedMs: isLive() ? elapsed() : undefined,
+          ...currentBrand,
+        } satisfies ServerToViewer),
+      );
+    });
 
     ws.on("message", (data: RawData) => {
       try {
@@ -719,6 +744,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         // in-progress stream falls straight back to subtracting the streamer's
         // clock from its own
         elapsedMs: isLive() ? elapsed() : undefined,
+        ...currentBrand,
             } satisfies ServerToViewer),
           );
         }
@@ -771,12 +797,14 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       if (msg.type === "hello") {
         currentLanguages = { ...msg.languages };
         currentTranslates = msg.translates !== false;
+        currentBrand = { brandName: msg.brandName, brandColor: msg.brandColor };
         toViewers({
           type: "hello",
           languages: currentLanguages,
           live: true,
           translates: currentTranslates,
           since: msg.since,
+          ...currentBrand,
         });
         return;
       }

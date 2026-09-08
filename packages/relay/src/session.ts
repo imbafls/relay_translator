@@ -38,6 +38,10 @@ export interface SessionConfig {
   channelLabels?: string[];
   /** `#rrggbb` per channel, already sanitised by the hello parser */
   channelColors?: string[];
+  /** what viewers are told this stream is called; already sanitised */
+  brandName?: string;
+  /** `#rrggbb`, already sanitised by the hello parser */
+  brandColor?: string;
 }
 
 /**
