@@ -220,22 +220,42 @@ git commit -m "Measure latency against the stream in hand, not the whole session
 
 **Scope discipline.** Bound the *spend*, not the session. A streamer who stepped away for lunch must not come back to a dead link and no explanation. Do **not** stop the session, do not tear down capture, do not touch `powerSaveBlocker`.
 
-- [ ] **Step 1: Write the failing test**
+**A trap the plan originally walked into, ruled before dispatch.** The obvious
+design — stop forwarding after a period with no *final transcript*, resume on the
+next final — **deadlocks**: if no audio is forwarded, no transcript can be
+produced, so no final can ever arrive and the session is wedged silent for ever.
+Task 1 sharpens it, since after Task 1 the pipeline reopens indefinitely and a
+dead-pipeline hour would trip the bound and never release it.
 
-Feed audio continuously with no final for longer than the quiet period on a fake clock, and assert (a) no further audio reaches the STT seam, and (b) `deps.log` was called at `error` level naming why. Then feed a final *before* the period elapses and assert nothing is cut off — the timer must reset on real speech.
+**So the gate is locally-measured audio level, not finals.** `audio()` already
+receives raw 16-bit PCM, so a peak/RMS per chunk costs nothing and needs no help
+from the paid engine. The detector runs whether or not forwarding is on, which is
+what makes recovery possible. It also targets the real failure mode more
+precisely: a loopback source streaming digital silence after the game closed.
 
-- [ ] **Step 2: Run it and watch it fail** — audio keeps flowing for ever today.
+The "no final" signal is dropped deliberately — a streamer speaking a language the
+engine is failing to transcribe is still producing audio worth paying for.
+
+- [ ] **Step 1: Write the failing tests**
+
+1. Feed chunks that are **all below the silence floor** for longer than the quiet period on a fake clock, and assert (a) no further audio reaches the STT seam, and (b) `deps.log` was called at `error` level naming the elapsed time and the reason.
+2. Then feed a chunk **above the floor** and assert forwarding resumes immediately. This is the test that would have caught the deadlock.
+3. Feed normal speech-level audio for longer than the period and assert nothing is ever cut off.
+
+- [ ] **Step 2: Run them and watch them fail** — audio keeps flowing for ever today.
 
 - [ ] **Step 3: Add the bound**
 
 `packages/shared/src/index.ts`: `AppConfig` gains
 
 ```ts
-  /** minutes of audio with no transcript before the relay stops paying for it; 0 disables */
+  /** minutes of unbroken silence before the relay stops paying to transcribe it; 0 disables */
   idleBillingStopMinutes?: number;
 ```
 
-with a default of `60` beside the other defaults. `session.ts`: track the last final's timestamp, and once the configured period passes with none, stop forwarding audio to the paid engine and log at `error` level naming the elapsed time and the reason. Resume on the next real final. `0` disables the bound entirely.
+with a default of `60` beside the other defaults. `session.ts`: compute a cheap peak per chunk, track when audio was last above a silence floor, and once the configured period passes with everything below it, stop forwarding to the paid engine and log at `error` level. **Resume the instant a chunk rises above the floor.** `0` disables the bound entirely.
+
+Make the floor a named constant with a comment explaining the number — a floor set too high clips a very quiet speaker, and that is the failure mode worth documenting for whoever tunes it later.
 
 - [ ] **Step 4: Run the tests** — `npx vitest run packages/relay packages/shared && pnpm -r typecheck`
 
