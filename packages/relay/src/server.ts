@@ -115,6 +115,13 @@ export interface RelayHandle {
   getUsage(): Promise<UsageInfo>;
   /** viewers currently attached to this relay */
   viewerCount(): number;
+  /**
+   * Whether the speech pipeline is currently up under the connected publisher -
+   * the same flag `isLive()` and every viewer's `hello`/`status` already key on.
+   * `false` with no publisher connected still reads as "not live", which is
+   * correct: there is nothing for a caller here to distinguish it from.
+   */
+  sttLive(): boolean;
   close(): Promise<void>;
 }
 
@@ -959,6 +966,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           return () => broadcastListeners.delete(cb);
         },
         viewerCount: () => viewers.size,
+        sttLive: () => sttLive,
         async getUsage(): Promise<UsageInfo> {
           return {
             deepgram: {

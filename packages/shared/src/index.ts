@@ -1081,6 +1081,8 @@ export interface ControlStatus {
     remoteViewerUrl?: string;
     /** uplink connection state to the remote relay (phone viewers) */
     uplinkState?: "off" | "connecting" | "connected" | "disconnected" | "error";
+    /** whether the speech pipeline is currently connected; absent on a remote relay */
+    sttLive?: boolean;
     /** last measured uplink ping round-trip (ms) */
     uplinkRttMs?: number;
     /** viewers attached to the local relay (OBS + LAN phones) */

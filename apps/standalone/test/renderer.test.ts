@@ -1513,3 +1513,107 @@ describe("setting what viewers are told the stream is called", () => {
     expect(calls.setConfig).toContainEqual({ brandName: "" });
   });
 });
+
+/**
+ * The topbar during a dead speech pipeline.
+ *
+ * recomputeState() (app.ts) derives "live" from relayClient's socket state
+ * and capture.capturing - a loopback WebSocket that never dropped and a
+ * microphone that is still running. Neither observes STT, so the topbar kept
+ * reading ON AIR with a running clock straight through an outage that had
+ * already ended captions, while the relay's own isLive() (packages/relay/src/
+ * server.ts) went false and told every viewer "speech pipeline lost". Only
+ * the streamer's own app lied.
+ *
+ * Reaching a genuinely live session needs the same three things
+ * BrowserAudioCapture.start() needs - an AudioContext, an AudioWorklet and a
+ * real getUserMedia - and packages/companion/test/capture.test.ts already
+ * says standing all three up would mean testing a reimplementation. So only
+ * the two boundary classes are stood in for here: the hardware
+ * (BrowserAudioCapture) and the network (RelayPublisherClient). Everything
+ * between them - startSession, recomputeState, setState, renderTopbar - runs
+ * for real, through a real click on START.
+ */
+describe("the topbar during a dead speech pipeline", () => {
+  const statusText = (): string => (document.getElementById("statusText") as HTMLElement).textContent || "";
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    // same module instance app.ts's own `import` resolved to: bootWith's
+    // vi.resetModules() + dynamic import of app.ts already happened above,
+    // and nothing has reset the module graph since
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    // network edge: skip the real socket handshake, go straight to connected
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: { onState?: (s: string) => void };
+    }) {
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    // hardware edge: skip getUserMedia / AudioContext / AudioWorklet entirely
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+
+  it("sanity: a live session with nothing pushed about STT still reads ON AIR", async () => {
+    await goLive();
+    expect(statusText()).toBe("ON AIR");
+  });
+
+  it("stops reading ON AIR once the speech pipeline is reported dead", async () => {
+    await goLive();
+
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "",
+        uplinkState: "off",
+        sttLive: false,
+      },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect(
+      statusText(),
+      "the topbar still claims ON AIR with the speech pipeline confirmed dead",
+    ).toBe("ON AIR · NO SPEECH");
+  });
+
+  it("keeps reading ON AIR when sttLive is absent, the way a remote relay reports it", async () => {
+    await goLive();
+
+    // a remote relay does no STT of its own and never sends this field at
+    // all - absent must never be read as dead, or every remote-relay user
+    // sees a permanent false warning
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "",
+        uplinkState: "off",
+      },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect(statusText(), "an absent sttLive must not read as dead").toBe("ON AIR");
+  });
+});

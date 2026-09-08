@@ -340,7 +340,10 @@ function renderTopbar(): void {
   };
   const [state, label] = map[session];
   st.dataset.state = state;
-  text.textContent = label;
+  // sttLive is absent on a remote relay and on any status pushed before the
+  // embedded relay has come up - only an explicit false, from a publisher
+  // session that connected and then lost its speech pipeline, reads as dead
+  text.textContent = session === "live" && status?.relay.sttLive === false ? "ON AIR · NO SPEECH" : label;
 }
 
 function tickClock(): void {
@@ -2455,6 +2458,10 @@ function bind(): void {
     renderFooter();
     // the uplink state decides it, and that only ever arrives here
     renderReach();
+    // sttLive travels only through this push, not through relayClient's own
+    // state - a session can stay "live" locally (loopback socket, running mic)
+    // while the speech pipeline underneath it has gone away
+    renderTopbar();
     if (s.update) setUpdate(s.update);
     if (view === "settings") renderKeyStatuses();
   });

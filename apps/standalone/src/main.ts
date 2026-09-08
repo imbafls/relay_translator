@@ -406,6 +406,10 @@ function currentStatus() {
       remoteViewerUrl: phoneUrl(),
       uplinkState: uplinkState,
       uplinkRttMs: uplink?.rttMs,
+      // absent while the embedded relay is not up (startup/restart) rather than
+      // false - false would read as "speech is down" to a topbar that has not
+      // even connected to a session yet
+      sttLive: relay?.sttLive(),
       viewers: relay?.viewerCount() ?? 0,
       remoteViewers: uplink?.remoteViewers ?? 0,
     },
