@@ -301,13 +301,27 @@ export class PublisherSession {
    * reopens, not from the session's own start.
    */
   private currentStreamWallStart = 0;
-  /** wall clock of the most recent audio byte */
+  /**
+   * Wall clock of the most recent audio byte. Fix-round-3 Finding 1: also
+   * reset to `currentStreamWallStart` in `onOpen`, so a gap that started
+   * before a reopen cannot be measured from a `lastAudioAt` that predates
+   * the current stream - see `silentMs`'s own comment.
+   */
   private lastAudioAt = 0;
   /**
-   * How long the publisher sent no audio at all - muted, or capture stalled.
-   * The STT clock cannot advance across a gap but the wall clock does, so
-   * without this every latency figure for the rest of the session reads the
-   * total muted time too high.
+   * How long the CURRENT stream has sent no audio at all - muted, or capture
+   * stalled. The STT clock cannot advance across a gap but the wall clock
+   * does, so without this every latency figure would read the muted time too
+   * high.
+   *
+   * Fix-round-3 Finding 1: this used to be session-cumulative, never reset,
+   * while `currentStreamWallStart` (what `onFinal` diffs it against) resets
+   * on every reopen. A mute or a gated stretch banked before a reopen still
+   * subtracted its full total against a stream that was only just born,
+   * sinking every later final below zero and clamping the badge to 0 for the
+   * rest of the session. Reset to 0 in `onOpen`, alongside
+   * `currentStreamWallStart`, so only silence that happened within the
+   * CURRENT stream's own window is ever subtracted from it.
    */
   private silentMs = 0;
   /**
@@ -360,6 +374,14 @@ export class PublisherSession {
    * Subtracting whatever the detector already claimed for THIS call, before
    * adding the rest, is what keeps the two mechanisms from ever double-
    * counting the same wall-clock span.
+   *
+   * Fix-round-3 Finding 1: if the STT stream reopens WHILE the gate is still
+   * shut, this watermark could otherwise sit at a point before the new
+   * stream existed - the next `audio()` call would then fold the whole
+   * pre-reopen span into the freshly-zeroed `silentMs`, reintroducing the
+   * same stale-carryover bug through this path instead of the mute-gap one.
+   * `onOpen` advances it to the new `currentStreamWallStart` for exactly
+   * this reason.
    */
   private gateWatermark = 0;
   /**
@@ -476,6 +498,18 @@ export class PublisherSession {
         // currentStreamWallStart's own comment. Stamped on every open,
         // including reopens, which is the whole fix.
         this.currentStreamWallStart = Date.now();
+        // Fix-round-3 Finding 1. silentMs (and the trackers that feed it) were
+        // SESSION-cumulative while currentStreamWallStart is per-stream - so
+        // any silence banked before a reopen (a mute via lastAudioAt, or an
+        // idle-billing-gated stretch via gateWatermark - see their own
+        // comments) survived the reopen and was subtracted against a stream
+        // that had only just started, sinking the next several finals below
+        // zero and clamping the badge to 0 for the rest of the session. All
+        // three reset here, to this same instant, so nothing measured before
+        // this stream existed can be subtracted from it.
+        this.silentMs = 0;
+        this.lastAudioAt = this.currentStreamWallStart;
+        if (this.gateWatermark > 0) this.gateWatermark = this.currentStreamWallStart;
         // a stream that opened is a stream that works: the ladder starts again
         // from the top next time, rather than a session slowly using it up
         this.sttReopens = 0;

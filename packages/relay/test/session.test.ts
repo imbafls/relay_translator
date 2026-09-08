@@ -261,6 +261,14 @@ describe("latency across a stream reopen", () => {
     await tick(); // let the first stream's onOpen fire
     session.audio(Buffer.alloc(1)); // the session's first audio byte
 
+    // Fix-round-3 Finding 1. A mute BEFORE the reopen banks real silence into
+    // `silentMs` - session-cumulative, never reset - which the anchor-only
+    // fix above left mixed with the now per-stream `currentStreamWallStart`.
+    // 30s of muted publisher, same shape as the "stays honest after the
+    // publisher mutes" test below, but landing before a reconnect this time.
+    vi.setSystemTime(t0 + 30_000);
+    session.audio(Buffer.alloc(1)); // unmute: the gap detector folds 30s into silentMs
+
     // ten minutes pass with the session alive - long enough that the badge
     // reading the SESSION's age, rather than the stream's, is unmistakable
     vi.setSystemTime(t0 + 10 * 60 * 1000);
@@ -278,6 +286,82 @@ describe("latency across a stream reopen", () => {
     expect(last, "no final reached the viewer after the reopen").toBeDefined();
     // ~100 ms real gap between the reopen and the final, not ~10 minutes
     expect(last!.latency?.stt, `latency badge read ${last!.latency?.stt}ms`).toBeLessThan(1000);
+    // Fix-round-3 Finding 1. The assertion above passes trivially against the
+    // bug too, because the broken formula clamps to exactly 0, and 0 < 1000.
+    // Pin that the badge is a real small number, not the clamp: the 30s mute
+    // happened entirely before this stream existed, so it must not still be
+    // sitting in `silentMs` subtracting against a stream that is 100ms old.
+    expect(
+      last!.latency?.stt,
+      `latency badge was ${last!.latency?.stt}ms - a stale pre-reopen silentMs clamped it to 0`,
+    ).toBeGreaterThan(0);
+
+    session.stop();
+  });
+
+  it("does not let an idle-billing gate shut before the reopen leak into the new stream's silence either", async () => {
+    // Fix-round-3 Finding 1, the more realistic unattended trigger: Task 5
+    // folds a billing-gated stretch into `silentMs` by the hour (see
+    // `gateWatermark`'s own comment), and a loopback source keeps posting
+    // audio() calls the whole time - so this is the path that actually
+    // reaches "an hour of gated silence adds ~3,600,000ms to silentMs",
+    // not the mute-gap detector above.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+
+    const viewers: ServerToViewer[] = [];
+    let events: SttEvents | undefined;
+    const SR = 16000;
+    const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (ev: SttEvents) => {
+          events = ev;
+          setImmediate(() => ev.onOpen?.());
+          return { sendAudio: () => true, keepAlive: () => {}, close() {} };
+        },
+        sttReopenDelaysMs: [10],
+        idleBillingStopMinutes: 1, // a 60s bound, reachable without faking an hour
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+
+    session.start();
+    await tick();
+    session.audio(silentFrame()); // seeds the "last loud" clock
+
+    // silence past the 60s bound trips the idle-billing gate; capture keeps
+    // posting frames the whole time, the way a loopback source does
+    vi.setSystemTime(t0 + 65_000);
+    session.audio(silentFrame());
+
+    // the socket also drops WHILE the gate is still shut, and reopens
+    events?.onClose?.();
+    await tick(50);
+
+    // the new stream's word timings restart near zero
+    vi.setSystemTime(t0 + 65_100);
+    events?.onFinal?.("enemy down mid", { audioEndSec: 0.05, channel: 0 });
+
+    const last = finals(viewers).at(-1);
+    expect(last, "no final reached the viewer after the reopen").toBeDefined();
+    expect(
+      last!.latency?.stt,
+      `latency badge was ${last!.latency?.stt}ms - a gated stretch banked before the reopen clamped it to 0`,
+    ).toBeGreaterThan(0);
+    expect(last!.latency?.stt).toBeLessThan(1000);
 
     session.stop();
   });
