@@ -654,7 +654,11 @@ function refreshTray(): void {
     trayUpdateLabel = label;
     tray.setContextMenu(buildTrayMenu());
   }
-  tray.setToolTip(`${APP_NAME} - ${live ? "live" : sessionState}`);
+  // same strict `=== false` shape as the topbar: undefined (startup/restart,
+  // before `relay` is assigned, or a remote relay that never reports this)
+  // must read as "live", not "dead"
+  const noSpeech = live && relay?.sttLive() === false;
+  tray.setToolTip(`${APP_NAME} - ${noSpeech ? "live, no speech" : live ? "live" : sessionState}`);
   tray.setImage(
     live
       ? nativeImage.createFromPath(path.join(__dirname, "..", "assets", "tray-live.png"))
