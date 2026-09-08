@@ -89,6 +89,10 @@ export interface AppConfig {
   /** token overrides for remote relay mode (embedded relay manages its own) */
   publisherToken?: string;
   viewerToken?: string;
+  /** what viewers are told this stream is called; blank means unbranded */
+  brandName?: string;
+  /** `#rrggbb` accent for the viewer's header only, never for caption text */
+  brandColor?: string;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -369,6 +373,33 @@ export function safeSpeakerColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const v = value.trim().toLowerCase();
   return /^#[0-9a-f]{6}$/.test(v) ? v : undefined;
+}
+
+/** the longest brand name a viewer page will render */
+export const MAX_BRAND_NAME = 24;
+
+/**
+ * What a stream calls itself, as shown to viewers.
+ *
+ * Separate from `MAX_SPEAKER_TAG`: a speaker tag is drawn on every caption and
+ * has to stay short, while this appears once in the header and can afford a
+ * real name. Reusing one number for both would tie two unrelated layouts
+ * together.
+ */
+export function safeBrandName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().slice(0, MAX_BRAND_NAME);
+  return v.length > 0 ? v : undefined;
+}
+
+/**
+ * Publisher-chosen identity for a stream, shown in the viewer's header and
+ * nowhere else. Untrusted: it arrives over a socket from whoever holds the
+ * publish token.
+ */
+export interface Brand {
+  brandName?: string;
+  brandColor?: string;
 }
 
 /** what a device enumerates as; a virtual chat mix is indistinguishable from a headset */
@@ -950,7 +981,7 @@ export interface SessionElapsed {
 }
 
 export type ServerToViewer =
-  | ({ type: "hello"; languages: Languages; live: boolean; translates: boolean } & SessionElapsed)
+  | ({ type: "hello"; languages: Languages; live: boolean; translates: boolean } & SessionElapsed & Brand)
   | ({ type: "partial"; id: number; source: string } & SpeakerTag)
   | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
   | ({ type: "status"; live: boolean; message?: string } & SessionElapsed)
@@ -989,6 +1020,10 @@ export type PublisherToServer =
       channelLabels?: string[];
       /** `#rrggbb` per channel, parallel to channelLabels */
       channelColors?: string[];
+      /** what viewers are told this stream is called */
+      brandName?: string;
+      /** `#rrggbb` accent for the viewer header */
+      brandColor?: string;
     }
   | { type: "ping" };
 
@@ -999,7 +1034,7 @@ export type PublisherToServer =
 // ---------------------------------------------------------------------------
 
 export type UplinkToServer =
-  | { type: "hello"; languages: Languages; translates: boolean; since?: number }
+  | ({ type: "hello"; languages: Languages; translates: boolean; since?: number } & Brand)
   | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
   | { type: "status"; live: boolean; message?: string; since?: number }
   | { type: "ping" };
