@@ -31,6 +31,76 @@ mirroring the release to the VPS, setting `RELAY_PUBLISHER_TOKEN` /
 
 ---
 
+## Closed by the last build (v0.7.0)
+
+Written 2026-09-08. Eight tasks, chosen against one fact: after 0.7.0 ships,
+this product runs for weeks with nobody watching. All eight landed on
+`master`; none has been version-bumped, tagged or deployed yet - that is the
+owner's call.
+
+- **The speech pipeline no longer gives up for the session.** The reopen
+  ladder used to exhaust four attempts in ~12 s (`STT_REOPEN_DELAYS_MS`,
+  `packages/relay/src/session.ts`) and stop for good, so one bad connection
+  permanently ended captions. It now falls onto an endless 30 s retry tail
+  (`STT_REOPEN_TAIL_MS`) once the fast ladder is spent, and narrates the
+  transition into that tail once - not every attempt after, which would have
+  filled `relay.log` on a week offline. `1e65dc8`, `8857de6`, `ecf4b2d`.
+- **The app stops claiming ON AIR when speech is dead.** `sttLive` now
+  reaches the desktop app; the topbar reads `ON AIR · NO SPEECH`
+  (`apps/standalone/renderer/app.ts`) and the tray tooltip reads
+  `live, no speech` (`apps/standalone/src/main.ts`). `8e57ca9`, `32c9959`.
+- **The hosted room stops treating "a hello arrived" as "somebody is
+  streaming."** The uplink hello now carries `live`, and `room.ts` on the
+  hosted relay honours it instead of marking the room live unconditionally on
+  every hello, every reconnect and every idle settings change. `ad8bd97`,
+  `fb93f57`, `597a21e`. This closes the *hosted* half of the liveness problem
+  only - the self-hosted relay's `isLive()` gap and the connected `stamp()`
+  asymmetry, both below in "Not blocked", are a different code path
+  (`packages/relay/src/server.ts`) and were explicitly out of this task's
+  scope. Checked against what shipped: both notes still read correctly and
+  neither has changed, so they are not duplicated here.
+- **Latency reads the current stream, not the whole session.** Fixed in
+  `84d9118`: `currentStreamWallStart` (`packages/relay/src/session.ts`) now
+  resets on every STT reopen, not just once at session start, so a latency
+  figure after a reconnect no longer measures against a stream that no
+  longer exists.
+- **A quiet session stops paying for silence.** A locally-measured peak
+  detector (`SILENCE_PEAK_FLOOR`, `packages/relay/src/session.ts`) stops
+  forwarding audio - to Deepgram or a local model alike - after
+  `idleBillingStopMinutes` (default 60) of nothing clearing the floor, and
+  resumes on the first chunk that does. Deepgram's socket is held open with
+  `KeepAlive` meanwhile so it does not idle-close and flap the session.
+  `4b1cbac`, `d1cb164`, `2141329`, `4121197`, `d30befc`, `c7a9b7b`, `837f116`,
+  `e971c6e`.
+- **A way to send a problem report exists, and it is redacted before
+  anything leaves the machine.** `redactLog()` in `packages/shared/src/index.ts`
+  strips keys, relay tokens, `/watch/` links, LAN IPs and the Windows account
+  name. `9a54b4c`, `83f4519`, `237d31f`, `3ad32c5`.
+- **`POST /feedback`** on the hosted Worker (`apps/hosted-relay/src/index.ts`)
+  writes a rate-limited, size-capped report to a new R2 bucket
+  (`callout-relay-feedback`), storing nothing that identifies a machine.
+  `de5208b`, `d107abe`.
+- **SEND FEEDBACK in the app** (`apps/standalone/renderer/app.ts`,
+  `apps/standalone/src/main.ts`) previews exactly what will leave before
+  anything is sent, and sends only on a press of SEND. The POST runs in the
+  main process, not the renderer: the Worker answers no `Access-Control-*`
+  headers on any route, by design, so a renderer `fetch()` is blocked by
+  CORS. `e6f1cd8`, `ff23f12`.
+
+Reading the bucket back is deliberately an operator task - there is no read
+route on the Worker, so no visitor can ever reach it.
+`apps/hosted-relay/scripts/read-feedback.cjs` lists what has accumulated and
+downloads it, authenticated the same way `read-cost.cjs` is:
+`CLOUDFLARE_API_TOKEN` if set, otherwise the OAuth token `wrangler login`
+already stored on this machine - the same credential `wrangler r2 object get
+--remote` itself resolves to, exercised against the real bucket while the
+script was written.
+
+The full entry is version `0.7.0` in `packages/shared/src/changelog.ts`;
+`node scripts/release-notes.mjs 0.7.0` renders it.
+
+---
+
 ## Blocked
 
 ### B4 — Code signing
@@ -54,6 +124,19 @@ wire signing into `electron-builder`.
 **Band: medium. Status: still failing for the user, still not reproducible
 here. Instrumented 2026-09-07 so the next failure leaves evidence; two
 candidate causes fixed the same day, one of them demonstrated end to end.**
+
+> **Untested since the fix, as of 2026-09-08 - said plainly here so nobody
+> re-derives it.** B6 has never been retried on a build that contains the
+> aliasing fix. The failure in the owner's `relay.log` below is timestamped
+> `2026-09-07T21:29:53Z`, eight seconds after the app restarted into
+> **0.5.12** - the version whose resume-download rework is exactly what
+> `f3f3d98` ("Stop handing the decoder bytes the socket is about to
+> overwrite") fixed. That fix shipped in **0.5.13**. So the failure recorded
+> just below was the aliasing regression, already fixed - but no model
+> download has been attempted since, on 0.5.13 or any later build, so B6's
+> original ~28% corruption symptom (first reported before 0.5.12's resume
+> support existed, and not explained by the aliasing bug) remains untested on
+> a build that has the fix.
 
 > **Reported again 2026-09-07**, on `local-nemotron-streaming` and
 > `local-whisper-turbo` - the two largest archives. Both left an EMPTY `.part`
