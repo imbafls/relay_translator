@@ -64,8 +64,9 @@ const TRANSLATE_ERROR_EVERY_MS = 30_000;
  * for the streamer to notice and restart.
  *
  * Starts fast because this is a live tool and a caption missed is gone, then
- * backs off so a genuinely dead engine is not hammered. Running out of the list
- * is what "gave up" means.
+ * backs off so a genuinely dead engine is not hammered. Running out of the
+ * list no longer means giving up - it switches the session onto
+ * STT_REOPEN_TAIL_MS's slow, endless tail instead.
  */
 const STT_REOPEN_DELAYS_MS = [300, 1_000, 3_000, 8_000];
 
@@ -169,6 +170,25 @@ export class PublisherSession {
   private lastTranslateErrorAt = 0;
   /** how many times the speech stream has been reopened since it last worked */
   private sttReopens = 0;
+  /**
+   * Whether the session has already announced entry into the endless retry
+   * tail. Set once, the first time the fast ladder is exhausted; cleared by
+   * onOpen, which is the only way out short of stop().
+   *
+   * Fix-round Finding 2: without this, the whole reopen-failure cycle - the
+   * "closed unexpectedly" warn, the "speech pipeline lost" viewer broadcast,
+   * the give-up line, and onError's own line for whatever actually failed -
+   * repeated every STT_REOPEN_TAIL_MS forever. On a real offline machine
+   * that is ~295 bytes/cycle, about 850 KB/day, enough to evict the give-up
+   * line itself - and everything logged before it - from the 1 MB relay.log
+   * within about a day. A later feature uploads relay.log on request; a log
+   * that is nothing but retry churn is worthless exactly when that matters.
+   * A viewer does not need "speech pipeline lost" repeated at it for a week
+   * either - a viewer who joins mid-outage gets the true state from its own
+   * hello (server.ts's `stamp()`/`isLive()`), which reads `sttLive` and is
+   * unaffected by any of this.
+   */
+  private sttDegraded = false;
   private reopenTimer: ReturnType<typeof setTimeout> | null = null;
   /** rebuilt on every open, so a reconnect uses the same handlers */
   private sttEvents: SttEvents | null = null;
@@ -273,6 +293,10 @@ export class PublisherSession {
         // a stream that opened is a stream that works: the ladder starts again
         // from the top next time, rather than a session slowly using it up
         this.sttReopens = 0;
+        // and it is out of the degraded tail, so the next loss narrates
+        // again rather than staying quiet on the strength of an outage that
+        // is now over
+        this.sttDegraded = false;
         this.deps.log(
           "info",
           `stt open (${this.cfg.stt}, ${source}${this.cfg.channels > 1 ? `, ${this.cfg.channels} channels` : ""})`,
@@ -348,17 +372,29 @@ export class PublisherSession {
           });
       },
       onError: (message: string) => {
+        // once the session is already known to be in the degraded tail,
+        // every reopen attempt fails for the same underlying reason (an
+        // offline machine's DNS lookup, a still-missing local model) and
+        // this would otherwise fire on the same cadence as the tail itself
+        if (this.sttDegraded) return;
         this.deps.log("error", `stt error: ${message}`);
         this.deps.onSttError?.(message);
       },
       onClose: () => {
         if (this.closing) return;
-        // onError reached the app and onClose did not, so the failure that
-        // matters most - the socket simply going away, on a quota or an idle
-        // timeout - was the one nobody was told about. The desktop stayed ON
-        // AIR with the clock running and every chunk quietly dropped.
-        this.deps.log("warn", "stt closed unexpectedly");
-        this.deps.toViewers({ type: "status", live: false, message: "speech pipeline lost" });
+        // captured before anything below can flip it - true here means the
+        // pipeline was already known to be down when this close came in, so
+        // this cycle has nothing new to say (see sttDegraded's own comment)
+        const alreadyDegraded = this.sttDegraded;
+        if (!alreadyDegraded) {
+          // onError reached the app and onClose did not, so the failure that
+          // matters most - the socket simply going away, on a quota or an
+          // idle timeout - was the one nobody was told about. The desktop
+          // stayed ON AIR with the clock running and every chunk quietly
+          // dropped.
+          this.deps.log("warn", "stt closed unexpectedly");
+          this.deps.toViewers({ type: "status", live: false, message: "speech pipeline lost" });
+        }
         this.deps.setLive(false);
 
         const ladder = this.deps.sttReopenDelaysMs ?? STT_REOPEN_DELAYS_MS;
@@ -371,9 +407,15 @@ export class PublisherSession {
           // sttReopens keeps climbing past the ladder's own length so the
           // message can say how many attempts have actually been made.
           this.sttReopens += 1;
-          const message = `speech pipeline gave up after ${ladder.length} fast attempts - now retrying every ${Math.round(STT_REOPEN_TAIL_MS / 1_000)}s (attempt ${this.sttReopens}) until stopped`;
-          this.deps.log("error", message);
-          this.deps.onSttError?.(message);
+          if (!this.sttDegraded) {
+            // the transition into the tail, and the only time this cycle's
+            // outcome gets narrated - every cycle after this one repeats for
+            // the same reason, which is not news
+            this.sttDegraded = true;
+            const message = `speech pipeline exhausted ${ladder.length} fast attempts - now retrying every ${Math.round(STT_REOPEN_TAIL_MS / 1_000)}s (attempt ${this.sttReopens}) until stopped`;
+            this.deps.log("error", message);
+            this.deps.onSttError?.(message);
+          }
           this.armReopen(source, STT_REOPEN_TAIL_MS);
           return;
         }
@@ -398,7 +440,29 @@ export class PublisherSession {
     this.reopenTimer = setTimeout(() => {
       this.reopenTimer = null;
       if (this.closing || !this.sttEvents) return;
-      this.openStt(this.sttEvents, source);
+      try {
+        this.openStt(this.sttEvents, source);
+      } catch (err) {
+        // Fix-round Finding 4. Not reachable through this package's own
+        // engines today - every guarded failure inside openStt returns a
+        // fail() stub rather than throwing - but a custom `makeStt` is an
+        // embedder's own code, and the guarantee this session now makes is
+        // that the reopen chain never terminates. A synchronous throw here
+        // is the one way left to end it silently: reopenTimer is already
+        // null above, and without this nothing would ever re-arm it. Land
+        // on the tail rather than try to reconstruct where the fast ladder
+        // was - a reopen that throws synchronously is not the transient
+        // kind that ladder is for.
+        if (!this.sttDegraded) {
+          this.sttDegraded = true;
+          const reason = err instanceof Error ? err.message : String(err);
+          this.deps.log(
+            "error",
+            `speech pipeline reopen threw - retrying every ${Math.round(STT_REOPEN_TAIL_MS / 1_000)}s: ${reason}`,
+          );
+        }
+        this.armReopen(source, STT_REOPEN_TAIL_MS);
+      }
     }, delay);
   }
 
@@ -418,7 +482,13 @@ export class PublisherSession {
       );
     } else if (this.local) {
       if (!this.deps.localStt) {
-        this.deps.log("error", "local STT requested but this relay has no local model support");
+        // the worst case Finding 2 named: genuinely unrecoverable, so every
+        // reopen attempt lands right back here. Once the tail has already
+        // announced it once, repeating this exact line every cycle for ever
+        // is exactly the flooding this gate exists to stop.
+        if (!this.sttDegraded) {
+          this.deps.log("error", "local STT requested but this relay has no local model support");
+        }
         setImmediate(() => events.onClose?.());
         this.stt = { sendAudio: () => false, close() {} };
       } else {

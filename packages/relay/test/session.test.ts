@@ -503,7 +503,7 @@ describe("a speech socket that comes back", () => {
     vi.useRealTimers();
   });
 
-  function flaky(opts: { failReopens?: number } = {}) {
+  function flaky(opts: { failReopens?: number; offline?: boolean } = {}) {
     const viewers: ServerToViewer[] = [];
     const errors: string[] = [];
     const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
@@ -525,6 +525,11 @@ describe("a speech socket that comes back", () => {
           const kill = (): void => {
             if (!open) return;
             open = false;
+            // opts.offline mirrors a real offline machine, where the socket
+            // reports the DNS failure through onError before it reports
+            // onClose - this is the ordering Finding 2's byte math was
+            // measured against
+            if (opts.offline) events.onError?.("getaddrinfo ENOTFOUND relay.example");
             events.onClose?.();
           };
           built.push({ kill });
@@ -578,19 +583,32 @@ describe("a speech socket that comes back", () => {
     f.session.stop();
   });
 
-  it("gives up eventually and says so, rather than retrying for ever", async () => {
+  it("the fast ladder is bounded and hands off to a slow tail instead of hammering", async () => {
+    // Renamed by fix-round Finding 1. This used to be named "gives up
+    // eventually and says so, rather than retrying for ever" - true of the
+    // code this test was written against, false now that the session retries
+    // for ever by design (see "keeps trying after the ladder is spent"
+    // below). What this test actually exercises hasn't changed: the fast
+    // ladder in this test is only 120ms (20+40+60) long, so by 400ms real
+    // time it has been walked to its end and handed off to the slow tail.
     const f = flaky({ failReopens: 50 });
     f.session.start();
     await tick();
     f.built[0].kill();
     await tick(400);
 
-    // it must have RETRIED and then stopped - asserting only that an error was
-    // reported passes against code that never retries at all, because the
-    // first close already reports one
-    expect(f.built.length, "it never retried, so there was nothing to give up on").toBeGreaterThan(2);
-    expect(f.built.length, "it retried without any ceiling").toBeLessThan(12);
-    expect(f.errors.some((e) => /gave up/i.test(e)), `errors were: ${f.errors.join(" | ")}`).toBe(true);
+    // it must have actually RETRIED across the ladder - asserting only that
+    // an error was reported passes against code that never retries at all,
+    // because the first close already reports one
+    expect(f.built.length, "it never retried, so there was nothing to hand off from").toBeGreaterThan(2);
+    // this is really pinning STT_REOPEN_TAIL_MS (30s), not a retry ceiling:
+    // real time only advances 400ms here, which is long enough to walk the
+    // whole fast ladder but nowhere near long enough for the tail's own 30s
+    // interval to fire again. If STT_REOPEN_TAIL_MS ever drops anywhere
+    // close to 400ms this assertion starts failing for a reason that has
+    // nothing to do with a retry ceiling - there isn't one any more.
+    expect(f.built.length, "a reopen came from inside the tail's own interval").toBeLessThan(12);
+    expect(f.errors.some((e) => /exhausted/i.test(e)), `errors were: ${f.errors.join(" | ")}`).toBe(true);
     f.session.stop();
   });
 
@@ -647,9 +665,138 @@ describe("a speech socket that comes back", () => {
 
     const errorLogs = f.logs.filter((l) => l.level === "error");
     expect(
-      errorLogs.some((l) => /gave up/i.test(l.message)),
+      errorLogs.some((l) => /exhausted/i.test(l.message)),
       `error-level log lines were: ${errorLogs.map((l) => l.message).join(" | ") || "(none)"}`,
     ).toBe(true);
     f.session.stop();
+  });
+
+  it("stops narrating the same outage once the tail takes over, but keeps retrying underneath", async () => {
+    // Fix-round Finding 2. The whole cycle - the warn, the viewer broadcast,
+    // the give-up line, and (in the real offline case) onError's own line -
+    // repeated every 30s forever once the tail took over: ~295 bytes/cycle,
+    // about 850 KB/day, enough to evict the give-up line itself, and
+    // everything logged before it, from the 1 MB relay.log within about a
+    // day. This pins that each of those sources announces the transition
+    // once and then goes quiet, while the retry underneath keeps happening
+    // regardless - silence must not mean it stopped trying.
+    vi.useFakeTimers();
+    const f = flaky({ failReopens: 20, offline: true });
+    f.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    f.built[0].kill();
+    // walk the fast ladder (20 + 40 + 60 ms) to exhaustion - this is the
+    // real transition into the degraded state, and everything logged here
+    // is expected and wanted
+    await vi.advanceTimersByTimeAsync(200);
+    const errorsAtGiveUp = f.logs.filter((l) => l.level === "error").length;
+    const warnsAtGiveUp = f.logs.filter((l) => l.level === "warn").length;
+    const lostBroadcastsAtGiveUp = f.viewers.filter((m) => m.type === "status" && m.live === false).length;
+    expect(errorsAtGiveUp, "the give-up transition itself produced no error log").toBeGreaterThan(0);
+    expect(warnsAtGiveUp, "the ladder's own closes produced no warn log").toBeGreaterThan(0);
+
+    // three more tail cycles (90s into what could be a week-long outage) -
+    // none of the above should grow, because nothing new is true that a
+    // reader wasn't already told
+    await vi.advanceTimersByTimeAsync(3 * 30_000);
+
+    expect(
+      f.logs.filter((l) => l.level === "error").length,
+      "an error line repeated on every tail cycle instead of announcing the outage once",
+    ).toBe(errorsAtGiveUp);
+    expect(
+      f.logs.filter((l) => l.level === "warn").length,
+      `"stt closed unexpectedly" kept repeating into the tail`,
+    ).toBe(warnsAtGiveUp);
+    expect(
+      f.viewers.filter((m) => m.type === "status" && m.live === false).length,
+      `"speech pipeline lost" kept broadcasting into the tail`,
+    ).toBe(lostBroadcastsAtGiveUp);
+
+    // silence must not mean it stopped trying
+    expect(f.built.length, "the tail went quiet AND stopped retrying").toBeGreaterThan(4);
+
+    f.session.stop();
+  });
+
+  it("keeps the reopen chain alive even if openStt itself throws synchronously", async () => {
+    // Fix-round Finding 4. armReopen's callback called openStt with no
+    // try/catch. Every guarded failure inside openStt returns a fail() stub
+    // instead of throwing, so this was not reachable through this package's
+    // own code - but the guarantee this task now makes is that the reopen
+    // chain never terminates, and a synchronous throw out of a custom
+    // makeStt (an embedder's own engine, not this package's) is the one way
+    // left to end it silently, with reopenTimer already null and nothing
+    // re-armed behind it.
+    vi.useFakeTimers();
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    let calls = 0;
+    // captured from the first makeStt call so the test can kill the stream
+    // by hand, the same events object the session itself reuses across
+    // every reopen (per its own "rebuilt on every open" comment on start())
+    let firstEvents: SttEvents | undefined;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents) => {
+          calls += 1;
+          if (calls === 1) {
+            firstEvents = events;
+            setImmediate(() => events.onOpen?.());
+            return { sendAudio: () => true, close() {} };
+          }
+          if (calls === 2) {
+            // the reopen ladder's first attempt throws synchronously,
+            // instead of going through the normal fail() stub every other
+            // failure in this package uses
+            throw new Error("synchronous boom from a custom makeStt");
+          }
+          // the chain recovered and is trying again
+          setImmediate(() => events.onOpen?.());
+          return { sendAudio: () => true, close() {} };
+        },
+        sttReopenDelaysMs: [20, 40, 60],
+        toViewers: () => {},
+        setLive: () => {},
+        onSttError: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+
+    session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls, "the first stream never opened").toBe(1);
+
+    // kill it by hand - this seam has no built[].kill() the way flaky()'s
+    // does, since the point here is the throwing makeStt, not the kill path
+    firstEvents?.onClose?.();
+
+    // the reopen fires on the ladder's first rung (20ms) and throws inside it
+    await vi.advanceTimersByTimeAsync(20);
+    expect(calls, "the throwing reopen attempt never happened").toBe(2);
+
+    // nothing at ladder speed should follow a throw - only the tail's 30s
+    // re-arm should bring the chain back, so a jump smaller than that must
+    // still show nothing
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(calls, "the throw was swallowed with nothing re-armed behind it").toBe(2);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(calls, "the chain never came back after openStt threw").toBe(3);
+
+    expect(
+      logs.some((l) => l.level === "error" && /threw|boom/i.test(l.message)),
+      `logs were: ${logs.map((l) => `${l.level}:${l.message}`).join(" | ")}`,
+    ).toBe(true);
+
+    session.stop();
   });
 });
