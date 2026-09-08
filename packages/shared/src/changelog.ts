@@ -28,6 +28,33 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.7.0",
+    date: "2026-09-08",
+    headline: "Speech that keeps trying, and status that tells the truth",
+    changes: [
+      {
+        kind: "fixed",
+        text: "If your speech connection drops - a Wi-Fi blip, an outage, anything - the app now keeps trying to reconnect for as long as the session runs, instead of giving up for good. It used to burn through four attempts in about twelve seconds, which is roughly what an offline connection produces, and then stop trying at all - so anyone captioning through an outage longer than that had to notice and restart the session themselves. It now backs off to retrying every 30 seconds and keeps going until the connection comes back or you press STOP.",
+      },
+      {
+        kind: "fixed",
+        text: "If speech recognition is down, the app says so instead of still showing ON AIR. The top bar reads ON AIR · NO SPEECH, and the tray icon's tooltip reads live, no speech - so a dead speech pipeline is visible at a glance instead of looking identical to a working session.",
+      },
+      {
+        kind: "fixed",
+        text: "A phone or browser link now shows OFF AIR while the app is open but no session is running. It used to mark the room live on every uplink reconnect, every relay restart, and every settings change - even while the app just sat idle in the tray - so anyone holding the link could see ON AIR when nothing was actually being streamed.",
+      },
+      {
+        kind: "fixed",
+        text: "If there's been nothing but silence for an hour, the app stops sending audio to be transcribed - so a session left running overnight, or while you step away, doesn't keep racking up Deepgram minutes for dead air. The moment real audio comes through again it picks back up on its own; nothing needs restarting.",
+      },
+      {
+        kind: "added",
+        text: "SETTINGS now has SEND FEEDBACK: a box to describe a problem, an optional tick to attach your relay.log, and a preview that shows exactly what would be sent before you send it - keys, tokens, viewer links, LAN addresses and your Windows account name are stripped out of the log first. Nothing is sent until you press SEND; typing a message or ticking the log box does not send anything by itself.",
+      },
+    ],
+  },
+  {
     version: "0.6.0",
     date: "2026-09-08",
     headline: "A link you send now says whose it is",
