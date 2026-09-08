@@ -219,6 +219,8 @@ function startUplink(): void {
     languages: cfg.languages,
     translates: translationActive(cfg),
     since: sessionStartedAt,
+    brandName: cfg.brandName,
+    brandColor: cfg.brandColor,
   });
   void syncRemoteViewerToken();
 }
@@ -453,6 +455,8 @@ async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
         languages: cfg.languages,
         translates: translationActive(cfg),
         since: sessionStartedAt,
+        brandName: cfg.brandName,
+        brandColor: cfg.brandColor,
       });
   }
   if (before.autoUpdate !== cfg.autoUpdate || before.updateFeedUrl !== cfg.updateFeedUrl) {

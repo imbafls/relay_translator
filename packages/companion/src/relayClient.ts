@@ -94,6 +94,8 @@ export class RelayPublisherClient {
         channels: this.hello.channels,
         channelLabels: this.hello.channelLabels,
         channelColors: this.hello.channelColors,
+        brandName: this.hello.brandName,
+        brandColor: this.hello.brandColor,
       });
     };
 

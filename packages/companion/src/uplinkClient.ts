@@ -12,7 +12,13 @@ export class UplinkClient {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = true;
-  private hello: { languages: Languages; translates: boolean; since?: number } = {
+  private hello: {
+    languages: Languages;
+    translates: boolean;
+    since?: number;
+    brandName?: string;
+    brandColor?: string;
+  } = {
     languages: { source: "en", target: "vi" },
     translates: true,
   };
@@ -40,7 +46,13 @@ export class UplinkClient {
     return ws.readyState === openConst;
   }
 
-  connect(hello: { languages: Languages; translates: boolean; since?: number }): void {
+  connect(hello: {
+    languages: Languages;
+    translates: boolean;
+    since?: number;
+    brandName?: string;
+    brandColor?: string;
+  }): void {
     this.stopped = false;
     this.hello = hello;
     this.open();
@@ -84,6 +96,8 @@ export class UplinkClient {
         languages: this.hello.languages,
         translates: this.hello.translates,
         since: this.hello.since,
+        brandName: this.hello.brandName,
+        brandColor: this.hello.brandColor,
       });
       this.setState("connected");
       this.startPing();
@@ -171,7 +185,13 @@ export class UplinkClient {
     if (this.connected) this.ws!.send(JSON.stringify(msg));
   }
 
-  sendHello(hello: { languages: Languages; translates: boolean; since?: number }): void {
+  sendHello(hello: {
+    languages: Languages;
+    translates: boolean;
+    since?: number;
+    brandName?: string;
+    brandColor?: string;
+  }): void {
     this.hello = hello;
     this.send({ type: "hello", ...hello });
   }

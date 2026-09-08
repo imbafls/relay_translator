@@ -16,6 +16,8 @@ let port: number;
 /** every socket the server has accepted, in order */
 let accepted: NodeWebSocket[] = [];
 let clients: UplinkClient[] = [];
+/** every JSON frame any accepted socket has received, in order */
+let frames: Record<string, unknown>[] = [];
 
 const live = (): NodeWebSocket[] => accepted.filter((ws) => ws.readyState === ws.OPEN);
 
@@ -33,11 +35,16 @@ async function until(cond: () => boolean, what: string, ms = 6000): Promise<void
 beforeEach(async () => {
   accepted = [];
   clients = [];
+  frames = [];
   wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   wss.on("connection", (ws) => {
     accepted.push(ws);
-    ws.on("message", () => {
-      /* the relay answers hello/ping; nothing here needs to */
+    ws.on("message", (data) => {
+      try {
+        frames.push(JSON.parse(String(data)));
+      } catch {
+        /* not our frame */
+      }
     });
   });
   await new Promise<void>((r) => wss.once("listening", r));
@@ -299,5 +306,39 @@ describe("being displaced by another machine", () => {
     accepted[0].close(1001, "gone");
     await until(() => accepted.length === 2, "the reconnect", 8000);
     c.disconnect();
+  });
+});
+
+describe("the hello an uplink sends", () => {
+  /**
+   * Both of these clients rebuild their hello field by field out of
+   * `this.hello` rather than spreading it, so a field added to the type alone
+   * reaches nothing. That is exactly how `color` went missing on the subtitle
+   * path - see speakerTag.test.ts.
+   */
+  const BRANDED = { ...HELLO, brandName: "Omer's stream", brandColor: "#e0a43a" };
+
+  it("carries the brand on the hello it opens with", async () => {
+    const c = makeClient();
+    c.connect(BRANDED);
+    await until(() => frames.some((f) => f.type === "hello"), "the opening hello");
+
+    const hello = frames.find((f) => f.type === "hello")!;
+    expect(hello.brandName).toBe("Omer's stream");
+    expect(hello.brandColor).toBe("#e0a43a");
+  });
+
+  it("carries it again when the brand changes mid-connection", async () => {
+    const c = makeClient();
+    c.connect(HELLO);
+    await until(() => live().length === 1, "the connection");
+    c.sendHello(BRANDED);
+    await until(
+      () => frames.filter((f) => f.type === "hello").length === 2,
+      "a second hello",
+    );
+
+    const hello = frames.filter((f) => f.type === "hello")[1];
+    expect(hello.brandName).toBe("Omer's stream");
   });
 });
