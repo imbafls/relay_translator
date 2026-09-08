@@ -193,8 +193,23 @@ export class PublisherSession {
   /** rebuilt on every open, so a reconnect uses the same handlers */
   private sttEvents: SttEvents | null = null;
   private closing = false;
-  /** wall clock of the first audio byte (STT word timings are relative to it) */
+  /**
+   * Wall clock of the session's first audio byte. Kept only to gate the
+   * mute-gap check below against a false gap on that very first frame
+   * (`lastAudioAt` starts at 0, which is not a real timestamp to diff
+   * against). NOT used for latency any more - see `currentStreamWallStart`.
+   */
   private streamWallStart = 0;
+  /**
+   * Wall clock of the moment the CURRENT speech stream opened. STT word
+   * timings (`audioEndSec`) restart at zero on every new stream - Deepgram's
+   * word `end` on a fresh socket, the local worker's `fed / SAMPLE_RATE` on a
+   * freshly constructed state - and the reopen ladder builds that new stream
+   * without touching `streamWallStart`. So the latency arithmetic has to
+   * measure from here, stamped fresh in `onOpen` on every open including
+   * reopens, not from the session's own start.
+   */
+  private currentStreamWallStart = 0;
   /** wall clock of the most recent audio byte */
   private lastAudioAt = 0;
   /**
@@ -290,6 +305,11 @@ export class PublisherSession {
 
     const events = {
       onOpen: () => {
+        // this stream's word timings (audioEndSec) start counting from here,
+        // not from whenever the session itself started - see
+        // currentStreamWallStart's own comment. Stamped on every open,
+        // including reopens, which is the whole fix.
+        this.currentStreamWallStart = Date.now();
         // a stream that opened is a stream that works: the ladder starts again
         // from the top next time, rather than a session slowly using it up
         this.sttReopens = 0;
@@ -322,8 +342,8 @@ export class PublisherSession {
         const tag = this.tag(channel);
         const finalAt = Date.now();
         const sttMs =
-          meta.audioEndSec !== undefined && this.streamWallStart > 0
-            ? Math.max(0, Math.round(finalAt - this.streamWallStart - this.silentMs - meta.audioEndSec * 1000))
+          meta.audioEndSec !== undefined && this.currentStreamWallStart > 0
+            ? Math.max(0, Math.round(finalAt - this.currentStreamWallStart - this.silentMs - meta.audioEndSec * 1000))
             : undefined;
         const latency: SubtitleLatency = sttMs !== undefined ? { stt: sttMs } : {};
         const viewerLatency = this.cfg.latencyVisible !== false ? latency : undefined;

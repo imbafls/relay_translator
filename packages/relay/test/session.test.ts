@@ -200,6 +200,89 @@ describe("latency across a gap in the audio", () => {
   });
 });
 
+describe("latency across a stream reopen", () => {
+  /**
+   * Task 4. `streamWallStart` is stamped once, on the session's first audio
+   * frame, and never reset. But Deepgram's word `end` timings - and the local
+   * worker's `fed / SAMPLE_RATE` - restart at zero on every new socket, and
+   * the reopen ladder builds a new socket without touching `streamWallStart`.
+   * So from the first reconnect on, the badge reads the wall-clock age of the
+   * whole SESSION, not the age of the caption. An audit reproduced 603000 ms
+   * ten minutes in. `silentMs` cannot compensate: `audio()` advances
+   * `lastAudioAt` on every chunk whether or not the socket accepted it, so
+   * audio arriving through a reconnect records no gap either.
+   */
+
+  // only Date is faked; the reopen ladder's own setTimeout runs for real, so
+  // this waits on it for real rather than advancing fake timers
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const finals = (viewers: ServerToViewer[]) =>
+    viewers.filter(
+      (m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle" && !!m.final,
+    );
+
+  it("measures against the stream in hand, not the whole session's age", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+
+    const viewers: ServerToViewer[] = [];
+    let events: SttEvents | undefined;
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        // a stand-in for the socket - fires onOpen fresh on every call,
+        // exactly as Deepgram's own ws "open" does on a reconnect
+        makeStt: (ev: SttEvents) => {
+          events = ev;
+          setImmediate(() => ev.onOpen?.());
+          return { sendAudio: () => true, close() {} };
+        },
+        // a fast ladder: the point is a real reopen, not a twelve-second test
+        sttReopenDelaysMs: [10],
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+
+    session.start();
+    await tick(); // let the first stream's onOpen fire
+    session.audio(Buffer.alloc(1)); // the session's first audio byte
+
+    // ten minutes pass with the session alive - long enough that the badge
+    // reading the SESSION's age, rather than the stream's, is unmistakable
+    vi.setSystemTime(t0 + 10 * 60 * 1000);
+
+    // the socket drops; the reopen ladder rebuilds a new one
+    events?.onClose?.();
+    await tick(50); // the real 10ms ladder delay, then the reopen's own onOpen
+
+    // the new stream's word timings restart near zero, the way Deepgram's and
+    // the local worker's both do on a fresh socket
+    vi.setSystemTime(t0 + 10 * 60 * 1000 + 100);
+    events?.onFinal?.("enemy down mid", { audioEndSec: 0.05, channel: 0 });
+
+    const last = finals(viewers).at(-1);
+    expect(last, "no final reached the viewer after the reopen").toBeDefined();
+    // ~100 ms real gap between the reopen and the final, not ~10 minutes
+    expect(last!.latency?.stt, `latency badge read ${last!.latency?.stt}ms`).toBeLessThan(1000);
+
+    session.stop();
+  });
+});
+
 describe("the colour a speaker's tag carries", () => {
   /**
    * With three sources the tag is the only thing telling speakers apart, and
