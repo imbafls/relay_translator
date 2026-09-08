@@ -60,8 +60,16 @@ export interface AppConfig {
    *  console keeps the words as heard, so you can see what the STT actually got).
    *  Source language only - the translated line is not filtered. */
   profanityFilter: boolean;
-  /** minutes of unbroken silence before the relay stops paying to transcribe it; 0 disables */
-  idleBillingStopMinutes?: number;
+  /**
+   * Minutes of unbroken silence before the relay stops paying to transcribe
+   * it; 0 disables. Required, like `showLatency` and `profanityFilter`: as
+   * `?:` this typed `undefined` and forced a `?? 0` fallback in session.ts
+   * whose meaning ("no default at all -> gate disabled") was the opposite of
+   * the intended safe default (60). It was only correct because
+   * `DEFAULT_CONFIG` happened to set it - required makes the compiler
+   * enforce that rather than trust it.
+   */
+  idleBillingStopMinutes: number;
   /** "unique" = fresh viewer link every session, "fixed" = stable link */
   linkMode: "unique" | "fixed";
   /** false = never check for updates in the background (manual CHECK still works) */

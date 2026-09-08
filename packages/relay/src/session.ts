@@ -703,7 +703,11 @@ export class PublisherSession {
       }
     } else {
       this.aboveFloorStreak = 0;
-      const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes ?? 0;
+      // no `?? 0` tail: idleBillingStopMinutes is required on AppConfig now
+      // (Fix-round Finding 5), so DEFAULT_CONFIG always has a real number -
+      // the compiler enforces that, rather than this silently degrading to
+      // "gate disabled" if it were ever forgotten there
+      const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes;
       if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
         this.billingOpen = false;
         this.gateClosedAt = now;
