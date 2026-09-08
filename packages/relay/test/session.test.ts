@@ -1064,6 +1064,122 @@ describe("a quiet session stops paying for silence", () => {
   });
 });
 
+describe("fix-round finding 3: an isolated impulse must not indefinitely delay the bound", () => {
+  /**
+   * session.ts:621-623. Peak is right for REOPENING the gate - one real
+   * sample is enough, and that immediacy is what recovery requires. But the
+   * same single-sample check also RESET the idle timer, and there it was
+   * maximally fragile: one sample above SILENCE_PEAK_FLOOR anywhere in
+   * ~57.6 million samples per hour restarted the clock. A Windows
+   * notification chime, a Discord join blip, a tab that autoplays once an
+   * hour, a driver buffer discontinuity - any of them and the bound never
+   * tripped at all. It failed in the safe direction (spend simply
+   * continued), but silently - nothing logged to say the bound had gone
+   * inert in exactly the messy real capture paths it exists for.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const SR = 16000;
+  const silentFrame = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+  const loudFrame = (): Buffer => {
+    const samples = SR * 0.1;
+    const b = Buffer.alloc(samples * 2);
+    for (let i = 0; i < samples; i++) b.writeInt16LE(20000, i * 2);
+    return b;
+  };
+
+  function makeGated(idleBillingStopMinutes: number) {
+    const sent: Buffer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents): SttStream => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: (chunk: Buffer) => {
+              sent.push(chunk);
+              return true;
+            },
+            keepAlive: () => {},
+            close() {},
+          };
+        },
+        idleBillingStopMinutes,
+        sttStats: { seconds: 0, localSeconds: 0 },
+        toViewers: () => {},
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    return { session, sent, logs };
+  }
+
+  it("still trips the bound when the only 'audio' is isolated single-sample impulses", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1); // 60s bound
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame()); // seeds the clock at t0
+
+    // one loud "impulse" every 20s, otherwise pure silence - like a chime or
+    // a Discord blip landing on the loopback source once in a while. The
+    // pre-fix code treated each impulse as sustained audio and reset the
+    // idle clock every time, so the bound never tripped no matter how long
+    // this ran.
+    let at = t0;
+    for (let i = 0; i < 4; i++) {
+      at += 20_000;
+      vi.setSystemTime(at);
+      g.session.audio(loudFrame());
+      at += 100;
+      vi.setSystemTime(at);
+      g.session.audio(silentFrame());
+    }
+
+    expect(
+      g.logs.some((l) => l.level === "error"),
+      "an isolated impulse every 20s kept the bound from ever tripping, over 80s against a 60s bound",
+    ).toBe(true);
+
+    g.session.stop();
+  });
+
+  it("still reopens billing on a single sample - the impulse fix must not touch recovery", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trips the bound
+    expect(g.sent.length, "setup: the bound should already be tripped here").toBe(1);
+
+    vi.setSystemTime(t0 + 65_100);
+    g.session.audio(loudFrame()); // one sample, not a streak
+
+    expect(g.sent.length, "a single above-floor chunk did not reopen billing immediately").toBe(2);
+
+    g.session.stop();
+  });
+});
+
 describe("fix-round finding 1: the Deepgram socket must not flap while the gate is shut", () => {
   /**
    * deepgram.ts sends no KeepAlive, and a real Deepgram socket that receives

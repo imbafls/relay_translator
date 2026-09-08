@@ -97,6 +97,26 @@ const GAP_MS = 500;
 const SILENCE_PEAK_FLOOR = 150;
 
 /**
+ * Fix-round Finding 3. Peak is right for REOPENING the gate - one real
+ * sample is enough, and instant reopening is what recovery requires. But the
+ * same single-sample check also used to RESET the idle-bound timer, and
+ * there it was maximally fragile: one sample above SILENCE_PEAK_FLOOR
+ * anywhere in ~57.6 million samples per hour restarted the clock. A Windows
+ * notification chime, a Discord join blip, a tab that autoplays once an
+ * hour, a driver buffer discontinuity - any of them and the bound never
+ * tripped, silently.
+ *
+ * So resetting the idle clock now needs this many CONSECUTIVE chunks above
+ * the floor, while a single one still reopens the gate immediately - one
+ * counter (`aboveFloorStreak`), and it does not touch that zero-chunk
+ * recovery property. 3 chunks is ~300ms at capture's ~100ms cadence: long
+ * enough that one isolated blip can never reach it, short enough that real
+ * speech - which sustains for hundreds of ms at minimum - clears it almost
+ * immediately.
+ */
+const SILENCE_RESET_STREAK = 3;
+
+/**
  * Fix-round Finding 1. Deepgram sends no KeepAlive of its own, and a live
  * socket that receives no audio closes on its own in roughly ten seconds.
  * Once the idle-billing gate shuts, `audio()` stops calling `sendAudio()` -
@@ -291,6 +311,14 @@ export class PublisherSession {
    * having been silent since 1970 and trip the bound immediately.
    */
   private lastAboveFloorAt = 0;
+  /**
+   * Consecutive chunks (silent chunks reset it to 0) whose peak has cleared
+   * SILENCE_PEAK_FLOOR. Fix-round Finding 3 - see SILENCE_RESET_STREAK's own
+   * comment: only once this reaches SILENCE_RESET_STREAK does
+   * `lastAboveFloorAt` actually move, so one isolated impulse cannot reset
+   * the idle-bound clock the way a single loud sample still reopens billing.
+   */
+  private aboveFloorStreak = 0;
   /**
    * Whether chunks are currently being forwarded to the STT engine and
    * counted toward billed seconds. Flips to false once
@@ -657,8 +685,13 @@ export class PublisherSession {
     if (this.lastAboveFloorAt === 0) this.lastAboveFloorAt = now;
     if (peakAmplitude(chunk) > SILENCE_PEAK_FLOOR) {
       const wasClosed = !this.billingOpen;
-      this.lastAboveFloorAt = now;
+      // Finding 3: reopening billing stays single-sample - the zero-chunk
+      // recovery property is untouched. Only RESETTING the idle-bound clock
+      // (below) now needs a sustained streak, so one isolated impulse cannot
+      // do it - see SILENCE_RESET_STREAK's own comment.
+      this.aboveFloorStreak += 1;
       this.billingOpen = true;
+      if (this.aboveFloorStreak >= SILENCE_RESET_STREAK) this.lastAboveFloorAt = now;
       if (wasClosed) {
         // Finding 2: the STT clock did not move for the span the gate was
         // shut - see gateClosedAt's own comment - but the wall clock did.
@@ -669,6 +702,7 @@ export class PublisherSession {
         this.deps.log("info", "audio above the silence floor again - resuming billed transcription");
       }
     } else {
+      this.aboveFloorStreak = 0;
       const idleMinutes = this.deps.idleBillingStopMinutes ?? DEFAULT_CONFIG.idleBillingStopMinutes ?? 0;
       if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
         this.billingOpen = false;
