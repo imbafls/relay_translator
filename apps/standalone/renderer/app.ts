@@ -364,7 +364,15 @@ function renderTopbar(): void {
   // sttLive is absent on a remote relay and on any status pushed before the
   // embedded relay has come up - only an explicit false, from a publisher
   // session that connected and then lost its speech pipeline, reads as dead
-  text.textContent = session === "live" && status?.relay.sttLive === false ? "ON AIR · NO SPEECH" : label;
+  const noSpeech = session === "live" && status?.relay.sttLive === false;
+  // Fix-round-3 Finding 4: same absent-must-not-read-as-active shape as
+  // sttLive above - billingPaused is absent on a remote relay and before the
+  // embedded relay has come up, so only an explicit true reads as paused.
+  // Checked after noSpeech: a dead speech pipeline is a technical failure
+  // that outranks a benign, self-recovering idle-billing pause when both are
+  // somehow true at once.
+  const billingPaused = session === "live" && !noSpeech && status?.relay.billingPaused === true;
+  text.textContent = noSpeech ? "ON AIR · NO SPEECH" : billingPaused ? "ON AIR · PAUSED" : label;
 }
 
 function tickClock(): void {

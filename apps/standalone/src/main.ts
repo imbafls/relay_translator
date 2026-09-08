@@ -429,6 +429,10 @@ function currentStatus() {
       // false - false would read as "speech is down" to a topbar that has not
       // even connected to a session yet
       sttLive: relay?.sttLive(),
+      // Fix-round-3 Finding 4: same "absent before the relay exists, never a
+      // hardcoded false" shape as sttLive above - see ControlStatus.relay's
+      // own comment.
+      billingPaused: relay?.billingPaused(),
       viewers: relay?.viewerCount() ?? 0,
       remoteViewers: uplink?.remoteViewers ?? 0,
     },

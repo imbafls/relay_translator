@@ -1003,6 +1003,7 @@ describe("a quiet session stops paying for silence", () => {
     const sent: Buffer[] = [];
     const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
     const stats = { seconds: 0, localSeconds: 0 };
+    const paused: boolean[] = [];
     const session = new PublisherSession(
       {
         stt: "deepgram-nova-3",
@@ -1031,10 +1032,11 @@ describe("a quiet session stops paying for silence", () => {
         sttStats: stats,
         toViewers: () => {},
         setLive: () => {},
+        onBillingPaused: (p) => paused.push(p),
         log: (level, message) => logs.push({ level, message }),
       },
     );
-    return { session, sent, logs, stats };
+    return { session, sent, logs, stats, paused };
   }
 
   it("stops reaching the STT seam once silence outlasts the configured period, and says why once", async () => {
@@ -1095,6 +1097,51 @@ describe("a quiet session stops paying for silence", () => {
 
     expect(g.sent.length, "a chunk above the floor was not forwarded the instant it arrived").toBe(2);
     expect(g.stats.seconds, "the recovered chunk was not billed").toBeGreaterThan(0);
+
+    g.session.stop();
+  });
+
+  it("tells the app the pause is happening, not only the log (fix-round-3 finding 4)", async () => {
+    // Spec section C: "writes an error-level line to relay.log naming why,
+    // AND surfaces the reason in the app." The log line has existed since
+    // Task 5; this pins the half that lets main.ts put it somewhere the
+    // streamer is actually looking, the same way onSttError lets a dead
+    // speech pipeline reach the topbar instead of only the LOG view.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    expect(g.paused, "billing was reported paused before the bound even tripped").toEqual([]);
+
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trips the bound
+
+    expect(g.paused, `hook calls were: ${JSON.stringify(g.paused)}`).toEqual([true]);
+
+    g.session.stop();
+  });
+
+  it("tells the app the pause has lifted, the instant billing reopens", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 1_000_000;
+    vi.setSystemTime(t0);
+    const g = makeGated(1);
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silentFrame());
+    vi.setSystemTime(t0 + 65_000);
+    g.session.audio(silentFrame()); // trips the bound
+    expect(g.paused).toEqual([true]);
+
+    vi.setSystemTime(t0 + 66_000);
+    g.session.audio(loudFrame()); // resumes
+
+    expect(g.paused, `hook calls were: ${JSON.stringify(g.paused)}`).toEqual([true, false]);
 
     g.session.stop();
   });

@@ -216,6 +216,21 @@ export interface SessionDeps {
   setLive(live: boolean): void;
   log(level: "info" | "warn" | "error", message: string): void;
   /**
+   * Fix-round-3 Finding 4. The spec requires the idle-billing pause to be
+   * surfaced in the app, not only written to `relay.log` - a screen the
+   * spec itself calls out the user is not on. `audio()` already logs the
+   * transition at "error" level; this is the same transition, reported to
+   * whoever owns the session rather than only the log, mirroring `setLive`'s
+   * own shape (a boolean, called on every transition, not latched). Called
+   * with `true` the instant the idle bound trips and forwarding stops,
+   * `false` the instant it reopens - never latched behind
+   * `billingPauseLogged`, because that latch suppresses a stale RE-trip's
+   * LOG LINE on purpose (see its own comment) but the state genuinely IS
+   * paused at that moment regardless of whether this is a "new" idle period
+   * worth writing to disk about.
+   */
+  onBillingPaused?(paused: boolean): void;
+  /**
    * Minutes of unbroken silence - measured locally, per chunk peak against
    * SILENCE_PEAK_FLOOR, never from STT finals - before `audio()` stops
    * forwarding to the STT engine and stops counting billed seconds. `0`
@@ -799,6 +814,11 @@ export class PublisherSession {
         // for, so the gate is fully open again
         this.gateWatermark = 0;
         this.deps.log("info", "audio above the silence floor again - resuming billed transcription");
+        // Fix-round-3 Finding 4: the app-facing half of the same transition
+        // the log line above just recorded - see onBillingPaused's own
+        // comment for why this is unconditional rather than gated behind
+        // billingPauseLogged.
+        this.deps.onBillingPaused?.(false);
       }
     } else {
       this.aboveFloorStreak = 0;
@@ -812,6 +832,10 @@ export class PublisherSession {
       if (idleMinutes > 0 && this.billingOpen && now - this.lastAboveFloorAt >= idleMinutes * 60_000) {
         this.billingOpen = false;
         this.gateWatermark = now;
+        // Fix-round-3 Finding 4: the app-facing half of this transition,
+        // unconditional (unlike the log line just below) - see
+        // onBillingPaused's own comment.
+        this.deps.onBillingPaused?.(true);
         // Fix-round-2 Finding 1: only the FIRST trip of a given idle period
         // gets a line - see billingPauseLogged's own comment for why an
         // isolated impulse must not make this fire again for the same one.

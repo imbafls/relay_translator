@@ -130,6 +130,13 @@ export interface RelayHandle {
    * correct: there is nothing for a caller here to distinguish it from.
    */
   sttLive(): boolean;
+  /**
+   * Fix-round-3 Finding 4. Whether the idle-billing gate currently has
+   * forwarding to the paid engine shut off - same shape as `sttLive` above,
+   * and the same "false with nothing connected still reads as false, which
+   * is correct" reasoning applies.
+   */
+  billingPaused(): boolean;
   close(): Promise<void>;
 }
 
@@ -251,6 +258,14 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   let liveSince: number | undefined;
   /** false once the speech pipeline has gone away under a connected publisher */
   let sttLive = true;
+  /**
+   * Fix-round-3 Finding 4. True while the idle-billing gate has stopped
+   * forwarding to the paid engine - see `PublisherSession.onBillingPaused`'s
+   * own comment. Same shape as `sttLive` immediately above: a plain flag,
+   * updated on every transition `buildSession()` wires the session's
+   * `onBillingPaused` hook to.
+   */
+  let billingPaused = false;
 
   /**
    * How long the stream has been live, as of right now.
@@ -357,6 +372,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     // a rebuilt session starts from "the pipeline is up"; its own STT will say
     // otherwise soon enough if it is not
     sttLive = true;
+    // and from "billing is not paused" - the new session's own audio() will
+    // say otherwise soon enough if a fresh idle period is already running
+    billingPaused = false;
     currentLanguages = { ...cfg.languages };
     currentTranslates = cfg.translationEnabled !== false;
     currentBrand = { brandName: cfg.brandName, brandColor: cfg.brandColor };
@@ -387,6 +405,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         // viewers already get a status message from the session; this is what
         // makes /health and a LATER viewer's hello agree with it
         if (!live) liveSince = undefined;
+      },
+      // Fix-round-3 Finding 4: same shape as setLive above, feeding
+      // billingPaused() instead of sttLive() - see that flag's own comment.
+      onBillingPaused: (paused) => {
+        if (billingPaused === paused) return;
+        billingPaused = paused;
       },
       log,
     }, carryOver);
@@ -983,6 +1007,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         },
         viewerCount: () => viewers.size,
         sttLive: () => sttLive,
+        billingPaused: () => billingPaused,
         async getUsage(): Promise<UsageInfo> {
           return {
             deepgram: {

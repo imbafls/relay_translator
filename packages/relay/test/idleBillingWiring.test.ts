@@ -116,6 +116,58 @@ describe("RelayOptions.idleBillingStopMinutes reaches the session", () => {
 });
 
 /**
+ * Fix-round-3 Finding 4. The spec requires the idle-billing pause be
+ * surfaced in the app, not only written to relay.log. session.test.ts pins
+ * the hook firing at the PublisherSession level; this proves the OTHER end
+ * of the wire is actually connected - a real relay's RelayHandle.billingPaused()
+ * over a real publisher socket, the same end-to-end shape as the
+ * RelayOptions describe block above.
+ */
+describe("RelayHandle.billingPaused() reflects the idle-billing gate", () => {
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-billing-paused-"));
+    logs = [];
+    relay = await startRelay({
+      port: 0,
+      dataDir: dir,
+      mockStt: true,
+      mockGemini: true,
+      idleBillingStopMinutes: 0.0015, // 90ms, same as the wiring test above
+      log: (level, message) => logs.push({ level, message }),
+    });
+  });
+
+  const loudFrame = (): Buffer => {
+    const b = Buffer.alloc(SAMPLE_RATE * 2 * 0.1);
+    for (let i = 0; i < b.length; i += 2) b.writeInt16LE(20000, i);
+    return b;
+  };
+
+  it("flips true when the bound trips and false when audio resumes", async () => {
+    expect(relay.billingPaused(), "paused before any session even connected").toBe(false);
+
+    const ws = await connect(`ws://127.0.0.1:${relay.port}/ws/publisher?token=${relay.state.publisherToken}`);
+    ws.send(JSON.stringify({ type: "hello", languages: { source: "en", target: "vi" } }));
+    await settle(20);
+
+    for (let i = 0; i < 20; i++) {
+      ws.send(silentFrame(), { binary: true });
+      await settle(15);
+    }
+    await until(
+      () => relay.billingPaused(),
+      "RelayHandle.billingPaused() never went true - the session's onBillingPaused hook is not reaching the relay handle",
+    );
+
+    ws.send(loudFrame(), { binary: true });
+    await until(
+      () => !relay.billingPaused(),
+      "RelayHandle.billingPaused() stayed true after audio resumed",
+    );
+  });
+});
+
+/**
  * Fix-round-3 Finding 3. The other half - main.ts actually threading
  * `cfg.idleBillingStopMinutes` into its own `startRelay({...})` call -  had
  * no guard of any kind, only a comment claiming it was "verified by reading

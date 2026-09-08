@@ -1118,6 +1118,13 @@ export interface ControlStatus {
     uplinkState?: "off" | "connecting" | "connected" | "disconnected" | "error";
     /** whether the speech pipeline is currently connected; absent on a remote relay */
     sttLive?: boolean;
+    /**
+     * Fix-round-3 Finding 4. Whether the idle-billing gate currently has
+     * forwarding to the paid engine paused - absent on a remote relay (no
+     * embedded session to gate) and before the embedded relay has come up,
+     * same "absent must not read as a warning" shape as `sttLive` above.
+     */
+    billingPaused?: boolean;
     /** last measured uplink ping round-trip (ms) */
     uplinkRttMs?: number;
     /** viewers attached to the local relay (OBS + LAN phones) */

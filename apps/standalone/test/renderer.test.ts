@@ -1663,6 +1663,111 @@ describe("the topbar during a dead speech pipeline", () => {
 });
 
 /**
+ * Fix-round-3 Finding 4. Spec section C: the idle-billing pause has to
+ * "surface the reason in the app", not only write to relay.log - a screen
+ * the spec itself calls out the user is not on. Before this, a paused
+ * session read plain ON AIR with nothing anywhere in the UI. Same shape as
+ * the sttLive/NO SPEECH pair just above: a sibling flag that travels
+ * relay -> ControlStatus.relay -> main.ts -> topbar, and an absent value
+ * that must read exactly like today.
+ */
+describe("the topbar during a paused idle-billing session", () => {
+  const statusText = (): string => (document.getElementById("statusText") as HTMLElement).textContent || "";
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: { onState?: (s: string) => void };
+    }) {
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+
+  it("stops reading plain ON AIR once billing is reported paused", async () => {
+    await goLive();
+
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "",
+        uplinkState: "off",
+        billingPaused: true,
+      },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect(
+      statusText(),
+      "the topbar still claims plain ON AIR while billing is paused for silence",
+    ).not.toBe("ON AIR");
+  });
+
+  it("keeps reading ON AIR when billingPaused is absent, the way a remote relay or the startup window reports it", async () => {
+    await goLive();
+
+    // no embedded relay yet (startup/restart), or a remote relay that never
+    // sends this field at all - absent must never read as paused
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "",
+        uplinkState: "off",
+      },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect(statusText(), "an absent billingPaused must not read as paused").toBe("ON AIR");
+  });
+
+  it("keeps reading NO SPEECH, not the pause text, when both are reported at once", async () => {
+    // sttLive: false means the pipeline itself is down for an unrelated
+    // reason (network) - a technical failure that outranks a benign,
+    // self-recovering idle pause
+    await goLive();
+
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "live" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "",
+        uplinkState: "off",
+        sttLive: false,
+        billingPaused: true,
+      },
+      usage: undefined,
+    });
+    await settle(40);
+
+    expect(statusText()).toBe("ON AIR · NO SPEECH");
+  });
+});
+
+/**
  * SEND FEEDBACK - the last build this product gets ships with a way for a
  * problem report to reach the owner after nobody is watching it any more.
  * The product's own promise ("Keys never leave your machine, and neither

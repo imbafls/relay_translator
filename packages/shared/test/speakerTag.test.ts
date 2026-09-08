@@ -340,6 +340,47 @@ describe("apps/standalone/src/main.ts wires UplinkClient's live() reconnect hook
 });
 
 /**
+ * Fix-round-3 Finding 4. Spec section C requires the idle-billing pause be
+ * surfaced in the app, not only written to relay.log. `main.ts`'s
+ * `currentStatus()` is the one place `ControlStatus.relay.billingPaused`
+ * enters the payload the renderer's topbar reads; nothing else in this repo
+ * can load main.ts to prove it functionally (Electron main-process code,
+ * same reasoning as `idleBillingWiring.test.ts`'s and `prepareOrder.test.ts`'s
+ * own source reads), so this reads the function body directly.
+ */
+describe("apps/standalone/src/main.ts's currentStatus() reports billingPaused", () => {
+  const file = "apps/standalone/src/main.ts";
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+
+  /** the body of currentStatus(), from its declaration to the matching close */
+  function currentStatusBody(): string {
+    const at = src.indexOf("function currentStatus()");
+    if (at < 0) throw new Error("currentStatus() is gone - this guard needs re-pointing");
+    const open = src.indexOf("{", at);
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === "{") depth += 1;
+      else if (src[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return src.slice(open, i + 1);
+      }
+    }
+    throw new Error("unbalanced braces reading currentStatus()");
+  }
+
+  it("still finds the function this guard reads", () => {
+    expect(currentStatusBody()).toContain("sttLive: relay?.sttLive()");
+  });
+
+  it("names billingPaused, not just sttLive", () => {
+    expect(
+      currentStatusBody(),
+      `${file}'s currentStatus() no longer reports relay.billingPaused - a paused session would read plain ON AIR with nothing anywhere in the UI (spec section C)`,
+    ).toMatch(/\bbillingPaused\s*:\s*relay\?\.billingPaused\(\)/);
+  });
+});
+
+/**
  * The same disease, one frame over. A hello is rebuilt by hand at nine places
  * across the four files below - field by field, never by spreading - and a
  * field added to the shared type alone reaches none of them. It compiles, it
