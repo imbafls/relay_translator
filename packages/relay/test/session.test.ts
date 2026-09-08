@@ -494,9 +494,19 @@ describe("a speech socket that comes back", () => {
    * a brief network fault ended captions for the whole session, and the only
    * way back was for the streamer to notice and restart.
    */
+
+  // only the "keeps trying after the ladder is spent" test below fakes timers,
+  // to jump past the endless tail's 30 s interval without a slow real wait;
+  // this restores real timers unconditionally so it is a no-op for every test
+  // that never touched them
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   function flaky(opts: { failReopens?: number } = {}) {
     const viewers: ServerToViewer[] = [];
     const errors: string[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
     const built: { kill: () => void }[] = [];
     let toFail = opts.failReopens ?? 0;
     const session = new PublisherSession(
@@ -534,10 +544,10 @@ describe("a speech socket that comes back", () => {
         toViewers: (msg: ServerToViewer) => viewers.push(msg),
         setLive: () => {},
         onSttError: (message: string) => errors.push(message),
-        log: () => {},
+        log: (level, message) => logs.push({ level, message }),
       },
     );
-    return { session, viewers, errors, built };
+    return { session, viewers, errors, logs, built };
   }
 
   const liveAgain = (viewers: ServerToViewer[]): number =>
@@ -599,5 +609,47 @@ describe("a speech socket that comes back", () => {
     await tick(200);
 
     expect(f.built.length, "a reopen armed before STOP fired into a stopped session").toBe(before);
+  });
+
+  it("keeps trying after the ladder is spent", async () => {
+    // failReopens is far bigger than the 3-rung test ladder so every reopen -
+    // including ones past the ladder's own end - fails and forces another
+    vi.useFakeTimers();
+    const f = flaky({ failReopens: 10 });
+    f.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.built).toHaveLength(1);
+
+    f.built[0].kill();
+    // walk the whole fast ladder (20 + 40 + 60 ms) - every reopen it makes
+    // fails too, so this runs STT_REOPEN_DELAYS_MS all the way to its end
+    await vi.advanceTimersByTimeAsync(200);
+    const afterLadder = f.built.length;
+    expect(afterLadder, "the fast ladder was never walked to its end").toBeGreaterThan(3);
+
+    // against current code the ladder running out arms no further timer, so
+    // nothing more ever happens from here - jump past the new tail interval
+    // and look for one more makeStt call
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(f.built.length, "no reopen came after the ladder ran out").toBeGreaterThan(afterLadder);
+
+    f.session.stop();
+  });
+
+  it("writes the give-up to disk, not only to the app's error channel", async () => {
+    const f = flaky({ failReopens: 10 });
+    f.session.start();
+    await tick();
+    f.built[0].kill();
+    // walk the fast ladder to exhaustion, same distance as the "gives up
+    // eventually" test above
+    await tick(200);
+
+    const errorLogs = f.logs.filter((l) => l.level === "error");
+    expect(
+      errorLogs.some((l) => /gave up/i.test(l.message)),
+      `error-level log lines were: ${errorLogs.map((l) => l.message).join(" | ") || "(none)"}`,
+    ).toBe(true);
+    f.session.stop();
   });
 });

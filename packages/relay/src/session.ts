@@ -69,6 +69,16 @@ const TRANSLATE_ERROR_EVERY_MS = 30_000;
  */
 const STT_REOPEN_DELAYS_MS = [300, 1_000, 3_000, 8_000];
 
+/**
+ * After the fast ladder is spent we keep trying, for ever, at this interval.
+ * A captioning tool that has already lost captions has nothing left to protect
+ * by staying down, and the thing that ends a session is a person pressing STOP.
+ * Before this, four failures inside ~12 s - which is what an offline machine
+ * produces, since the connect fails on DNS in milliseconds rather than waiting -
+ * ended captions permanently for that session.
+ */
+const STT_REOPEN_TAIL_MS = 30_000;
+
 const GAP_MS = 500;
 
 export interface GeminiStats {
@@ -354,25 +364,42 @@ export class PublisherSession {
         const ladder = this.deps.sttReopenDelaysMs ?? STT_REOPEN_DELAYS_MS;
         const delay = ladder[this.sttReopens];
         if (delay === undefined) {
-          this.deps.onSttError?.(
-            `speech pipeline closed and gave up after ${ladder.length} attempts - stop and start to try again`,
-          );
+          // the fast ladder is spent. A session that has already lost
+          // captions has nothing left to protect by staying down, so this
+          // does not return: it keeps retrying, for ever, on the long tail -
+          // the only thing that ends a session is a person pressing STOP.
+          // sttReopens keeps climbing past the ladder's own length so the
+          // message can say how many attempts have actually been made.
+          this.sttReopens += 1;
+          const message = `speech pipeline gave up after ${ladder.length} fast attempts - now retrying every ${Math.round(STT_REOPEN_TAIL_MS / 1_000)}s (attempt ${this.sttReopens}) until stopped`;
+          this.deps.log("error", message);
+          this.deps.onSttError?.(message);
+          this.armReopen(source, STT_REOPEN_TAIL_MS);
           return;
         }
         this.sttReopens += 1;
         this.deps.onSttError?.(
           `speech pipeline closed - reconnecting (attempt ${this.sttReopens} of ${ladder.length})`,
         );
-        this.reopenTimer = setTimeout(() => {
-          this.reopenTimer = null;
-          if (this.closing || !this.sttEvents) return;
-          this.openStt(this.sttEvents, source);
-        }, delay);
+        this.armReopen(source, delay);
       },
     };
     this.sttEvents = events;
 
     this.openStt(events, source);
+  }
+
+  /**
+   * Schedule the next reopen attempt. Shared by the fast ladder and its
+   * endless tail so the two cannot drift apart on how a reconnect actually
+   * fires - only the delay differs.
+   */
+  private armReopen(source: string, delay: number): void {
+    this.reopenTimer = setTimeout(() => {
+      this.reopenTimer = null;
+      if (this.closing || !this.sttEvents) return;
+      this.openStt(this.sttEvents, source);
+    }, delay);
   }
 
   /**
