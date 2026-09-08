@@ -69,9 +69,13 @@ function stand() {
 
   const ctx = {
     storage: {
-      get: async (key: string) => store.get(key),
+      // structuredClone on both sides, because a real Durable Object serialises:
+      // aliasing the stored object would let `room.brandName = ...` reach the
+      // record without `save()`, and a lost save is exactly how a late joiner
+      // gets nothing. Without this the `stored()` assertions prove only assignment.
+      get: async (key: string) => structuredClone(store.get(key)),
       put: async (key: string, value: unknown) => {
-        store.set(key, value);
+        store.set(key, structuredClone(value));
       },
       delete: async (key: string) => store.delete(key),
       deleteAll: async () => store.clear(),
