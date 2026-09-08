@@ -257,6 +257,22 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
       return { ...msg, since: liveSince, elapsedMs: elapsed() };
     }
+    // A HELLO REBUILD, and the one no guard can see. Every hello sent through
+    // toViewers passes through here, and this one is correct because it
+    // SPREADS - it carries whatever a hello holds now and whatever is added to
+    // it later. Rewrite it to enumerate and it drops the brand, the languages
+    // or whatever comes next, silently, for every viewer of this relay.
+    //
+    // Nothing on this branch would go red if that happened. The hop guard in
+    // packages/shared/test/speakerTag.test.ts finds hello literals by looking
+    // for the text `type: "hello"`; this branch keys on `msg.type ===` and the
+    // literal it returns names no type at all, so it is invisible to the
+    // scanner rather than passing it. Teaching the scanner the comparison form
+    // was considered and rejected: `msg.type === "hello"` also guards blocks
+    // that build a hello somewhere else entirely (the uplink handler below is
+    // one), so it would have to guess which nearby literal belongs to the
+    // comparison - false positives on a guard whose whole value is that a red
+    // means something. So this is a comment instead. KEEP THE SPREAD.
     if (msg.type === "hello") {
       if (msg.live && msg.since) liveSince = msg.since;
       if (msg.live && !liveSince) liveSince = Date.now();

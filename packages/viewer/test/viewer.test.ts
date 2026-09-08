@@ -867,4 +867,35 @@ describe("whose captions these are", () => {
       "a cleared or invalid colour stayed painted from the hello before it",
     ).toBe("");
   });
+
+  /**
+   * check-renderer-ids.mjs makes a missing id impossible within one deploy,
+   * but a browser caches the page and the script separately: an index.html
+   * held from before a Worker deploy, against a fresh app.js, has no
+   * #brandBar. The dereference happens INSIDE `case "hello"`, so a throw
+   * there skips langsLabel, applyLive and everything after it, and the page
+   * sits on CONNECTING with nothing on screen saying why - a skew turned into
+   * a dead page. Two elements, two guards, because either can be the one that
+   * is missing.
+   */
+  for (const gone of ["brandBar", "brandName"]) {
+    it(`still reads the rest of the hello when the markup has no #${gone}`, () => {
+      boot();
+      $(gone).remove();
+
+      push({
+        type: "hello",
+        languages: { source: "en", target: "vi" },
+        live: true,
+        translates: true,
+        brandName: "Omer's stream",
+      });
+
+      expect(
+        $("hudLangs").textContent,
+        `the hello handler died on the missing #${gone} before it reached the language pair`,
+      ).toBe("EN → VI");
+      expect($("hudState").dataset.state, "and before it reported the stream live").toBe("on");
+    });
+  }
 });

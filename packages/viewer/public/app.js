@@ -115,6 +115,14 @@
    */
   function applyBrand(name, colour) {
     const bar = $("brandBar");
+    // A browser caches this page and this script separately, so an index.html
+    // held from before a deploy can meet a newer app.js and be missing an
+    // element it never carried. check-renderer-ids.mjs rules that out within
+    // one deploy, not across two. It matters here because this runs inside
+    // `case "hello"`: throwing skips langsLabel, applyLive and everything
+    // after them, so the page sits on CONNECTING with nothing on screen
+    // saying why. Returning turns a skew back into one missing header strip.
+    if (!bar) return;
     // The overlay carries captions and nothing else. Suppressed HERE and not
     // only in CSS: `body.obs .hud-brand { display: none }` is real and stays,
     // but a stylesheet rule is invisible to happy-dom, so a test asserting it
@@ -123,10 +131,13 @@
       bar.hidden = true;
       return;
     }
+    // same skew guard as the bar above, for the element this actually writes
+    const label = $("brandName");
+    if (!label) return;
     const text = typeof name === "string" ? name.trim() : "";
     // textContent, never innerHTML: this arrives over a socket from whoever
     // holds the publish token, onto a page served publicly with no CSP
-    $("brandName").textContent = text;
+    label.textContent = text;
     bar.hidden = text.length === 0;
     const safe = typeof colour === "string" && /^#[0-9a-f]{6}$/i.test(colour.trim())
       ? colour.trim().toLowerCase()

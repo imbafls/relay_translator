@@ -223,6 +223,14 @@ describe("the embedded relay hears the stream's brand at the renderer's own hell
  * without touching this test. A hop that arrives in a file that is not on this
  * list is invisible to it. The list is hand-maintained and adding a hop means
  * adding it here; the sibling `HOPS` above is bounded the same way.
+ *
+ * One more blind spot, in a file that IS on the list. `stamp()` in
+ * `server.ts` branches on `msg.type === "hello"` and returns `{ ...msg, since,
+ * elapsedMs }`, and every hello leaving through `toViewers` goes through it.
+ * `helloLiterals` keys on the TEXT `type: "hello"`, which that literal does
+ * not contain, so the rebuild is invisible here rather than green here. It
+ * spreads, so it is correct; the comment at that branch says why it has to
+ * stay that way, since this file cannot say it with a red test.
  */
 const HELLO_HOPS = [
   {
