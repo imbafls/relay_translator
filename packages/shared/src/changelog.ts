@@ -28,6 +28,37 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.8.0",
+    date: "2026-09-10",
+    headline: "Every session is kept on your PC, whatever happens to it",
+    changes: [
+      {
+        kind: "added",
+        text: "Every session is now saved on this PC while it runs - each line that was said, and its translation - so a crash, a power cut or a dropped connection no longer takes the session with it. Lines are written the moment they are finished, not when you press STOP, which is the whole point: the session you did not expect to lose is the one it keeps. They go to Documents\\Callout Relay\\Transcripts, one file per session, and nothing in them ever leaves your PC.",
+      },
+      {
+        kind: "added",
+        text: "SAVED in the footer lists every session this PC has kept and reads one back inside the app. The newest opens first - after a crash, that is the one you want. EXPORT .TXT and EXPORT .SRT write a readable copy beside it, for a text editor or a video editor; SHOW IN FOLDER opens it in Explorer; DELETE asks once before it removes anything, and will not remove the session still being recorded.",
+      },
+      {
+        kind: "added",
+        text: "SETTINGS → THIS APP → TRANSCRIPTS switches saving off, or moves it to any folder you choose. It shows whether lines are being saved right now, and says NOT SAVING in amber if one could not be written - a drive unplugged, a disk full - then starts saving again by itself as soon as it can.",
+      },
+      {
+        kind: "changed",
+        text: "HIDE SWEARING only changes what viewers see. Your own saved transcript keeps what was actually said, and the delay on every line, even with the delay badge hidden from viewers.",
+      },
+      {
+        kind: "fixed",
+        text: "If you run your own copy of the relay instead of using textrelay.cc, it no longer tells a phone that opens your link ON AIR while your app sits idle in the tray. It says OFF AIR - the same answer it was already giving anyone who had the link open. This is the textrelay.cc fix below, for the relay you can host yourself.",
+      },
+      {
+        kind: "fixed",
+        text: "The relay you can run yourself on Linux prints the right path to its token file when it starts. It used to print a Windows-style path there, naming a file that did not exist; the file itself was always in the right place.",
+      },
+    ],
+  },
+  {
     version: "0.7.0",
     date: "2026-09-08",
     headline: "Speech that keeps trying, and status that tells the truth",
