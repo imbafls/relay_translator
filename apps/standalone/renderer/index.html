@@ -189,6 +189,17 @@
         <div class="keys-group" data-group="app">
             <div class="col-title label">THIS APP</div>
             <div class="field">
+              <div class="field-label">TRANSCRIPTS<span id="transcriptState" class="field-status dim"></span></div>
+              <p class="hint">A copy of every finished line - what was said, and its translation - written to this PC while the session runs, so a crash or a dropped connection does not take it with it. It never leaves this PC.</p>
+              <button id="saveTranscripts" class="toggle-wrap toggle-inline"><span class="sq-toggle"><span></span></span>SAVE TRANSCRIPTS</button>
+              <div class="field-row"><span id="transcriptDir" class="mono transcript-dir">—</span></div>
+              <div class="field-row">
+                <button id="chooseTranscriptDir" class="mono-btn">CHANGE FOLDER</button>
+                <button id="resetTranscriptDir" class="mono-btn" hidden>USE DOCUMENTS</button>
+                <button id="openTranscripts" class="mono-btn">OPEN SAVED</button>
+              </div>
+            </div>
+            <div class="field">
               <div class="field-label">UPDATES<span id="updateVersion" class="field-status dim"></span></div>
               <div class="field-row update-row">
                 <span id="updateState" class="mono update-state">—</span>
@@ -255,6 +266,33 @@
       <button id="logBack" class="subbar-btn">✕ BACK TO STAGE</button>
     </div>
     <div id="log" class="log"></div>
+  </section>
+
+  <!-- ================= SAVED TRANSCRIPTS ================= -->
+  <!-- the app's own copy of every finished line - apps/standalone/src/transcripts.ts -->
+  <section id="savedView" class="view saved" hidden>
+    <div class="subbar">
+      <span class="ink">SAVED TRANSCRIPTS</span>
+      <span id="savedCount"></span>
+      <span id="savedState" class="saved-state"></span>
+      <button id="savedFolder" class="subbar-link">OPEN FOLDER</button>
+      <button id="savedBack" class="subbar-btn">✕ BACK TO STAGE</button>
+    </div>
+    <div class="saved-body">
+      <div id="savedList" class="saved-list"></div>
+      <div class="saved-reader">
+        <div class="saved-head">
+          <span id="savedTitle" class="ink"></span>
+          <span class="saved-actions">
+            <button id="savedTxt" class="mono-btn" disabled>EXPORT .TXT</button>
+            <button id="savedSrt" class="mono-btn" disabled>EXPORT .SRT</button>
+            <button id="savedReveal" class="mono-btn" disabled>SHOW IN FOLDER</button>
+            <button id="savedDelete" class="mono-btn" disabled>DELETE</button>
+          </span>
+        </div>
+        <div id="savedLines" class="saved-lines"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ================= WHAT'S NEW ================= -->
@@ -452,6 +490,7 @@
       <span>EST <b id="roEst">$0.000</b></span>
       <span class="vrule"></span>
       <button id="logBtn" class="label-btn">LOG</button>
+      <button id="savedBtn" class="label-btn">SAVED</button>
       <button id="settingsBtn" class="settings-btn" aria-label="Settings"><span class="gear" aria-hidden="true"></span>SETTINGS</button>
     </div>
   </footer>

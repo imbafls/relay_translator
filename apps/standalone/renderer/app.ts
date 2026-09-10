@@ -35,7 +35,7 @@ import {
   maskViewerLink,
   redactLog,
 } from "@callout-relay/shared";
-import type { ChangelogEntry } from "@callout-relay/shared";
+import type { ChangelogEntry, Transcript, TranscriptSummary } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
 declare global {
@@ -51,7 +51,7 @@ const sel = (id: string): HTMLSelectElement => $(id);
 const cr = window.cr;
 const capture = new BrowserAudioCapture();
 
-type View = "stage" | "settings" | "log" | "onboarding";
+type View = "stage" | "settings" | "log" | "saved" | "onboarding";
 
 let config: AppConfig;
 let status: ControlStatus | null = null;
@@ -316,6 +316,200 @@ function appendLog(el: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
+// saved transcripts
+// ---------------------------------------------------------------------------
+
+/** the session open in the reader */
+let savedPick: string | undefined;
+let savedList: TranscriptSummary[] = [];
+/** the session main is writing, as of the last status push */
+let lastRecording: string | undefined;
+/** DELETE arms to SURE? first - the same shape as NEW in the footer */
+let savedDeleteArmedUntil = 0;
+let savedDeleteTimer: ReturnType<typeof setTimeout> | undefined;
+const SAVED_DELETE_ARM_MS = 5000;
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fmtDuration(ms: number): string {
+  const min = Math.max(0, Math.round(ms / 60000));
+  return min < 60 ? `${min} MIN` : `${Math.floor(min / 60)} H ${min % 60} MIN`;
+}
+
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return `${two(Math.floor(s / 3600))}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}`;
+}
+
+function fmtWhen(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/**
+ * Whether lines are being saved, in both places it shows: SETTINGS →
+ * TRANSCRIPTS and the SAVED view's bar. A write that failed says so in amber
+ * in both, because the feature is only worth anything when nobody thought to
+ * check it.
+ */
+function renderTranscriptState(): void {
+  const t = status?.transcript;
+  const on = config?.saveTranscripts !== false;
+  const failed = on && t?.state === "failed";
+  const text = !on ? "OFF" : failed ? "NOT SAVING" : t?.state === "saving" ? "SAVING" : "ON";
+  const title = failed ? `The last line could not be written: ${t?.error ?? "unknown error"}` : "";
+  for (const id of ["transcriptState", "savedState"]) {
+    const el = $(id);
+    el.textContent = text;
+    el.title = title;
+    el.classList.toggle("failed", failed);
+    el.classList.toggle("warn", failed);
+  }
+  $("saveTranscripts").classList.toggle("on", on);
+  const dir = $("transcriptDir");
+  dir.textContent = t?.dir || "—";
+  dir.classList.toggle("failed", failed);
+  $("resetTranscriptDir").hidden = !config?.transcriptDir;
+}
+
+async function openSaved(): Promise<void> {
+  try {
+    savedList = await cr.listTranscripts();
+  } catch (err) {
+    savedList = [];
+    log(`could not list saved transcripts: ${String((err as Error)?.message || err)}`, "err");
+  }
+  if (view !== "saved") return;
+  if (savedPick && !savedList.some((s) => s.id === savedPick)) savedPick = undefined;
+  // the newest is nearly always the one wanted: the session that just died
+  if (!savedPick && savedList.length) savedPick = savedList[0].id;
+  renderSavedList();
+  await renderSavedReader();
+}
+
+function renderSavedList(): void {
+  const box = $("savedList");
+  box.textContent = "";
+  $("savedCount").textContent = savedList.length ? `${savedList.length} SAVED` : "";
+  if (!savedList.length) {
+    const empty = document.createElement("div");
+    empty.className = "saved-empty";
+    empty.textContent =
+      config.saveTranscripts === false
+        ? "Saving is off. Turn it on under SETTINGS → THIS APP → TRANSCRIPTS."
+        : "Nothing saved yet. Each session is kept here from its first line.";
+    box.appendChild(empty);
+    return;
+  }
+  for (const s of savedList) {
+    const item = document.createElement("button");
+    item.className = "saved-item" + (s.id === savedPick ? " active" : "");
+    item.dataset.id = s.id;
+    const when = document.createElement("span");
+    when.className = "saved-when";
+    when.textContent = fmtWhen(s.startedAt);
+    const meta = document.createElement("span");
+    meta.className = "saved-meta mono";
+    meta.textContent = `${s.lines} LINES · ${fmtDuration(s.endedAt - s.startedAt)} · ${fmtBytes(s.bytes)}`;
+    if (s.id === status?.transcript?.session) {
+      const rec = document.createElement("span");
+      rec.className = "rec";
+      rec.textContent = " · RECORDING";
+      meta.appendChild(rec);
+    }
+    item.append(when, meta);
+    item.onclick = () => {
+      savedPick = s.id;
+      disarmSavedDelete();
+      renderSavedList();
+      void renderSavedReader();
+    };
+    box.appendChild(item);
+  }
+}
+
+async function renderSavedReader(): Promise<void> {
+  const pick = savedPick;
+  const lines = $("savedLines");
+  lines.textContent = "";
+  for (const id of ["savedTxt", "savedSrt", "savedReveal"]) ($(id) as HTMLButtonElement).disabled = !pick;
+  // the file being written right now is not the renderer's to delete; main refuses it too
+  ($("savedDelete") as HTMLButtonElement).disabled = !pick || pick === status?.transcript?.session;
+  const summary = savedList.find((s) => s.id === pick);
+  $("savedTitle").textContent = summary ? fmtWhen(summary.startedAt) : "";
+  if (!pick) return;
+
+  let t: Transcript | undefined;
+  try {
+    t = await cr.readTranscript(pick);
+  } catch {
+    t = undefined;
+  }
+  // another session was picked while this one loaded
+  if (savedPick !== pick) return;
+  const note = (text: string): void => {
+    const el = document.createElement("div");
+    el.className = "note";
+    el.textContent = text;
+    lines.appendChild(el);
+  };
+  if (!t) return note("This transcript could not be read.");
+  if (!t.rows.length) return note("No lines in this one.");
+  const start = t.header?.startedAt ?? t.rows[0].t;
+  const solo = !t.rows.some((r) => r.target);
+  for (const r of t.rows) {
+    const row = document.createElement("div");
+    row.className = "row" + (solo ? " solo" : "");
+    // fixed markup only: every piece of transcript text goes in through textContent
+    row.innerHTML =
+      '<div class="src"><span class="ts"></span><span class="body"><span class="who"></span><span class="text"></span></span></div>' +
+      '<div class="tgt"><span class="text"></span></div>';
+    (row.querySelector(".ts") as HTMLElement).textContent = fmtElapsed(r.t - start);
+    const who = row.querySelector(".who") as HTMLElement;
+    who.textContent = r.speaker || "";
+    const colour = safeSpeakerColor(r.color);
+    if (colour) who.style.color = colour;
+    (row.querySelector(".src .text") as HTMLElement).textContent = r.source;
+    (row.querySelector(".tgt .text") as HTMLElement).textContent = r.target ?? "";
+    lines.appendChild(row);
+  }
+}
+
+function disarmSavedDelete(): void {
+  savedDeleteArmedUntil = 0;
+  if (savedDeleteTimer) clearTimeout(savedDeleteTimer);
+  savedDeleteTimer = undefined;
+  $("savedDelete").textContent = "DELETE";
+}
+
+async function deleteSaved(): Promise<void> {
+  const pick = savedPick;
+  if (!pick) return;
+  if (Date.now() >= savedDeleteArmedUntil) {
+    savedDeleteArmedUntil = Date.now() + SAVED_DELETE_ARM_MS;
+    $("savedDelete").textContent = "SURE?";
+    if (savedDeleteTimer) clearTimeout(savedDeleteTimer);
+    savedDeleteTimer = setTimeout(disarmSavedDelete, SAVED_DELETE_ARM_MS);
+    return;
+  }
+  disarmSavedDelete();
+  const ok = await cr.deleteTranscript(pick);
+  log(ok ? "saved transcript deleted" : "that transcript could not be deleted", ok ? "ok" : "err");
+  if (ok) savedPick = undefined;
+  await openSaved();
+}
+
+async function exportSaved(format: "txt" | "srt"): Promise<void> {
+  if (!savedPick) return;
+  const file = await cr.exportTranscript(savedPick, format);
+  log(file ? `exported ${file}` : "that transcript could not be exported", file ? "ok" : "err");
+}
+
+// ---------------------------------------------------------------------------
 // views
 // ---------------------------------------------------------------------------
 
@@ -325,16 +519,21 @@ function setView(next: View): void {
   $("stage").hidden = next !== "stage";
   $("settings").hidden = next !== "settings";
   $("logView").hidden = next !== "log";
+  $("savedView").hidden = next !== "saved";
   $("onboarding").hidden = next !== "onboarding";
   $("footer").hidden = next === "onboarding";
   $("clock").hidden = next === "onboarding";
   $("stepper").hidden = next !== "onboarding";
   $("settingsBtn").classList.toggle("active", next === "settings");
   $("logBtn").classList.toggle("active", next === "log");
+  $("savedBtn").classList.toggle("active", next === "saved");
+  // an armed DELETE must not still be armed the next time the view opens
+  if (next !== "saved") disarmSavedDelete();
   // a key revealed the last time this panel was open must not still be revealed
   // when it is opened again, which is the shape the accident takes
   hideSecrets();
   if (next === "settings") renderSettings();
+  if (next === "saved") void openSaved();
   if (next === "onboarding") renderOnboarding();
   else renderChain();
   renderTopbar();
@@ -1487,6 +1686,7 @@ function renderSettings(): void {
   inp("updateFeedUrl").value = config.updateFeedUrl || "";
   renderKeyStatuses();
   renderUpdate();
+  renderTranscriptState();
   renderCaptionSettings();
   renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
 }
@@ -2387,6 +2587,30 @@ function bind(): void {
   $("logBtn").onclick = () => setView(view === "log" ? "stage" : "log");
   $("settingsBack").onclick = () => setView("stage");
   $("logBack").onclick = () => setView("stage");
+  $("savedBtn").onclick = () => setView(view === "saved" ? "stage" : "saved");
+  $("savedBack").onclick = () => setView("stage");
+  $("savedFolder").onclick = () => void cr.openTranscriptDir();
+  $("openTranscripts").onclick = () => setView("saved");
+  // repaint here rather than wait for the status push main sends afterwards:
+  // saveAndApply only resyncs the stage controls, so the toggle would sit on
+  // its old state until then
+  $("saveTranscripts").onclick = async () => {
+    await saveAndApply({ saveTranscripts: config.saveTranscripts === false });
+    renderTranscriptState();
+  };
+  $("chooseTranscriptDir").onclick = async () => {
+    const dir = await cr.chooseTranscriptDir();
+    if (dir) log(`transcripts will be saved to ${dir}`, "ok");
+  };
+  // "" rather than undefined: ConfigStore.merge skips undefined, so the old
+  // folder would simply stay
+  $("resetTranscriptDir").onclick = () => void saveAndApply({ transcriptDir: "" });
+  $("savedTxt").onclick = () => void exportSaved("txt");
+  $("savedSrt").onclick = () => void exportSaved("srt");
+  $("savedReveal").onclick = () => {
+    if (savedPick) void cr.revealTranscript(savedPick);
+  };
+  $("savedDelete").onclick = () => void deleteSaved();
 
   /**
    * Audit finding 21. Nothing listened for a captured device going away, so
@@ -2639,6 +2863,14 @@ function bind(): void {
     renderTopbar();
     if (s.update) setUpdate(s.update);
     if (view === "settings") renderKeyStatuses();
+    renderTranscriptState();
+    // a session starting to write its file, or closing it, changes what the
+    // SAVED list shows (RECORDING) and what it lets you delete
+    const recording = s.transcript?.session;
+    if (recording !== lastRecording) {
+      lastRecording = recording;
+      if (view === "saved") void openSaved();
+    }
   });
 
   cr.onUpdate((u) => setUpdate(u));
@@ -2650,7 +2882,7 @@ function bind(): void {
       e.preventDefault();
       setView(view === "settings" ? "stage" : "settings");
     }
-    if (e.key === "Escape" && (view === "settings" || view === "log")) setView("stage");
+    if (e.key === "Escape" && (view === "settings" || view === "log" || view === "saved")) setView("stage");
     if (e.key === "Escape" && view === "onboarding" && config.setupDone) setView("stage");
   });
 }

@@ -18,8 +18,15 @@ import type { AppConfig } from "@callout-relay/shared";
 
 const rendererDir = path.resolve(__dirname, "..", "renderer");
 const html = fs.readFileSync(path.join(rendererDir, "index.html"), "utf8");
+import type { Transcript, TranscriptStatus, TranscriptSummary } from "@callout-relay/shared";
 
 interface Calls {
+  /** saved-transcript ids handed to main to export, reveal or delete */
+  exported: { id: string; format: string }[];
+  revealed: string[];
+  deleted: string[];
+  /** how many times OPEN FOLDER asked main to open the transcripts folder */
+  openedDir: number;
   setConfig: Partial<AppConfig>[];
   validateKey: string[];
   /** provider + the exact string validated - a count alone cannot tell a
@@ -116,6 +123,24 @@ function bridge(config: AppConfig) {
       feedbackSends.push({ payload });
       return feedbackResult;
     },
+    listTranscripts: async () => fakeSaved,
+    readTranscript: async (id: string) => fakeSavedBodies[id],
+    exportTranscript: async (id: string, format: "txt" | "srt") => {
+      calls.exported.push({ id, format });
+      return `C:\\Transcripts\\${id}.${format}`;
+    },
+    revealTranscript: async (id: string) => {
+      calls.revealed.push(id);
+    },
+    deleteTranscript: async (id: string) => {
+      calls.deleted.push(id);
+      fakeSaved = fakeSaved.filter((s) => s.id !== id);
+      return true;
+    },
+    chooseTranscriptDir: async () => undefined,
+    openTranscriptDir: async () => {
+      calls.openedDir += 1;
+    },
   };
 }
 
@@ -151,6 +176,10 @@ let readRelayLogGate: Promise<void> | null = null;
 let releaseReadRelayLogGate: (() => void) | null = null;
 /** when set, cr.appVersion() rejects instead of answering - a local IPC hiccup */
 let appVersionFails = false;
+/** what cr.listTranscripts() answers, newest first */
+let fakeSaved: TranscriptSummary[] = [];
+/** what cr.readTranscript(id) answers, by id */
+let fakeSavedBodies: Record<string, Transcript> = {};
 /**
  * Every call to cr.sendFeedback() actually made. The real network I/O for
  * this feature happens in the main process now (packages/companion's
@@ -169,7 +198,19 @@ let feedbackResult: { delivered: true; id: string; logFailed: boolean } | { deli
 };
 
 async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Promise<void> {
-  calls = { setConfig: [], validateKey: [], validated: [], clipboard: [], opened: [], claimed: [], rotated: [] };
+  calls = {
+    setConfig: [],
+    validateKey: [],
+    validated: [],
+    clipboard: [],
+    opened: [],
+    claimed: [],
+    rotated: [],
+    exported: [],
+    revealed: [],
+    deleted: [],
+    openedDir: 0,
+  };
   pushStatus = undefined;
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   document.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
@@ -222,6 +263,8 @@ afterEach(() => {
   readRelayLogGate = null;
   releaseReadRelayLogGate = null;
   appVersionFails = false;
+  fakeSaved = [];
+  fakeSavedBodies = {};
   for (const t of timers) clearInterval(t);
   timers = [];
   vi.restoreAllMocks();
@@ -384,6 +427,217 @@ describe("copying the viewer link", () => {
     expect(main, "Electron's clipboard module is what bypasses the permission").toMatch(
       /clipboard\s*\.\s*writeText/,
     );
+  });
+});
+
+describe("saved transcripts", () => {
+  const T0 = Date.UTC(2026, 8, 10, 12, 0, 0);
+  const NEWER = "2026-09-10T13-00-00";
+  const OLDER = "2026-09-10T12-00-00";
+
+  const summary = (id: string, lines = 2, startedAt = T0): TranscriptSummary => ({
+    id,
+    startedAt,
+    endedAt: startedAt + 5000,
+    lines,
+    bytes: 512,
+    languages: { source: "en", target: "vi" },
+  });
+  const body = (id: string): Transcript => ({
+    id,
+    header: {
+      v: 1,
+      kind: "session",
+      id,
+      startedAt: T0,
+      app: "0.8.0",
+      languages: { source: "en", target: "vi" },
+      translates: true,
+    },
+    rows: [
+      { n: 1, id: 1, t: T0 + 2000, source: "push B", target: "B'ye geliyorlar" },
+      { n: 2, id: 2, t: T0 + 5000, source: "one on A", speaker: "CHAT" },
+    ],
+  });
+  /** a status push carrying only what the renderers read, plus the transcript part */
+  const statusWith = (transcript: TranscriptStatus) => ({
+    companion: { version: "0.8.0" },
+    session: { state: "idle" },
+    relay: { mode: "embedded", url: "ws://127.0.0.1:8787", viewers: 0, remoteViewers: 0 },
+    devices: [],
+    config: { ...DEFAULT_CONFIG, setupDone: true },
+    transcript,
+  });
+  const click = async (id: string): Promise<void> => {
+    (document.getElementById(id) as HTMLButtonElement).click();
+    await settle();
+  };
+  async function enterSaved(): Promise<void> {
+    await bootWith({ setupDone: true });
+    await click("savedBtn");
+  }
+
+  it("opens from the footer and lists every saved session", async () => {
+    fakeSaved = [summary(NEWER, 7), summary(OLDER, 3)];
+    await enterSaved();
+
+    expect(visible("savedView")).toBe(true);
+    expect(visible("stage")).toBe(false);
+    const items = [...document.querySelectorAll("#savedList .saved-item")];
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain("7 LINES");
+  });
+
+  /**
+   * The case the feature exists for: the app has just been reopened after a
+   * session died. That last session is the one wanted, so it is already open
+   * in the reader rather than waiting to be found in a list.
+   */
+  it("opens the newest session straight into the reader", async () => {
+    fakeSaved = [summary(NEWER), summary(OLDER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER) };
+    await enterSaved();
+
+    const text = document.getElementById("savedLines")!.textContent || "";
+    expect(text).toContain("push B");
+    expect(text).toContain("B'ye geliyorlar");
+    expect(text).toContain("00:00:02");
+    expect(text).toContain("CHAT");
+  });
+
+  it("renders transcript text as text, never as markup", async () => {
+    fakeSaved = [summary(NEWER)];
+    const t = body(NEWER);
+    t.rows[0].source = '<img src=x onerror="window.__pwned=1">';
+    fakeSavedBodies = { [NEWER]: t };
+    await enterSaved();
+
+    expect(document.querySelector("#savedLines img")).toBeNull();
+    expect(document.getElementById("savedLines")!.textContent).toContain("<img src=x");
+  });
+
+  it("says so when nothing has been saved yet", async () => {
+    await enterSaved();
+    expect(document.getElementById("savedList")!.textContent).toContain("Nothing saved yet");
+    expect((document.getElementById("savedDelete") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("asks before deleting, then deletes", async () => {
+    fakeSaved = [summary(NEWER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER) };
+    await enterSaved();
+
+    await click("savedDelete");
+    expect(document.getElementById("savedDelete")!.textContent).toBe("SURE?");
+    expect(calls.deleted, "one press only arms it").toEqual([]);
+
+    await click("savedDelete");
+    expect(calls.deleted).toEqual([NEWER]);
+  });
+
+  /**
+   * The file main is writing right now. Deleting it mid-session would leave the
+   * writer appending to a path that has gone, and main refuses it anyway - so
+   * the button does not offer what would be refused.
+   */
+  it("will not offer to delete the session still being recorded", async () => {
+    fakeSaved = [summary(NEWER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER) };
+    await bootWith({ setupDone: true });
+    pushStatus?.(statusWith({ state: "saving", dir: "C:\\Transcripts", session: NEWER }));
+    await click("savedBtn");
+
+    expect((document.getElementById("savedDelete") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("savedList")!.textContent).toContain("RECORDING");
+  });
+
+  it("says NOT SAVING, in amber, when a write has failed", async () => {
+    await bootWith({ setupDone: true });
+    pushStatus?.(statusWith({ state: "failed", dir: "E:\\Gone", error: "ENOENT: no such file or directory" }));
+    await click("savedBtn");
+
+    const state = document.getElementById("savedState")!;
+    expect(state.textContent).toBe("NOT SAVING");
+    expect(state.classList.contains("failed")).toBe(true);
+    expect(state.title).toContain("ENOENT");
+  });
+
+  it("switches saving off from SETTINGS, and the toggle follows", async () => {
+    await bootWith({ setupDone: true });
+    await click("settingsBtn");
+    const toggle = document.getElementById("saveTranscripts")!;
+    expect(toggle.classList.contains("on")).toBe(true);
+
+    toggle.click();
+    await settle();
+    expect(calls.setConfig).toContainEqual({ saveTranscripts: false });
+    expect(toggle.classList.contains("on")).toBe(false);
+  });
+
+  it("exports and reveals the session open in the reader", async () => {
+    fakeSaved = [summary(NEWER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER) };
+    await enterSaved();
+
+    await click("savedTxt");
+    await click("savedSrt");
+    await click("savedReveal");
+    expect(calls.exported).toEqual([
+      { id: NEWER, format: "txt" },
+      { id: NEWER, format: "srt" },
+    ]);
+    expect(calls.revealed).toEqual([NEWER]);
+  });
+
+  it("OPEN FOLDER asks main to open the transcripts folder", async () => {
+    await enterSaved();
+    await click("savedFolder");
+    expect(calls.openedDir).toBe(1);
+  });
+
+  it("goes back to the stage on Escape", async () => {
+    await enterSaved();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await settle();
+    expect(visible("stage")).toBe(true);
+    expect(visible("savedView")).toBe(false);
+  });
+});
+
+describe("saved transcripts over the bridge", () => {
+  const CHANNELS = [
+    "transcripts:list",
+    "transcripts:read",
+    "transcripts:export",
+    "transcripts:reveal",
+    "transcripts:delete",
+    "transcripts:chooseDir",
+    "transcripts:openDir",
+  ];
+  const source = (file: string): string => fs.readFileSync(path.resolve(__dirname, "..", "src", file), "utf8");
+
+  it("declares every channel on the preload bridge", () => {
+    const preload = source("preload.ts");
+    for (const c of CHANNELS) expect(preload, c).toContain(`ipcRenderer.invoke("${c}"`);
+  });
+
+  it("handles every channel in the main process", () => {
+    const main = source("main.ts");
+    for (const c of CHANNELS) expect(main, c).toContain(`ipcMain.handle("${c}"`);
+  });
+
+  /**
+   * The renderer names a transcript by id. Every handler that turns one into a
+   * file must resolve it under main's own folder - never hand a value the
+   * renderer sent straight to fs or shell.
+   */
+  it("resolves every id under the folder main chose", () => {
+    const main = source("main.ts");
+    for (const c of ["transcripts:read", "transcripts:export", "transcripts:reveal", "transcripts:delete"]) {
+      const start = main.indexOf(`ipcMain.handle("${c}"`);
+      const body = main.slice(start, main.indexOf("ipcMain.", start + 1));
+      expect(body, c).toContain("transcriptDir()");
+    }
   });
 });
 
