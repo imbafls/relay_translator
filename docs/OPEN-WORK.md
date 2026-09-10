@@ -31,13 +31,61 @@ mirroring the release to the VPS, setting `RELAY_PUBLISHER_TOKEN` /
 
 ---
 
+## Closed by v0.8.0
+
+Written 2026-09-10. One feature, and the health items still open after 0.7.0.
+
+- **Saved transcripts.** Every finished line and its translation is appended to
+  disk while the session runs - `apps/standalone/src/transcripts.ts`, default
+  `Documents\Callout Relay\Transcripts` - with a SAVED view to read and export
+  them and `SETTINGS → THIS APP → TRANSCRIPTS` to switch it off or move it. The
+  design, and the two traps it had to avoid, are in
+  `docs/superpowers/specs/2026-09-10-local-transcript-saving-design.md`: the
+  obvious tee (`onBroadcast`) is the viewers' masked copy, so the app taps the
+  publisher echo through a new `RelayHandle.onTranscript`; and translation emits
+  each utterance twice under one id, so records are appended separately and
+  merged on read, keyed by the file's own `n` because relay ids restart on every
+  reconnect.
+- **The self-hosted relay's `isLive()` answered ON AIR on socket presence.**
+  Fixed in `packages/relay/src/server.ts`: an uplink is live on what its last
+  hello or status said (`uplinkLive`), a publisher once its hello has built a
+  session, and `stamp()` clears the session clock on a not-live hello - the
+  asymmetry recorded below, fixed in the same change as that note asked. Two
+  adjacent shapes turned up while fixing it and closed with it: a replacing
+  uplink inherited the old one's word, and a publisher counted as live before
+  its hello had said anything.
+- **The relay's Linux banner printed `data\relay-state.json`.** Now built with
+  `path.join`, the way `config.ts` writes the file.
+- **The capture worklet decimated with no anti-alias filter above 16 kHz.** The
+  entry below pointed at `packages/viewer/public/app.js`, which has no audio path
+  at all; the resampler is `packages/companion/src/capture/workletSource.ts`. It
+  now low-passes (a 63-tap Hann-windowed sinc) whenever it has to decimate, and
+  leaves the 16 kHz path every session actually takes bit-for-bit unchanged. Run
+  against the real processor source, a 12 kHz tone at 48 kHz went from full
+  strength to under 5% (-26 dB), the bound the test holds it to.
+- **`HANDOFF.md` and `CLAUDE.md` described v0.5.1 and v0.5.3.** Both rewritten
+  against the tree; `docs/GUIDE.md` and `README.md` cover saved transcripts.
+
+Each fix above shipped with a test that goes red when the fix is reverted, and
+each revert was run.
+
+**Found while shipping it, and not fixed:** `packages/shared/test/speakerTag.test.ts`
+checks only the *first* `type: "subtitle"` text in each hop file. A type alias
+placed above the relay's real uplink hop made the guard check the alias and
+stop checking the hop; the alias now lives in `packages/shared` and the guard is
+back on the hop. But any earlier `type: "subtitle"` text - a comment included -
+would blind it the same way. Checking every such literal that carries a
+`source` field would close it.
+
+---
+
 ## Closed by the last build (v0.7.0)
 
 Written 2026-09-08. Nine tasks, chosen against one fact: after 0.7.0 ships,
 this product runs for weeks with nobody watching. All nine, plus the fix
-rounds a whole-branch review afterward closed, are on `feature/last-build` -
-**not** `master`, which is still at `efc0717`; none has been merged,
-version-bumped, tagged or deployed yet - that is the owner's call.
+rounds a whole-branch review afterward closed, shipped in **v0.8.0** on
+2026-09-10. 0.7.0 itself was never tagged: its changelog entry ships inside
+0.8.0's release, and a user updating from 0.6.0 is shown both.
 
 - **The speech pipeline no longer gives up for the session.** The reopen
   ladder used to exhaust four attempts in ~12 s (`STT_REOPEN_DELAYS_MS`,
@@ -332,10 +380,10 @@ fix — read the numbered section there before starting.
   Every secret goes back behind its dots on any view change, and on a
   twenty-second timer, for all five `[data-show]` fields.
 
-- **`packages/viewer/public/app.js` still decimates if it is ever fed a rate
-  above 16 kHz.** Finding 23 stopped the app *asking* it to resample; the
-  worklet has no filter of its own. Only matters if something else starts
-  feeding it.
+- ~~**`packages/viewer/public/app.js` still decimates if it is ever fed a rate
+  above 16 kHz.**~~ Fixed 2026-09-10 in v0.8.0 - and the pointer was wrong: the
+  worklet is `packages/companion/src/capture/workletSource.ts`. See "Closed by
+  v0.8.0" above.
 - ~~**Idle rooms on the hosted relay are never reaped.**~~ Fixed 2026-09-07,
   lopsidedly and on purpose. A room **nobody ever published to** is removed
   after 30 days by a Durable Object alarm. A room **anybody has touched** - by
@@ -345,8 +393,10 @@ fix — read the numbered section there before starting.
   open, since `shouldReap` takes a record and cannot see a live connection.
 - **An unexplained viewer socket, seen once** on the hosted relay. Also in that
   README, with the full note.
-- **The self-hosted relay's `isLive()` still answers ON AIR before any hello
-  arrives — the same defect the uplink-liveness fix closed on the hosted
+- ~~The self-hosted relay's `isLive()` answered ON AIR before any hello~~ -
+  **fixed 2026-09-10 in v0.8.0, together with the `stamp()` asymmetry below, as
+  this note asked; see "Closed by v0.8.0" above.** The original note follows.
+  **It answered ON AIR before any hello arrived — the same defect the uplink-liveness fix closed on the hosted
   Worker, one layer earlier, on the path someone would use running
   `packages/relay`'s own binary as their remote relay instead of
   `textrelay.cc`.** `isLive()` in `packages/relay/src/server.ts` is
@@ -393,10 +443,8 @@ fix — read the numbered section there before starting.
   now covers `HANDOFF.md`, `CLAUDE.md` and this file: every `pnpm <script>`,
   every code path and every document any of them names has to exist, and none of
   them may describe work blocked on SSH to the retired VPS.
-- **`HANDOFF.md` is stale at the top.** It still says the latest release is
-  v0.5.1 and describes `ralph/pipeline-hardening` as an unmerged branch; that
-  work is in `master`. Its *procedures* for the VPS are now moot (see the top of
-  this file); the audio-routing and model-download sections are still good.
+- ~~**`HANDOFF.md` is stale at the top.**~~ Rewritten 2026-09-10 for v0.8.0,
+  along with `CLAUDE.md`.
 - ~~**The bundled fonts ship without their licence.**~~ Done —
   `packages/viewer/public/fonts/OFL.txt` carries the OFL 1.1 text with both
   copyright lines, taken verbatim from the upstream repositories. Worth keeping
@@ -411,5 +459,5 @@ fix — read the numbered section there before starting.
   inheriting its inconsistency.
   `packages/shared/test/license.test.ts` now fails if a `.woff2` appears in that
   directory with no notice covering it.
-- **Cosmetic:** the relay logs `data\relay-state.json` with a backslash on
-  Linux. Only the log string is wrong; the file on disk is correct.
+- ~~**Cosmetic:** the relay logs `data\relay-state.json` with a backslash on
+  Linux.~~ Fixed 2026-09-10 in v0.8.0.

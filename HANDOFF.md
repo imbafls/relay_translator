@@ -1,59 +1,35 @@
 # Handoff — Callout Relay
 
-Written 2026-09-05 for a session continuing on another machine from a zip of this
-folder. Everything below is verified, not assumed. Read `DESIGN.md` for the UI
-spec and `README.md` for the product.
+Rewritten 2026-09-10 at v0.8.0. The version before this described the repo at
+v0.5.1, a hardening branch that merged long ago, and a VPS that no longer
+exists; everything below has been checked against the tree again. Read
+`CLAUDE.md` first - it is the orientation document - then `README.md` for the
+product and `DESIGN.md` for the UI spec. `docs/OPEN-WORK.md` is the backlog.
 
 ## Where things stand
 
-Latest **release** is v0.5.1 (tagged, published, mirrored to the VPS).
+Latest **release** is v0.8.0: saved transcripts, plus everything written for
+0.7.0, which was never released on its own. `master` is linear - the repo
+merges by **rebase**, so don't add merge commits.
 
-`master` has since taken the local-model crash guard described below (PR #5).
-**That fix is not in any installer yet** — v0.5.1 predates it. If you want it on
-a machine, cut **v0.5.2** using the release steps at the bottom.
+The remote relay is the Cloudflare Worker in `apps/hosted-relay`, answering on
+`textrelay.cc` and `relay.supr.systems` with one Durable Object per streamer.
+The Hostinger VPS that ran a single-tenant relay was stopped on 2026-09-06.
+Nothing needs mirroring to it, and nothing can be.
 
-PRs #2–#5 are merged; the repo merges by **rebase**, so history is linear —
-don't add merge commits.
-
-`ralph/pipeline-hardening` branches from the `v0.5.2` commit and holds a run of
-hardening work: the repo's first test runner and ~370 tests, and 35 fixes.
-`ITERATION_LOG.md` has one entry per turn - what was looked at, what it turned
-out to be, and how it was proved. `docs/AUDIT-2026-09-05.md` is a separate
-adversarial audit of the whole repo, 36 ranked findings, of which nine are
-fixed on this branch and the rest are not.
-
-The ones most worth knowing about, all found and fixed here:
-
-- `GET //%25` exited the relay process. No credentials, one line of curl,
-  repeatable. Reproduced against a real build before and after.
-- A four-byte WebSocket frame (`null`) did the same on two of the three roles.
-- Every abandoned installer download stranded a file descriptor: 25 aborts,
-  25 undestroyed streams.
-- A suffix range request (`bytes=-100`) served the *first* 101 bytes of the
-  installer, under a Content-Range header claiming otherwise.
-- The local control API handed out the API keys, and then the viewer link, to
-  any web page that asked.
-- The Stream Deck key had never done anything: the action was declared and
-  never registered.
-
-**None of it is in `v0.5.2` as tagged.** That tag sits on `master` at the commit
-this branch starts from, so pushing it as-is ships one crash fix and five known
-crashes. Fold the branch in and retag before pushing.
+`ITERATION_LOG.md` is the history of the hardening run: one entry per turn,
+what was looked at, what it turned out to be, and how it was proved.
+`docs/AUDIT-2026-09-05.md` is the adversarial audit of the whole repo, and
+`docs/OPEN-WORK.md` records which of its findings are closed and by what.
 
 ### What still needs a person
 
-- **Code signing.** `win.publisherName` plus a certificate. Without it
+- **Code signing (B4).** `win.publisherName` plus a certificate. Without it
   electron-updater's signature check returns early, so an update is verified
-  only against a hash in the feed's own file.
-- **A credential for the control API.** `GET /link` gives the viewer link to
-  anything that asks, and the origin check admits `Origin: null`. Closing it
-  means the Stream Deck property inspector has to present a token, which needs
-  Stream Deck to test.
-- **The VPS `.env`.** Keys were rotated during this run;
-  `/opt/callout-relay/.env` still holds the old pair. The credentials file the
-  deploy script wants was not on the machine this ran on.
-- **27 more audit findings**, ranked, each with a failure scenario and a
-  suggested fix.
+  only against a hash in the feed's own file. A purchase, not a code change.
+- **In-app archive model downloads (B6).** Still reported failing at ~28% on
+  one machine and still not reproducible on the dev desktop - see issue 1
+  below, and the full investigation in `docs/OPEN-WORK.md`.
 
 ## First run on a new machine
 
@@ -82,9 +58,10 @@ server builds on Linux too.
 - API keys live in `%APPDATA%\callout-relay\config.json`, not in the repo. The
   new machine has its own keys.
 - Local models: `%APPDATA%\callout-relay\models\<model-id>\`.
-- VPS credentials: `F:\Ai\_projects\_secrets\hostinger_vps.txt` (or
-  `VPS_PASSWORD`). That file is **not** in the zip — copy it over or the deploy
-  script will not run.
+- Saved transcripts: `Documents\Callout Relay\Transcripts\`, one `.jsonl` per
+  session, unless `transcriptDir` in `config.json` names another folder.
+- Cloudflare: `pnpm deploy:hosted` uses the session `wrangler login` stored on
+  the dev desktop. There are no VPS credentials to carry over any more.
 
 ## How to verify UI work — this matters
 
@@ -122,29 +99,10 @@ short pane.
 
 ## Open work, most useful first
 
-### 1. Ship the crash guard (merged, unreleased)
+`docs/OPEN-WORK.md` is the full and current list. These are the ones a new
+machine is most likely to walk into.
 
-Root cause, fully traced: **sherpa-onnx aborts the process** while constructing
-the `OfflineRecognizer` for `local-whisper-small`. It is a native `exit()`, not
-a throwable error, and local STT runs in a `worker_thread`, so it took the whole
-app down with no message.
-
-Ruled out, with evidence: file corruption (bytes match Hugging Face exactly),
-configuration (language on/off, `tailPaddings` −1/0/absent, 1 vs 2 threads all
-abort identically), and the engine itself (whisper **tiny.en** loads and decodes
-on the same build).
-
-The fix loads every local model once in a throwaway child process first
-(`localSttWorker.js --probe '<init json>'`), caches the result per model, and
-turns a non-zero exit into "could not be loaded on this PC". It drops
-whisper-small from the catalogue, moves mel bins into the catalogue (whisper
-large-v3 turbo is 128-bin and was loaded as 80), and falls back to the last
-cloud model when config names a model that no longer exists.
-
-Verified in the packaged app: probe exits 127 on whisper-small, 0 on zipformer,
-and a real two-source local session still transcribes both channels.
-
-### 2. In-app model downloads are corrupting — not yet fixed
+### 1. In-app model downloads are corrupting — not yet fixed
 
 Downloading `local-whisper-tiny-en` inside the app fails at ~28% with
 `Error in bzip2: crc32 do not match`. The **identical** download and decompress
@@ -172,7 +130,7 @@ the probe used a single-block fixture and a real 118 MB archive is many blocks,
 where a partly received block can fail its CRC honestly. Get the instrumented
 message from a real failure before assuming either way.
 
-### 3. Unverified: the seven archive models
+### 2. Unverified: the seven archive models
 
 Nobody has run a transcription session with any of them. Download, extraction,
 staging and every failure path are well tested with synthetic and real
@@ -183,57 +141,42 @@ issue 2 currently blocks installing them.
 `whisper-turbo` in particular has never been loaded — it is the one the mel-bin
 fix targets.
 
-### 4. Cosmetic
+### 3. Cosmetic
 
 - The release workflow warns that its GitHub actions target Node 20.
-- The relay server logs `data\relay-state.json` with a backslash on Linux. Only
-  the log string is wrong; the file on disk is correct.
-
-### 5. Never run on Linux
-
-CI gained a `linux-relay` job covering the packages that ship to the VPS, but it
-has not run yet — the tests were all written and run on Windows. Expect it to be
-the first thing that goes red, and read that as information rather than
-breakage. The release workflow's own Linux job was deliberately left without
-tests until that one has gone green once.
 
 ## Release process
 
 ```bash
-pnpm version-bump 0.5.2
-git commit -am "Release v0.5.2" && git tag -a v0.5.2 -m "v0.5.2"
-git push origin master v0.5.2      # the Release workflow builds and publishes
+pnpm version-bump 0.8.1
+git add package.json apps/*/package.json packages/*/package.json   # not -a: the tree may hold unrelated edits
+git commit -m "Release v0.8.1"
+git tag -a v0.8.1 -m "v0.8.1"
+git push origin master v0.8.1      # the Release workflow builds and publishes
 ```
 
 The workflow refuses to build if the tag and `apps/standalone/package.json`
 disagree. It publishes the installer, portable exe, `latest.yml`, blockmap,
-both relay servers and `SHA256SUMS.txt`.
+both relay servers and `SHA256SUMS.txt`, under GitHub's generated notes.
 
-**Then mirror to the VPS** — the release is not finished without it:
+**Then finish it** — the release is not done when the workflow goes green:
 
 ```bash
-export MSYS_NO_PATHCONV=1   # or run from PowerShell; MSYS mangles /opt paths
-gh release download v0.5.2 -D <dir> -p "CalloutRelay-Setup-*.exe" -p "*.blockmap" \
-  -p latest.yml -p callout-relay-server-linux -p SHA256SUMS.txt
-sha256sum -c <(grep -iE "Setup|server-linux" SHA256SUMS.txt | tr 'A-F' 'a-f')
-
-node scripts/vps.mjs put <installer>  /opt/callout-relay/data/updates/<installer>
-node scripts/vps.mjs put <blockmap>   /opt/callout-relay/data/updates/<blockmap>
-# verify the uploaded installer's sha256 BEFORE publishing the manifest
-node scripts/vps.mjs put latest.yml   /opt/callout-relay/data/updates/latest.yml   # last
-node scripts/vps.mjs put <linux-server> /opt/callout-relay/callout-relay-server.new
-node scripts/vps.mjs exec "cd /opt/callout-relay && cp -f callout-relay-server callout-relay-server.bak \
-  && chmod +x callout-relay-server.new && mv -f callout-relay-server.new callout-relay-server \
-  && systemctl restart callout-relay && sleep 3 && systemctl is-active callout-relay"
+# the release page gets the changelog prose, not a commit list
+# (release-notes.mjs reads packages/shared/dist, so build shared first)
+node scripts/release-notes.mjs 0.8.1 | gh release edit v0.8.1 --notes-file -
+# the hosted relay: textrelay.cc and relay.supr.systems in one deploy
+pnpm deploy:hosted
+node apps/hosted-relay/scripts/verify-deploy.cjs    https://textrelay.cc   # 14 checks
+node apps/hosted-relay/scripts/verify-isolation.cjs https://textrelay.cc   #  9 checks
 ```
 
-Check `https://relay.supr.systems/health` and
-`https://relay.supr.systems/updates/latest.yml` afterwards. Upload `latest.yml`
-**last** so the manifest never points at a file that is not there yet, and check
-whether anyone is attached (`viewers`) before restarting.
+A deploy restarts every Durable Object, so anyone watching reconnects once.
+Tag and release notes carry the changelog prose only - no tooling credit and no
+emoji; `packages/shared/test/changelog.test.ts` enforces that for the source.
 
-Auto-update defaults to the GitHub feed; the VPS feed only serves installs that
-set `updateFeedUrl`.
+Auto-update reads `latest.yml` from the GitHub release. An install only looks
+anywhere else if `updateFeedUrl` is set.
 
 ## Audio routing, for testing two sources
 

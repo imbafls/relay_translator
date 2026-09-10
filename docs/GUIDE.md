@@ -238,6 +238,14 @@ transcription, holds no keys, and keeps no copy once it has passed a line on.
 `HIDE SWEARING`, under `SETTINGS` → `WHAT VIEWERS SEE`, masks common swear words
 in what viewers are sent — English only, and a courtesy rather than a guarantee.
 
+**The app does keep a copy — on this PC.** Every finished line, and its
+translation, is written to `Documents\Callout Relay\Transcripts` while the
+session runs, one file per session, so a crash or a dropped connection does not
+take the session with it. It is your record, so `HIDE SWEARING` does not touch
+it: it holds what was actually said. Nothing in it is sent anywhere. Turn it
+off, or move it to another folder, under `SETTINGS` → `THIS APP` →
+`TRANSCRIPTS`.
+
 ---
 
 ## Day to day
@@ -248,6 +256,10 @@ in what viewers are sent — English only, and a courtesy rather than a guarante
   **Stop session**, **Rotate viewer link**, **Run setup again** and **Quit**.
 - `LOG` in the footer is a running record of the session, with the delay on
   each line. `Esc` returns to the captions.
+- `SAVED` in the footer lists every session this PC has kept, and reads one
+  back. The newest opens first — after a crash, that is the one you want.
+  `EXPORT .TXT` and `EXPORT .SRT` write a readable copy beside it, and `DELETE`
+  asks once before it removes anything. `Esc` returns to the captions.
 - Changing a setting mid-session — a language, a model, a microphone — restarts
   the session by itself. The viewer link is not affected.
 - The app updates itself. `SETTINGS` → `UPDATES` shows the version you are on,

@@ -210,6 +210,12 @@ every control sits in one signal-chain strip underneath it
 - **SETTINGS** (or Ctrl and comma) opens everything you can change, **LOG**
   shows the detailed session log with per-line latency. `Esc` returns to the
   stage.
+- **SAVED** lists every session this PC has kept. Each finished line and its
+  translation is written to `Documents\Callout Relay\Transcripts` while the
+  session runs, so a crash or a dropped connection does not take it with it.
+  The newest session opens first; `EXPORT .TXT` and `EXPORT .SRT` write a
+  readable copy beside it. Switch saving off, or move it, under
+  `SETTINGS → THIS APP → TRANSCRIPTS`. Nothing in these files leaves the PC.
 - Closing the window hides to tray - capture keeps running mid-game. The tray
   menu can start/stop and rotate the link without opening the app.
 - Settings changes (model / language / audio source) apply live: the session
@@ -328,6 +334,7 @@ in it - which is how the live page once ended up four fixes behind the repo.
   "linkMode": "unique",
   "output": "phone",
   "autoUpdate": true,
+  "saveTranscripts": true,
   "relayPort": 8787,
   "setupDone": true
 }
@@ -338,6 +345,11 @@ in it - which is how the live page once ended up four fixes behind the repo.
 `publisherToken`, `publicBaseUrl` and `updateFeedUrl` are only present once set.
 `profanityFilter` masks the source line for viewers, not the translation, and
 its word list is English only - it is a courtesy, not a guarantee.
+`saveTranscripts` keeps a copy of every finished line on this PC and is on by
+default, including for a config written before the key existed.
+`transcriptDir` is only present once a folder has been chosen; absent (or `""`)
+means `Documents\Callout Relay\Transcripts`. The saved copy is not masked by
+`profanityFilter` - it is the streamer's own record.
 
 Notes on models:
 - `deepgram-nova-3` - fastest, best for English comms.

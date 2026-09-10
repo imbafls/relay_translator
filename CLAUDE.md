@@ -6,7 +6,7 @@ point-in-time handoff (partly stale — see below), `docs/OPEN-WORK.md` is the
 consolidated backlog, `ITERATION_LOG.md` is the history of what was found and
 fixed.
 
-Everything here was verified against the tree at v0.5.3. Where a claim could not
+Everything here was verified against the tree at v0.8.0. Where a claim could not
 be verified from this machine it says so.
 
 ---
@@ -18,7 +18,7 @@ transcribed (Deepgram cloud STT, or sherpa-onnx locally), translated (Gemini),
 and pushed as subtitles to a friend's phone or an OBS browser source.
 
 pnpm monorepo, TypeScript throughout, Node >= 20. Root package is
-`callout-relay`, private, version `0.5.3` — every workspace package carries the
+`callout-relay`, private, version `0.8.0` — every workspace package carries the
 same version and a guard test enforces that.
 
 ## The two relays — read this before debugging anything network-shaped
@@ -83,23 +83,41 @@ viewer link already handed out. `packages/relay/sea/vps.env.example` now
 documents both variables; the app's KEYS placeholder now says
 `RELAY_PUBLISHER_TOKEN`, which is the name the code actually reads.
 
+## Saved transcripts — where the copy comes from
+
+Since v0.8.0 the desktop app writes every finished line to disk while the
+session runs (`apps/standalone/src/transcripts.ts`, one `.jsonl` per session,
+default `Documents\Callout Relay\Transcripts`). Two traps shaped it, and neither
+is visible from outside the code:
+
+- **The copy comes from `RelayHandle.onTranscript`, not `onBroadcast`.**
+  `onBroadcast` fires inside `toViewers`, which is handed the line after
+  `HIDE SWEARING` has masked it, and without latency when the badge is off.
+  `onTranscript` is the publisher echo: what was actually said.
+- **With translation on, one utterance arrives twice** - the line, then the
+  same id again carrying `target`. The writer appends each as its own record
+  and the reader merges them; it never buffers, because a buffer is exactly what
+  a crash loses. Relay segment ids restart on every new publisher socket, so
+  records are keyed by the file's own sequence number `n`, not by `id`.
+
 ## Package and app map
 
 | Path | Responsibility |
 |------|----------------|
-| `packages/shared` | The contract: `AppConfig` + defaults, the STT model catalogue, `CONTROL_PORT` (47477), control-API patch policy, `isAllowedUpdateFeed()`. One file, `src/index.ts`. Every other package typechecks against its emitted `.d.ts`, so **it must be built first on a clean checkout**. |
-| `packages/relay` | The relay server itself: HTTP + WebSocket (`server.ts`), publisher session and broadcast (`session.ts`), Deepgram STT (`deepgram.ts`), Gemini translation (`gemini.ts`), local sherpa-onnx STT and its worker (`localStt.ts`, `localSttWorker.ts`), token/state/dotenv handling (`config.ts`), and the `cli.ts` entry that becomes the SEA binary shipped to the VPS. |
+| `packages/shared` | The contract: `AppConfig` + `DEFAULT_CONFIG` and the edge validators every hand-editable key goes through (`validRelayPort`, `validIdleBillingStopMinutes`, `validTranscriptDir`), the STT model catalogue, the wire types for every hop including the saved-transcript shapes, `isAllowedUpdateFeed()` and `redactLog()`. `src/index.ts`, plus `src/changelog.ts` - one source for the what's-new panel and the release notes. The loopback control API this row once described was deleted in 0.5.11. Every other package typechecks against its emitted `.d.ts`, so **it must be built first on a clean checkout**. |
+| `packages/relay` | The relay server itself: HTTP + WebSocket (`server.ts`), publisher session and broadcast (`session.ts`), Deepgram STT (`deepgram.ts`), Gemini translation (`gemini.ts`), local sherpa-onnx STT and its worker (`localStt.ts`, `localSttWorker.ts`), token/state/dotenv handling (`config.ts`), and the `cli.ts` entry that becomes the SEA binary for anyone hosting their own relay. `onBroadcast` is the viewers' copy of each line; `onTranscript` is the publisher's, as heard. |
 | `packages/companion` | Shared client side: audio capture and the downsampling worklet (`capture/`), the relay client (`relayClient.ts`), the uplink client (`uplinkClient.ts`), config store and merge (`config.ts`), and claiming a room on the hosted relay (`hostedRoom.ts`). |
 | `packages/viewer` | The phone/OBS subtitle page (`public/`) that the relay serves. Plain JS, no build step (`build` and `typecheck` are `node -e "1"`). |
-| `apps/standalone` | The Electron desktop app, **Windows-only**. `src/main.ts` (embedded relay, uplink, tray, IPC), `src/models.ts` (local model download/extract), `src/updater.ts` (electron-updater), `renderer/` (the UI). This is the app users install. |
+| `apps/standalone` | The Electron desktop app, **Windows-only**. `src/main.ts` (embedded relay, uplink, tray, IPC), `src/transcripts.ts` (saved transcripts: writer, reader, export - no Electron import, so it tests under plain Node), `src/models.ts` (local model download/extract), `src/updater.ts` (electron-updater), `renderer/` (the UI). This is the app users install. |
+| `apps/hosted-relay` | The Cloudflare Worker behind `textrelay.cc` and `relay.supr.systems`: one Durable Object per streamer, rooms claimed with `POST /claim`, the landing page, and `POST /feedback` into R2. Fan-out only - no STT, no translation, no copy kept. `pnpm deploy:hosted` publishes it; `apps/hosted-relay/README.md` has the verify scripts. |
 
 ## Commands
 
-All verified against `package.json` at v0.5.3.
+All verified against `package.json` at v0.8.0.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | vitest, the whole suite. **31 files, 375 tests** at v0.5.3. ~15 s. |
+| `pnpm test` | vitest, the whole suite. **59 files, 1030 tests** at v0.8.0. ~40 s. |
 | `pnpm test:watch` | vitest in watch mode. |
 | `pnpm typecheck:test` | `tsc -p tsconfig.test.json --noEmit`. **Separate on purpose** — see gotchas. |
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
@@ -108,6 +126,7 @@ All verified against `package.json` at v0.5.3.
 | `node scripts/check-renderer-ids.mjs` | Every element id the desktop renderer and the viewer page reference must exist in the markup. Prints the counts and exits non-zero if one dangles. |
 | `pnpm dist:relay` | Build the relay + bundle + inject the SEA binary (`packages/relay/sea/`). |
 | `pnpm dist:app` | electron-builder, Windows. |
+| `pnpm deploy:hosted` | `wrangler deploy` of `apps/hosted-relay` - both custom domains at once. Uses this machine's `wrangler login`. |
 | `pnpm version-bump <v>` | Set the version across the root and every workspace package.json. Prints the exact next commands. |
 | `pnpm dev:relay` / `pnpm dev:app` | Run the relay CLI / the Electron app. |
 
@@ -118,10 +137,11 @@ The full gate — what CI runs and what a release must pass — is:
 ## Release process, end to end
 
 ```bash
-pnpm version-bump 0.5.4
-git commit -am "Release v0.5.4"
-git tag -a v0.5.4 -m "v0.5.4"          # annotated; every release tag is
-git push origin master v0.5.4
+pnpm version-bump 0.8.1
+git add package.json apps/*/package.json packages/*/package.json   # not -a: the tree may hold unrelated edits
+git commit -m "Release v0.8.1"
+git tag -a v0.8.1 -m "v0.8.1"          # annotated; every release tag is
+git push origin master v0.8.1
 ```
 
 Then `.github/workflows/release.yml` runs on the `v*` tag:
@@ -151,16 +171,22 @@ Then `.github/workflows/release.yml` runs on the `v*` tag:
 3. **`publish` job** (needs both). Lays out the assets, generates
    `SHA256SUMS.txt`, and `gh release create`/`upload`s them.
 
-**A release is not finished when the workflow goes green.** The VPS still has
-to be mirrored — download the assets, verify the checksums, upload the
-installer and blockmap to `/opt/callout-relay/data/updates/`, upload
-`latest.yml` **last** so the manifest never points at a file that is not there,
-replace the Linux relay binary and restart the service. `HANDOFF.md` carries the
-exact commands. **This step has not been done since v0.5.1** — see
-`docs/OPEN-WORK.md`.
+**A release is not finished when the workflow goes green.** Two steps follow,
+and `HANDOFF.md` carries the exact commands:
 
-Auto-update defaults to the GitHub feed. The VPS feed only serves installs that
-explicitly set `updateFeedUrl`.
+1. **Release notes.** The workflow publishes under GitHub's generated notes;
+   replace them with the changelog prose, `node scripts/release-notes.mjs <v>`
+   piped to `gh release edit`. That script reads `packages/shared/dist`, so
+   build shared first. A version written but never tagged on its own - 0.7.0 -
+   has no release page, so its entry belongs in the next release's notes.
+   Prose only: no tooling credit, no emoji.
+2. **The hosted relay.** `pnpm deploy:hosted`, then the two verify scripts in
+   `apps/hosted-relay/scripts/`. A deploy restarts every Durable Object, so
+   anyone watching reconnects once.
+
+There is no VPS to mirror any more; it was stopped on 2026-09-06. Auto-update
+reads `latest.yml` from the GitHub release, and an install only looks anywhere
+else if `updateFeedUrl` is set.
 
 ## Repo gotchas
 
@@ -182,14 +208,12 @@ explicitly set `updateFeedUrl`.
   keys); `vps.env.example` is the tracked template.
 - **`shared` must be built before anything typechecks.** Both workflows build
   before they typecheck for exactly this reason.
-- **`HANDOFF.md` is partially stale.** It still says the latest release is
-  v0.5.1 and describes a `ralph/pipeline-hardening` branch as unmerged. That
-  work is in `master` and v0.5.3 is released. Its *procedures* (the VPS mirror,
-  audio routing, the model-download investigation) are still good. There is a
-  guard test over it — `packages/shared/test/handoff.test.ts` checks that every
-  `pnpm <script>` and every file and doc it names actually exists — but a guard
-  test cannot catch a stale claim, only a dangling pointer. **There is no
-  equivalent guard test over this file.**
+- **`HANDOFF.md` was rewritten at v0.8.0,** after sitting at v0.5.1 for weeks
+  describing a merged branch as unmerged and a retired VPS as the release
+  target. `packages/shared/test/handoff.test.ts` guards it, this file,
+  `docs/OPEN-WORK.md` and `README.md`: every `pnpm <script>`, file and document
+  they name has to exist. A guard test cannot catch a stale claim, though, only
+  a dangling pointer - which is exactly how both files drifted.
 - **`pnpm dev:app` needs Electron's binary, which pnpm's postinstall may never
   have fetched.** `node_modules/.pnpm/electron@<v>/node_modules/electron/` ships
   only `index.js` until `install.js` downloads `dist/` (~190 MB) and writes
@@ -219,7 +243,7 @@ documentation and config — `versions.test.ts`, `workflows.test.ts`,
 guard non-source facts.
 
 **No mocking of the core relay or the translation state machine.** Verified:
-`vi.mock` appears in **zero** of the 31 test files. The relay tests stand up a
+`vi.mock` appears in **zero** of the 59 test files. The relay tests stand up a
 real `startRelay` on an ephemeral port and talk to it over real WebSockets; the
 renderer and viewer tests run under happy-dom against the real markup. Keep it
 that way — mocking the thing under test is what the audit found hiding several
@@ -248,7 +272,7 @@ worth re-reading:
 
 ## Known-open risks a session should not re-derive
 
-Full list and status in `docs/OPEN-WORK.md`. The three that shape decisions:
+Full list and status in `docs/OPEN-WORK.md`. The two that shape decisions:
 
 - **No code signing.** `apps/standalone/package.json`'s `win` block sets no
   `publisherName` and ships no certificate, so electron-updater's
@@ -258,5 +282,7 @@ Full list and status in `docs/OPEN-WORK.md`. The three that shape decisions:
   allows `http:` only for loopback (`localhost`, `127.0.0.1`, `[::1]`, `::1`) on
   the grounds that that is a developer serving their own build. An unset feed
   means the packaged GitHub feed and is allowed.
-- **The VPS is behind and cannot be updated from this machine.** See
-  `docs/OPEN-WORK.md` for what unblocks it.
+- **In-app archive model downloads (B6)** fail at ~28% on one user's machine
+  and cannot be reproduced on the dev desktop, where both failing models install
+  cleanly. The instrumented error message is what will settle it - ask for it
+  before changing the download path.
