@@ -86,6 +86,17 @@ export interface AppConfig {
    *  which is how "never run before" is told from "updated since last run". */
   lastSeenVersion?: string;
 
+  /** keep a copy of every finished line on this PC, appended as the session
+   *  runs. Required rather than optional, for the reason spelled out on
+   *  `idleBillingStopMinutes` above: read as `?? false` somewhere downstream,
+   *  an optional boolean would default the feature to off, and a transcript
+   *  you had to switch on before the session you lost is no transcript. */
+  saveTranscripts: boolean;
+  /** where those files go. Absent means the platform default, which only the
+   *  Electron main process can resolve - it needs app.getPath("documents") -
+   *  so this stays absent on a fresh install rather than carrying a guess. */
+  transcriptDir?: string;
+
   /** secrets (stored in local config file / env, never shipped) */
   deepgramApiKey?: string;
   geminiApiKey?: string;
@@ -119,6 +130,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   obsOverlay: false,
   output: "phone",
   setupDone: false,
+  saveTranscripts: true,
   relayPort: 8787,
 };
 
@@ -310,6 +322,39 @@ export function validRelayPort(value: unknown): number | undefined {
   if (!Number.isInteger(n)) return undefined;
   // below 1024 needs privileges the app does not have and should not ask for
   return n >= 1024 && n <= 65535 ? n : undefined;
+}
+
+/**
+ * A directory the app can actually write transcripts into, or undefined.
+ *
+ * `transcriptDir` is the first path-shaped key in `AppConfig`. Every directory
+ * before it was derived - `defaultDataDir()`, `modelsDir` - so none could ever
+ * be a hand-edited string. This one can: `ConfigStore.merge()` assigns unknown
+ * keys wholesale through a `Record<string, unknown>` cast, so whatever sits in
+ * config.json arrives typed `string | undefined` whether or not it ever was.
+ * Same reasoning as `validRelayPort` above: check at the edge, because the
+ * point of consumption is `fs.mkdirSync`, and by then a session is starting.
+ *
+ * Relative paths are rejected rather than resolved. A relative path resolves
+ * against `process.cwd()`, which for a packaged Electron app is wherever
+ * Windows launched it from - Program Files, the desktop, a shell's working
+ * directory - so the transcripts would land somewhere the user cannot predict
+ * and the app cannot find again.
+ *
+ * Absoluteness is decided by pattern, not by `path.isAbsolute`, which answers
+ * only for the platform it runs on. The release workflow's `linux-relay` job
+ * runs `vitest run packages/shared`, so a check written with `path.isAbsolute`
+ * would accept `C:\...` on the dev machine and reject it in CI.
+ */
+export function validTranscriptDir(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const dir = value.trim();
+  if (!dir) return undefined;
+  const absolute =
+    /^[A-Za-z]:[\\/]/.test(dir) || // C:\… or D:/…
+    /^\\\\[^\\]/.test(dir) || //      \\nas\share
+    dir.startsWith("/"); //           /home/…
+  return absolute ? dir : undefined;
 }
 
 /**
@@ -1034,6 +1079,19 @@ export type ServerToPublisher =
   | { type: "pong" };
 
 /**
+ * One finished line as the publisher heard it: the relay's publisher echo, made
+ * subscribable through RelayHandle.onTranscript for the desktop app's saved
+ * transcripts. It carries the whole SpeakerTag, because the member it names does.
+ *
+ * Declared here rather than beside onTranscript in server.ts, deliberately.
+ * packages/shared/test/speakerTag.test.ts takes the FIRST `type: "subtitle"`
+ * text in server.ts to be that file's caption hop. An alias placed above the
+ * real hop became the thing it checked, and the hop itself - the one the guard
+ * exists for - stopped being checked at all.
+ */
+export type TranscriptLine = Extract<ServerToPublisher, { type: "subtitle" }>;
+
+/**
  * Binary frames = raw PCM s16le 16 kHz, mono, or interleaved stereo when the
  * hello said `channels: 2`. Text frames = JSON control.
  */
@@ -1099,6 +1157,75 @@ export interface AudioDeviceInfo {
 
 export type SessionState = "idle" | "starting" | "live" | "stopping" | "error";
 
+/**
+ * A saved transcript: the desktop app's own copy of every finished line.
+ *
+ * These cross the preload bridge, so they live in the contract. The files, and
+ * everything that writes and reads them, live in
+ * apps/standalone/src/transcripts.ts.
+ */
+export interface TranscriptHeader {
+  v: number;
+  kind: "session";
+  /** also the file's name, without `.jsonl` */
+  id: string;
+  /** epoch ms */
+  startedAt: number;
+  /** the app version that wrote the file */
+  app: string;
+  languages: Languages;
+  translates: boolean;
+}
+
+/** one line as read back: the line merged with its translation, if it got one */
+export interface TranscriptRow extends SpeakerTag {
+  /**
+   * 1-based position in its file. The relay's segment ids restart at 1 on every
+   * new publisher socket, and a reconnect does not start a new file, so `id`
+   * can repeat within one transcript. This cannot.
+   */
+  n: number;
+  /** the relay's segment id */
+  id: number;
+  /** epoch ms the line was written */
+  t: number;
+  source: string;
+  target?: string;
+  latency?: SubtitleLatency;
+}
+
+export interface Transcript {
+  id: string;
+  /** absent when the first record is missing or unreadable - the rows are not */
+  header?: TranscriptHeader;
+  rows: TranscriptRow[];
+}
+
+export interface TranscriptSummary {
+  id: string;
+  startedAt: number;
+  /** epoch ms of the last line, or startedAt when there are none */
+  endedAt: number;
+  lines: number;
+  bytes: number;
+  languages?: Languages;
+}
+
+export interface TranscriptStatus {
+  /**
+   * off: switched off in SETTINGS. idle: on, no session running. saving: a
+   * session is open. failed: the last write did not reach the disk - the next
+   * line tries again, so this clears itself if the folder comes back.
+   */
+  state: "off" | "idle" | "saving" | "failed";
+  /** the folder a new session is written to */
+  dir: string;
+  /** the session being written, once its first line has created the file */
+  session?: string;
+  /** why the last write failed */
+  error?: string;
+}
+
 export interface ControlStatus {
   companion: { version: string };
   session: {
@@ -1140,6 +1267,8 @@ export interface ControlStatus {
   localModels?: LocalModelStatus[];
   /** CPU / RAM of the machine running the app, for the model recommendation */
   hardware?: HardwareInfo;
+  /** saved transcripts (desktop app only) */
+  transcript?: TranscriptStatus;
 }
 
 export interface UsageInfo {

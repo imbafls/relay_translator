@@ -15,6 +15,7 @@ import {
   ServerToPublisher,
   ServerToUplink,
   ServerToViewer,
+  TranscriptLine,
   UplinkToServer,
   UsageInfo,
 } from "@callout-relay/shared";
@@ -110,6 +111,9 @@ export interface RelayOptions {
   updatesDir?: string;
 }
 
+// declared in packages/shared, not here - the comment on it there says why
+export type { TranscriptLine };
+
 export interface RelayHandle {
   port: number;
   state: RelayState;
@@ -119,6 +123,21 @@ export interface RelayHandle {
   rotateViewerToken(): string;
   /** subscribe to everything fanned out to local viewers (for the uplink bridge) */
   onBroadcast(cb: (msg: ServerToViewer) => void): () => void;
+  /**
+   * Every finished line exactly as it was heard, for the desktop app's saved
+   * transcripts.
+   *
+   * Not `onBroadcast`. That fires inside `toViewers`, which is handed the line
+   * after HIDE SWEARING has masked it, with latency dropped whenever the viewer
+   * badge is off - right for viewers, wrong for the streamer's own record. This
+   * is the publisher echo, which carries neither change, and until now went
+   * straight onto the publisher socket where nothing in the app could see it.
+   *
+   * With translation on, one utterance arrives here TWICE under one id: the
+   * line, then the same line again carrying `target`. A consumer that treats
+   * each call as a new line records every utterance twice.
+   */
+  onTranscript(cb: (msg: TranscriptLine) => void): () => void;
   /** Deepgram balance + Gemini usage counters */
   getUsage(): Promise<UsageInfo>;
   /** viewers currently attached to this relay */
@@ -254,6 +273,8 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   let currentTranslates = DEFAULT_CONFIG.translationEnabled !== false;
   let currentBrand: Brand = {};
   const broadcastListeners = new Set<(msg: ServerToViewer) => void>();
+  /** the publisher echo, made subscribable - see RelayHandle.onTranscript */
+  const transcriptListeners = new Set<(msg: TranscriptLine) => void>();
   /** epoch ms when the current stream went live (viewers run a session clock from it) */
   let liveSince: number | undefined;
   /** false once the speech pipeline has gone away under a connected publisher */
@@ -415,6 +436,17 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       log,
     }, carryOver);
     session.start();
+        // ahead of the socket check, not behind it: a translation that
+        // resolves after the publisher has gone still belongs in the record
+        if (msg.type === "subtitle") {
+          for (const cb of transcriptListeners) {
+            try {
+              cb(msg);
+            } catch {
+              /* a listener that cannot write must not cost anyone a caption */
+            }
+          }
+        }
     if (publisher && publisher.ws === ws) publisher.session = session;
   }
 
@@ -1039,6 +1071,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           if (lastSession) await lastSession.drain(2000);
           if (uplink) {
             try {
+        onTranscript(cb: (msg: TranscriptLine) => void) {
+          transcriptListeners.add(cb);
+          return () => transcriptListeners.delete(cb);
+        },
               uplink.close(1001, "relay shutting down");
             } catch {
               /* noop */

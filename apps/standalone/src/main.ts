@@ -10,6 +10,7 @@ import {
   powerSaveBlocker,
   shell,
   clipboard,
+  dialog,
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
@@ -31,10 +32,19 @@ import {
   HOSTED_RELAY_URL,
   RELAY_CONFIG_KEYS,
   relayRollbackPatch,
+  validTranscriptDir,
   viewerLinkFor,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
 import { ModelStore } from "./models";
+import {
+  TranscriptWriter,
+  deleteTranscript,
+  exportTranscript,
+  listTranscripts,
+  readTranscript,
+  transcriptFile,
+} from "./transcripts";
 
 // dev convenience: pick up DEEPGRAM_API_KEY / GEMINI_API_KEY from repo .env
 tryLoadDotenv([path.resolve(__dirname, "..", "..", "..")]);
@@ -82,6 +92,30 @@ let updater: Updater | null = null;
 const configStore = new ConfigStore(defaultDataDir());
 const modelsDir = path.join(defaultDataDir(), "models");
 const models = new ModelStore(modelsDir, () => broadcastStatus(), log);
+
+/**
+ * Where saved transcripts go: the folder SETTINGS names, else Documents. Read
+ * on every use rather than cached. A folder changed mid-session applies from
+ * the next session - the writer keeps the file it already has - and every IPC
+ * handler below reads the folder the user can currently see in SETTINGS.
+ */
+function transcriptDir(): string {
+  return (
+    validTranscriptDir(config().transcriptDir) ??
+    path.join(app.getPath("documents"), "Callout Relay", "Transcripts")
+  );
+}
+
+const transcripts = new TranscriptWriter({
+  dir: transcriptDir,
+  // `!== false` rather than truthiness: a config written before this key
+  // existed has no value for it, and the feature is on by default
+  enabled: () => config().saveTranscripts !== false,
+  appVersion: APP_VERSION,
+  log,
+  onChange: () => broadcastStatus(),
+});
+let unsubscribeTranscript: (() => void) | null = null;
 
 let sessionState: SessionState = "idle";
 let sessionError: string | undefined;
@@ -189,6 +223,7 @@ async function startEmbeddedRelay(): Promise<void> {
   log("info", `local relay up on :${relay.port}`);
   startUplink();
   bridgeBroadcasts();
+  bridgeTranscripts();
   void refreshUsage();
 }
 
@@ -274,6 +309,19 @@ function stopUplink(): void {
     uplink = null;
   }
   uplinkState = "off";
+}
+
+/**
+ * Every finished line, as it was heard, into the saved transcript.
+ *
+ * `onTranscript`, not `onBroadcast` below: the broadcast is the viewers' copy,
+ * after HIDE SWEARING has masked it and with latency dropped when the badge is
+ * off. The streamer's own record gets neither change. Re-run on every relay
+ * restart, because a restart replaces the relay and the old subscription with it.
+ */
+function bridgeTranscripts(): void {
+  if (unsubscribeTranscript) unsubscribeTranscript();
+  unsubscribeTranscript = relay ? relay.onTranscript((line) => transcripts.write(line)) : null;
 }
 
 function bridgeBroadcasts(): void {
@@ -442,6 +490,7 @@ function currentStatus() {
     update: updater?.current,
     localModels: models.status(),
     hardware,
+    transcript: transcripts.status(),
   };
 }
 
@@ -545,6 +594,50 @@ function registerIpc(): void {
   // the OS directly: no permission, and no focused-document requirement.
   ipcMain.handle("clipboard:write", (_e, text: string) => {
     clipboard.writeText(String(text ?? ""));
+  });
+
+  // Saved transcripts. The renderer names a transcript by its session id and
+  // never by a path: each handler resolves the id itself, under the folder main
+  // chose, through transcriptFile's pattern - so nothing the renderer sends can
+  // point fs or shell anywhere else.
+  ipcMain.handle("transcripts:list", () => listTranscripts(transcriptDir()));
+  ipcMain.handle("transcripts:read", (_e, id: unknown) => readTranscript(transcriptDir(), id));
+  ipcMain.handle("transcripts:export", (_e, req: { id?: unknown; format?: unknown } | null) => {
+    const file = exportTranscript(transcriptDir(), req?.id, req?.format === "srt" ? "srt" : "txt");
+    if (file) shell.showItemInFolder(file);
+    return file;
+  });
+  ipcMain.handle("transcripts:reveal", (_e, id: unknown) => {
+    const file = transcriptFile(transcriptDir(), id);
+    if (file && fs.existsSync(file)) shell.showItemInFolder(file);
+  });
+  ipcMain.handle("transcripts:delete", (_e, id: unknown) => {
+    // the file being written right now is not the renderer's to delete
+    if (id === transcripts.status().session) return false;
+    return deleteTranscript(transcriptDir(), id);
+  });
+  ipcMain.handle("transcripts:openDir", async () => {
+    const dir = transcriptDir();
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      log("warn", `could not create ${dir}: ${String((err as Error)?.message || err)}`);
+      return;
+    }
+    const failed = await shell.openPath(dir);
+    if (failed) log("warn", `could not open ${dir}: ${failed}`);
+  });
+  ipcMain.handle("transcripts:chooseDir", async () => {
+    const options = {
+      title: "Where should transcripts be saved?",
+      defaultPath: transcriptDir(),
+      properties: ["openDirectory", "createDirectory"] as ("openDirectory" | "createDirectory")[],
+    };
+    const res = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    const dir = res.canceled ? undefined : validTranscriptDir(res.filePaths[0]);
+    if (!dir) return undefined;
+    await applyConfig({ transcriptDir: dir });
+    return dir;
   });
 
   // the renderer compares this against config.lastSeenVersion to decide whether
@@ -657,6 +750,16 @@ function registerIpc(): void {
     sessionState = update.state;
     sessionError = update.error;
     sessionStartedAt = update.state === "live" ? Date.now() : undefined;
+    // A transcript belongs to the session, not to the publisher socket: a
+    // reconnect reports "starting" again and has to go on writing the same
+    // file, which open() allows for. "stopping" keeps it open on purpose - STOP
+    // lets the last utterance finish, and that line is still on its way.
+    if (update.state === "starting" || update.state === "live") {
+      const cfg = config();
+      transcripts.open({ languages: cfg.languages, translates: translationActive(cfg) });
+    } else if (update.state === "idle" || update.state === "error") {
+      transcripts.close();
+    }
     setPowerBlock(update.state === "live" || update.state === "starting");
     broadcastStatus();
     void refreshUsage();
@@ -852,6 +955,7 @@ if (!gotLock) {
     setPowerBlock(false);
     updater?.stop();
     stopUplink();
+    transcripts.close();
     relay?.close().catch(() => {});
   });
 

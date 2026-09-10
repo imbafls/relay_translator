@@ -6,6 +6,8 @@ import type {
   KeyValidation,
   LocalModelStatus,
   SessionState,
+  Transcript,
+  TranscriptSummary,
   UpdateStatus,
 } from "@callout-relay/shared";
 import type { FeedbackPayload, FeedbackResult } from "@callout-relay/companion";
@@ -58,6 +60,23 @@ export interface RendererBridge {
    * main.ts) and could never complete this request itself.
    */
   sendFeedback(payload: FeedbackPayload): Promise<FeedbackResult>;
+  /**
+   * Saved transcripts. Every one of these names a transcript by its session id,
+   * never by a path - main resolves the id itself, under the folder it chose,
+   * so nothing sent from here can point fs or shell anywhere else.
+   */
+  /** every saved session in the current folder, newest first */
+  listTranscripts(): Promise<TranscriptSummary[]>;
+  /** one session, each line merged with its translation */
+  readTranscript(id: string): Promise<Transcript | undefined>;
+  /** write a readable copy beside it and show it in Explorer; the file, or undefined */
+  exportTranscript(id: string, format: "txt" | "srt"): Promise<string | undefined>;
+  revealTranscript(id: string): Promise<void>;
+  /** false for the session still being written, or a file that would not go */
+  deleteTranscript(id: string): Promise<boolean>;
+  /** the folder picked - already saved to config - or undefined if cancelled */
+  chooseTranscriptDir(): Promise<string | undefined>;
+  openTranscriptDir(): Promise<void>;
 }
 
 contextBridge.exposeInMainWorld("cr", {
@@ -90,4 +109,11 @@ contextBridge.exposeInMainWorld("cr", {
     ipcRenderer.on("update:changed", (_e, status) => cb(status)),
   readRelayLog: () => ipcRenderer.invoke("log:read"),
   sendFeedback: (payload: FeedbackPayload) => ipcRenderer.invoke("feedback:send", payload),
+  listTranscripts: () => ipcRenderer.invoke("transcripts:list"),
+  readTranscript: (id: string) => ipcRenderer.invoke("transcripts:read", id),
+  exportTranscript: (id: string, format: "txt" | "srt") => ipcRenderer.invoke("transcripts:export", { id, format }),
+  revealTranscript: (id: string) => ipcRenderer.invoke("transcripts:reveal", id),
+  deleteTranscript: (id: string) => ipcRenderer.invoke("transcripts:delete", id),
+  chooseTranscriptDir: () => ipcRenderer.invoke("transcripts:chooseDir"),
+  openTranscriptDir: () => ipcRenderer.invoke("transcripts:openDir"),
 } satisfies RendererBridge);
