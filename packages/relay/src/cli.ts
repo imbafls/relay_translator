@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   console.log("[relay] ready");
   console.log(`  local   ${handle.origin}/watch/${handle.state.viewerToken}`);
   console.log(`  health  ${handle.origin}/health`);
-  console.log(`  tokens  -> ${relayDataDir()}\\relay-state.json`);
+  console.log(`  tokens  -> ${path.join(relayDataDir(), "relay-state.json")}`);
 }
 
 main().catch((err) => {
