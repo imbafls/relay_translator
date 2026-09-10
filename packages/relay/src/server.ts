@@ -280,6 +280,13 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   /** false once the speech pipeline has gone away under a connected publisher */
   let sttLive = true;
   /**
+   * What the connected uplink last SAID about whether a session is running: its
+   * hello's `live`, then each status after it. Not whether the socket exists -
+   * the desktop app keeps its uplink connected while it sits idle in the tray.
+   * False until an uplink says otherwise, and false again once it goes.
+   */
+  let uplinkLive = false;
+  /**
    * Fix-round-3 Finding 4. True while the idle-billing gate has stopped
    * forwarding to the paid engine - see `PublisherSession.onBillingPaused`'s
    * own comment. Same shape as `sttLive` immediately above: a plain flag,
@@ -327,6 +334,13 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     if (msg.type === "hello") {
       if (msg.live && msg.since) liveSince = msg.since;
       if (msg.live && !liveSince) liveSince = Date.now();
+      // A hello saying nothing is running ends the clock, as the status branch
+      // above always has. This one never did, which was harmless only while
+      // isLive() ignored what an uplink said: now that liveness follows it, a
+      // start left over from the last session would be handed to the next.
+      // Not while a publisher's own session is live here - that clock is not
+      // the uplink's to end.
+      if (!msg.live && !publisherLive()) liveSince = undefined;
       return { ...msg, since: msg.live ? liveSince : undefined, elapsedMs: msg.live ? elapsed() : undefined };
     }
     return msg;
@@ -375,9 +389,20 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
    * AIR with a running timer, forever.
    *
    * An uplink carries finished subtitles and has no STT of its own, so it is
-   * live on its own terms.
+   * live on its own terms - on what its last hello or status said, not on
+   * being connected. It was socket presence here too, while the hello handler
+   * below forwarded the uplink's own answer to viewers already watching: so a
+   * viewer watching was told OFF AIR and one opening the link in the same idle
+   * moment was told ON AIR, two answers from one relay.
    */
-  const isLive = (): boolean => (publisher !== null && sttLive) || uplink !== null;
+  /**
+   * A publisher is streaming once its hello has built a session, not from the
+   * moment its socket is accepted. onPublisher() deliberately builds nothing
+   * until the hello lands, and sttLive starts out true - so counting the socket
+   * read as ON AIR for a publisher that had not said a word.
+   */
+  const publisherLive = (): boolean => publisher?.session != null && sttLive;
+  const isLive = (): boolean => publisherLive() || (uplink !== null && uplinkLive);
 
   function buildSession(ws: WebSocket, cfg: SessionConfig): void {
     // viewers are not kicked on a rebuild, so their rows survive it - the new
@@ -411,6 +436,17 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       sttStats,
       toViewers,
       toPublisher: (msg) => {
+        // ahead of the socket check, not behind it: a translation that
+        // resolves after the publisher has gone still belongs in the record
+        if (msg.type === "subtitle") {
+          for (const cb of transcriptListeners) {
+            try {
+              cb(msg);
+            } catch {
+              /* a listener that cannot write must not cost anyone a caption */
+            }
+          }
+        }
         try {
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
         } catch {
@@ -436,17 +472,6 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       log,
     }, carryOver);
     session.start();
-        // ahead of the socket check, not behind it: a translation that
-        // resolves after the publisher has gone still belongs in the record
-        if (msg.type === "subtitle") {
-          for (const cb of transcriptListeners) {
-            try {
-              cb(msg);
-            } catch {
-              /* a listener that cannot write must not cost anyone a caption */
-            }
-          }
-        }
     if (publisher && publisher.ws === ws) publisher.session = session;
   }
 
@@ -860,6 +885,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
     }
     uplink = ws;
+    // a new uplink has said nothing yet - not the replaced one's last word,
+    // whose own close handler no longer matches `uplink === ws` to clear it
+    uplinkLive = false;
     log("info", "uplink connected (remote subtitle mirror)");
     sendUplink(ws, { type: "ready" });
     sendUplink(ws, { type: "viewers", count: viewers.size });
@@ -880,6 +908,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       if (msg.type === "hello") {
         currentLanguages = { ...msg.languages };
         currentTranslates = msg.translates !== false;
+        // what isLive() answers for this uplink from now on. `!== false` for an
+        // older app whose hello carries no `live` field - the same rule as the
+        // hello forwarded to viewers below, so the two cannot disagree
+        uplinkLive = msg.live !== false;
         // Sanitised, not trusted - the same rule `publisherHello()` applies to
         // the same two fields a few hundred lines up, and the one the hosted
         // relay applies on the internet path. This socket is the uplink of a
@@ -929,6 +961,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         return;
       }
       if (msg.type === "status") {
+        uplinkLive = msg.live === true;
         toViewers({ type: "status", live: msg.live, message: msg.message, since: msg.since });
       }
     });
@@ -937,6 +970,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       if (uplink === ws) {
         log("info", "uplink disconnected");
         uplink = null;
+        uplinkLive = false;
         toViewers({ type: "status", live: false, message: "stream ended" });
       }
     });
@@ -1037,6 +1071,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           broadcastListeners.add(cb);
           return () => broadcastListeners.delete(cb);
         },
+        onTranscript(cb: (msg: TranscriptLine) => void) {
+          transcriptListeners.add(cb);
+          return () => transcriptListeners.delete(cb);
+        },
         viewerCount: () => viewers.size,
         sttLive: () => sttLive,
         billingPaused: () => billingPaused,
@@ -1071,10 +1109,6 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           if (lastSession) await lastSession.drain(2000);
           if (uplink) {
             try {
-        onTranscript(cb: (msg: TranscriptLine) => void) {
-          transcriptListeners.add(cb);
-          return () => transcriptListeners.delete(cb);
-        },
               uplink.close(1001, "relay shutting down");
             } catch {
               /* noop */

@@ -280,6 +280,183 @@ describe("what survives the hop to an internet viewer", () => {
  * that is the half this drives: real relay, real sockets, the brand announced
  * before the viewer that reads it exists.
  */
+describe("whether a relay with an idle uplink says it is on air", () => {
+  /**
+   * An uplink socket existing is not somebody streaming. The desktop app keeps
+   * its uplink connected while it sits idle in the tray, and says so in its
+   * hello with `live: false`. The hello handler already forwarded that to the
+   * viewers who were watching - but everything else that answers "is this
+   * live?" read `isLive()`, and `isLive()` only asked whether the socket was
+   * there. So a viewer already watching was told OFF AIR, and one who opened
+   * the link a moment later in the same idle window was told ON AIR: two
+   * answers from one relay at one moment.
+   */
+
+  const hello = (extra: Record<string, unknown>): string =>
+    JSON.stringify({ type: "hello", languages: { source: "en", target: "vi" }, translates: true, ...extra });
+
+  /** send, then wait until a viewer already attached shows the relay processed it */
+  async function after(conn: Conn, send: () => void, match: (m: Msg) => boolean, what: string): Promise<Msg> {
+    const from = conn.seen.length;
+    send();
+    const deadline = Date.now() + 4000;
+    for (;;) {
+      const hit = conn.seen.slice(from).find(match);
+      if (hit) return hit;
+      if (Date.now() > deadline) throw new Error(`no ${what} within 4000ms`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  async function uplinked(): Promise<{ up: Conn; watching: Conn }> {
+    const watching = await connect(url(remote, "/ws/viewer", remote.state.viewerToken));
+    const up = await connect(url(remote, "/ws/uplink", remote.state.publisherToken));
+    await up.until(isType("ready"), "ready");
+    return { up, watching };
+  }
+
+  /** an app sitting idle in the tray, uplink connected */
+  async function idle(): Promise<{ up: Conn; watching: Conn }> {
+    const conns = await uplinked();
+    await after(
+      conns.watching,
+      () => conns.up.ws.send(hello({ live: false })),
+      (m) => m.type === "hello" && m.live === false,
+      "the idle hello reaching a viewer already watching",
+    );
+    return conns;
+  }
+
+  /** a phone opening the link now; a second viewer on the token replaces the first */
+  async function lateGreeting(): Promise<Msg> {
+    const late = await connect(url(remote, "/ws/viewer", remote.state.viewerToken));
+    return late.until(isType("hello"), "the greeting a late joiner gets");
+  }
+
+  it("tells a viewer who opens the link while it is idle that it is off air", async () => {
+    await idle();
+    const greeting = await lateGreeting();
+    expect(greeting.live, "an uplink that said it was idle read as on air to a late joiner").toBe(false);
+  });
+
+  it("answers a sync from that viewer the same way", async () => {
+    await idle();
+    const late = await connect(url(remote, "/ws/viewer", remote.state.viewerToken));
+    await late.until(isType("hello"), "the greeting");
+    const reply = await after(late, () => late.ws.send(JSON.stringify({ type: "sync" })), isType("hello"), "a sync reply");
+    expect(reply.live, "sync read the uplink socket existing as somebody streaming").toBe(false);
+  });
+
+  it("says so on /health", async () => {
+    await idle();
+    const health = (await (await fetch(`http://127.0.0.1:${remote.port}/health`)).json()) as { live: boolean };
+    expect(health.live, "/health read the uplink socket existing as somebody streaming").toBe(false);
+  });
+
+  it("goes on air for a late joiner once the uplink says it is streaming", async () => {
+    const { up, watching } = await idle();
+    await after(
+      watching,
+      () => up.ws.send(hello({ live: true, since: Date.now() })),
+      (m) => m.type === "hello" && m.live === true,
+      "the live hello",
+    );
+    expect((await lateGreeting()).live).toBe(true);
+  });
+
+  it("goes off air again once the uplink's status says the session stopped", async () => {
+    const { up, watching } = await idle();
+    await after(
+      watching,
+      () => up.ws.send(hello({ live: true, since: Date.now() })),
+      (m) => m.type === "hello" && m.live === true,
+      "the live hello",
+    );
+    await after(
+      watching,
+      () => up.ws.send(JSON.stringify({ type: "status", live: false })),
+      (m) => m.type === "status" && m.live === false,
+      "the stop",
+    );
+    expect((await lateGreeting()).live, "a stopped session still read as on air to a late joiner").toBe(false);
+  });
+
+  /** an app from before `live` existed sends a hello without it; that must keep reading as streaming */
+  it("still treats an older app's hello, which carries no live field, as streaming", async () => {
+    const { up, watching } = await uplinked();
+    await after(watching, () => up.ws.send(hello({})), (m) => m.type === "hello" && m.live === true, "the older hello");
+    expect((await lateGreeting()).live).toBe(true);
+  });
+
+  it("does not hand a replacing uplink the last one's word", async () => {
+    const { up, watching } = await uplinked();
+    await after(
+      watching,
+      () => up.ws.send(hello({ live: true, since: Date.now() })),
+      (m) => m.type === "hello" && m.live === true,
+      "the first uplink going live",
+    );
+    // the app restarts: a new uplink replaces the old one before it has said anything
+    const next = await connect(url(remote, "/ws/uplink", remote.state.publisherToken));
+    await next.until(isType("ready"), "ready");
+    const health = (await (await fetch(`http://127.0.0.1:${remote.port}/health`)).json()) as { live: boolean };
+    expect(health.live, "a new uplink that had said nothing inherited the old one's ON AIR").toBe(false);
+  });
+
+  /**
+   * The asymmetry that stayed inert only while isLive() ignored the hello:
+   * stamp() set the session clock from a live hello and never cleared it on an
+   * idle one. With liveness now following what the hello says, a clock left
+   * over from the last session would be handed straight to the next.
+   */
+  it("starts the next session's clock fresh rather than from the last one", async () => {
+    const OLD = 1_788_000_000_000;
+    const { up, watching } = await uplinked();
+    await after(watching, () => up.ws.send(hello({ live: true, since: OLD })), (m) => m.type === "hello" && m.since === OLD, "the first session");
+    await after(watching, () => up.ws.send(hello({ live: false })), (m) => m.type === "hello" && m.live === false, "going idle");
+    const before = Date.now();
+    await after(watching, () => up.ws.send(hello({ live: true })), (m) => m.type === "hello" && m.live === true, "the next session");
+
+    const greeting = await lateGreeting();
+    expect(greeting.since, "the new session inherited the old session's start").not.toBe(OLD);
+    expect(greeting.since as number).toBeGreaterThanOrEqual(before);
+  });
+});
+
+describe("whether a publisher that has not said hello yet is on air", () => {
+  /**
+   * The same defect one role over. onPublisher() accepts the socket and builds
+   * no session until the hello lands - and isLive() counted the socket, so a
+   * relay answered ON AIR for a publisher that had not said a word.
+   */
+  const health = async (h: RelayHandle): Promise<boolean> =>
+    ((await (await fetch(`http://127.0.0.1:${h.port}/health`)).json()) as { live: boolean }).live;
+
+  it("is off air until its hello has built a session, and on air after", async () => {
+    const pub = await connect(url(local, "/ws/publisher", local.state.publisherToken));
+    await pub.until(isType("ready"), "ready");
+    expect(await health(local), "a publisher socket that had said nothing read as on air").toBe(false);
+
+    pub.ws.send(
+      JSON.stringify({
+        type: "hello",
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        channels: 1,
+      }),
+    );
+    const deadline = Date.now() + 4000;
+    let live = await health(local);
+    while (!live && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+      live = await health(local);
+    }
+    expect(live, "a publisher whose session is up did not read as on air").toBe(true);
+  });
+});
+
 describe("whose captions a late joiner is looking at", () => {
   /**
    * Announce a brand on the uplink and return the hello a viewer that was
