@@ -114,3 +114,52 @@ describe("the handoff and the orientation doc stay honest about the basics", () 
     }
   });
 });
+
+/**
+ * Every line of every fenced block, with `\`-continued lines joined back into
+ * the one command they are, so a launch split over two lines still reads as
+ * one launch rather than as a bare exe path.
+ */
+function fencedLines(text: string): string[] {
+  return [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].flatMap((m) =>
+    m[1].replace(/\\\r?\n/g, " ").split(/\r?\n/),
+  );
+}
+
+// the desktop app itself, whichever build: win-unpacked or an installed copy
+const LAUNCHES_APP = /Callout\\? Relay\.exe/;
+
+describe("a documented launch of the packaged app brings its own data dir", () => {
+  // HANDOFF's CDP recipe used to launch win-unpacked against the real
+  // %APPDATA%\callout-relay. On 2026-09-10 one page reload rewrote config.json
+  // twice: the uplink pulled the hosted room's viewer token, lastSeenVersion
+  // moved on, and the two saves left neither the original file nor its .bak on
+  // disk. The variable has to sit on the launch line itself - unset or empty,
+  // defaultDataDir() means the real dir, and a launch run in a shell of its own
+  // never sees what an earlier line exported.
+  const launches = DOCS.flatMap((doc) =>
+    fencedLines(read(doc))
+      .filter((line) => LAUNCHES_APP.test(line) && !line.trimStart().startsWith("#"))
+      .map((line) => ({ doc, line: line.trim() })),
+  );
+
+  it("finds the launch in HANDOFF.md, so the check means something", () => {
+    expect(
+      launches.map((l) => l.doc),
+      "HANDOFF.md no longer launches the packaged app anywhere",
+    ).toContain("HANDOFF.md");
+  });
+
+  it("sets a non-empty CALLOUT_RELAY_DATA as a prefix of the launch command", () => {
+    const unsafe = launches.filter(({ line }) => {
+      const before = line.slice(0, line.search(LAUNCHES_APP));
+      // `VAR=value cmd` and nothing else: an empty value is the real dir, and a
+      // separator before the exe hands the variable to some other command
+      return !/^CALLOUT_RELAY_DATA=(?!""|''|\s|$)/.test(before) || /;|&&|\|/.test(before);
+    });
+    expect(
+      unsafe.map((l) => `${l.doc}: ${l.line}`),
+      "these launch the app against the real %APPDATA%\\callout-relay",
+    ).toEqual([]);
+  });
+});
