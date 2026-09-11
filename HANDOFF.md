@@ -74,8 +74,12 @@ Verify in the packaged app over CDP:
 
 ```bash
 pnpm dist:app
-# then launch with a debug port and drive it
-"apps/standalone/release/win-unpacked/Callout Relay.exe" --remote-debugging-port=9333
+# seed a scratch data dir (see below). cygpath -m gives forward slashes,
+# because the JSON seed cannot hold a Windows backslash
+d="$(cygpath -m "$LOCALAPPDATA")/Temp/cr-verify"; mkdir -p "$d"; printf '{ "setupDone": true, "transcriptDir": "%s/Transcripts" }\n' "$d" > "$d/config.json"
+# then launch against it with a debug port and drive it. The variable is set on
+# this line itself: unset or empty, it means the real data dir
+CALLOUT_RELAY_DATA="$(cygpath -m "$LOCALAPPDATA")/Temp/cr-verify" "apps/standalone/release/win-unpacked/Callout Relay.exe" --remote-debugging-port=9333
 # GET http://127.0.0.1:9333/json/list -> webSocketDebuggerUrl -> Runtime.evaluate
 ```
 
@@ -84,12 +88,39 @@ Notes that cost real time to learn:
 - Handlers fire on hidden elements, so
   `document.getElementById('keysSetup').click()` opens setup without navigating.
 - Only one instance runs: an already-running app makes a second one exit 0
-  immediately and the debug port refuse. Kill it first.
-- Driving the app **writes the real config**. A test that clicked CONTINUE
-  changed `stt`; one that cleared a key field dropped its cached validation.
-  Read `config.json` back afterwards and restore.
+  immediately and the debug port refuse. Kill it first. A scratch
+  `CALLOUT_RELAY_DATA` does not get round this - the lock is Electron's own,
+  on a profile folder the variable does not move.
+- **Never launch it against the real data dir.** On 2026-09-10 a plain launch
+  and one page reload rewrote `%APPDATA%\callout-relay\config.json` twice in
+  six seconds. The uplink connected to the hosted relay with the stored
+  `publisherToken` and pulled the room's `viewerToken`
+  (`GET /admin/viewer-token` in `apps/standalone/src/main.ts`),
+  `lastSeenVersion` was bumped - which suppresses the what's-new panel the
+  owner's own install would have shown - and defaults were filled in.
+  `ConfigStore.persist()` in `packages/companion/src/config.ts` copies the file
+  to `config.json.bak` before every save, so two saves leave neither the
+  original file nor the previous `.bak` on disk. Reading `config.json` back
+  afterwards cannot restore either, or undo a connection to the hosted relay.
+- **Point `CALLOUT_RELAY_DATA` at a scratch dir instead,** as the block above
+  does. `defaultDataDir()` in `packages/companion/src/config.ts` honours it,
+  and config, models, `relay.log` and the embedded relay's `relay-state.json`
+  all live under it. Seeded with `setupDone`, the app opens the stage view with
+  no keys and no `relayUrl`, so there is no uplink, and the real data dir
+  stayed byte-identical through a full CDP run. Driving the app still writes
+  the config it is given - a test that clicked CONTINUE changed `stt`, one
+  that cleared a key field dropped its cached validation - so re-seed before
+  each run.
+- Saved transcripts are not under the data dir. Without the seed's
+  `transcriptDir` they default to `Documents\Callout Relay\Transcripts`, where
+  the SAVED view lists the real ones, DELETE removes them, EXPORT writes beside
+  them, and a session started under test adds its own.
 - `ELECTRON_ENABLE_LOGGING=1` puts main-process output on stderr. The worker's
   errors only appear there, never in the UI.
+- On the dev desktop, `npx electron-builder --win --dir` in `apps/standalone`
+  fails extracting winCodeSign on a symlink privilege error
+  (`Cannot create symbolic link`). Add `-c.win.signAndEditExecutable=false`
+  for a verification build: it skips only the exe's icon and version edit.
 
 Two layout traps in the renderer: `.ob-actions` uses `margin-top:auto`, so the
 step always fills the pane and trimming copy above a list buys nothing; and a
