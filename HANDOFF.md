@@ -76,7 +76,7 @@ Verify in the packaged app over CDP:
 pnpm dist:app
 # seed a scratch data dir (see below). cygpath -m gives forward slashes,
 # because the JSON seed cannot hold a Windows backslash
-d="$(cygpath -m "$LOCALAPPDATA")/Temp/cr-verify"; mkdir -p "$d"; printf '{ "setupDone": true, "transcriptDir": "%s/Transcripts" }\n' "$d" > "$d/config.json"
+d="$(cygpath -m "$LOCALAPPDATA")/Temp/cr-verify"; mkdir -p "$d"; printf '{ "setupDone": true, "transcriptDir": "%s/Transcripts", "updateFeedUrl": "http://127.0.0.1:9/" }\n' "$d" > "$d/config.json"
 # then launch against it with a debug port and drive it. The variable is set on
 # this line itself: unset or empty, it means the real data dir
 CALLOUT_RELAY_DATA="$(cygpath -m "$LOCALAPPDATA")/Temp/cr-verify" "apps/standalone/release/win-unpacked/Callout Relay.exe" --remote-debugging-port=9333
@@ -115,6 +115,22 @@ Notes that cost real time to learn:
   `transcriptDir` they default to `Documents\Callout Relay\Transcripts`, where
   the SAVED view lists the real ones, DELETE removes them, EXPORT writes beside
   them, and a session started under test adds its own.
+- **Nor is the updater's, and in this build the updater is live.**
+  `win-unpacked` ships `resources/app-update.yml`, which is what
+  `unsupportedReason()` in `apps/standalone/src/updater.ts` looks for, so
+  `Updater.start()` asks GitHub 15 s after launch and every 6 h with nobody
+  clicking CHECK. A build behind the latest release - an older commit, or a
+  `win-unpacked` nobody re-packaged (the main checkout's was 0.5.0 on
+  2026-09-10, and its updater found 0.8.0) - downloads it into
+  `%LOCALAPPDATA%\@callout-relaystandalone-updater`, where the installed app
+  stages its own updates, clearing out any other version staged there. On a
+  clean quit it runs that installer with `--updated /S`, which closes any
+  running `Callout Relay.exe` and installs over the owner's per-user copy. The
+  seed's `updateFeedUrl` is what stops it: `setFeedURL` replaces the GitHub
+  provider outright, `isAllowedUpdateFeed()` in `packages/shared/src/index.ts`
+  lets `http:` through for loopback, and Chromium will not dial port 9 at all,
+  so every check fails at once and UPDATES reads `NET::ERR_UNSAFE_PORT`. A run
+  that tests updating needs a feed of its own.
 - `ELECTRON_ENABLE_LOGGING=1` puts main-process output on stderr. The worker's
   errors only appear there, never in the UI.
 - On the dev desktop, `npx electron-builder --win --dir` in `apps/standalone`

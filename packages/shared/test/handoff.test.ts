@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { updateFeedAction } from "../src/index";
 
 /**
  * The documents a session reads before it touches anything, checked for the one
@@ -161,5 +162,71 @@ describe("a documented launch of the packaged app brings its own data dir", () =
       unsafe.map((l) => `${l.doc}: ${l.line}`),
       "these launch the app against the real %APPDATA%\\callout-relay",
     ).toEqual([]);
+  });
+});
+
+/**
+ * The JSON each fenced `printf '...' > .../config.json` line writes, with its
+ * `%s` filled in the way the shell would. A seed that does not parse reads as
+ * no config at all: setup comes back, transcripts go to the real Documents
+ * folder, and the updater is back on the release feed.
+ */
+function seeds(text: string): { line: string; json: Record<string, unknown> | undefined }[] {
+  return fencedLines(text)
+    .filter((line) => /\bprintf '[^']*'/.test(line) && line.includes("config.json") && !line.trimStart().startsWith("#"))
+    .map((line) => {
+      const format = /\bprintf '([^']*)'/.exec(line)?.[1] ?? "";
+      let json: Record<string, unknown> | undefined;
+      try {
+        json = JSON.parse(format.replace(/%s/g, "C:/scratch").replace(/\\n$/, ""));
+      } catch {
+        json = undefined;
+      }
+      return { line: line.trim(), json };
+    });
+}
+
+// a feed here can only be answered by something on this machine
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]", "::1"];
+
+describe("a documented launch of the packaged app cannot update itself", () => {
+  // win-unpacked ships resources/app-update.yml, so its updater is live:
+  // Updater.start() checks 15 s after launch with nobody clicking CHECK, and a
+  // build behind the latest release downloads it into the updater cache the
+  // installed app shares, then on a clean quit runs that installer over the
+  // owner's own install. The seed stops that by naming a dead loopback feed -
+  // but only while updateFeedAction() applies it. A feed it refuses leaves the
+  // release feed on, and so does a seed that no longer parses. (The block
+  // above already fails if no doc launches the app, so these are not vacuous.)
+  const launching = DOCS.filter((doc) =>
+    fencedLines(read(doc)).some((line) => LAUNCHES_APP.test(line) && !line.trimStart().startsWith("#")),
+  );
+
+  it("seeds the config it launches against, as JSON that parses", () => {
+    const problems = launching.flatMap((doc) => {
+      const found = seeds(read(doc));
+      if (found.length === 0) return [`${doc}: launches the app with no config.json seed`];
+      return found.filter((s) => !s.json).map((s) => `${doc}: seed does not parse: ${s.line}`);
+    });
+    expect(problems).toEqual([]);
+  });
+
+  it("points the updater at a loopback feed it applies rather than refuses", () => {
+    const problems = launching.flatMap((doc) =>
+      seeds(read(doc)).flatMap(({ line, json }) => {
+        if (!json) return []; // reported by the test above
+        const feed = json.updateFeedUrl;
+        if (typeof feed !== "string" || !feed.trim()) {
+          return [`${doc}: seed names no updateFeedUrl, so the release feed stays on: ${line}`];
+        }
+        const decision = updateFeedAction(feed, undefined);
+        if (decision.action !== "set") {
+          return [`${doc}: the updater would not apply ${feed} (${decision.action}), so the release feed stays on`];
+        }
+        const host = new URL(decision.url).hostname;
+        return LOOPBACK.includes(host) ? [] : [`${doc}: ${feed} is not loopback, so a real server could answer it`];
+      }),
+    );
+    expect(problems).toEqual([]);
   });
 });
