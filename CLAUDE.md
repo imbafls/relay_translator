@@ -212,6 +212,17 @@ else if `updateFeedUrl` is set.
 - **`apps/standalone/dist` is untracked and regenerates.** `dist/` is gitignored
   repo-wide; `pnpm --filter @callout-relay/standalone build` (or `pnpm dev:app`)
   rebuilds it. Same for every other package's `dist/`.
+- **`apps/streamdeck` is not a component; it is retired build output.** The
+  plugin and the loopback control API it was the only user of were both dropped
+  in `1acd94e`, and the repo tracks nothing under that path - `git ls-files
+  apps/streamdeck` is empty, and `handoff.test.ts` keeps it that way. What a
+  working copy from before the drop still has is the generated `bin/` and
+  `imgs/`, both gitignored. That is enough to make the directory look alive to
+  anything that walks `apps/*`: `bin/plugin.js` is ~4,700 lines of bundled code
+  including a copy of `packages/companion`'s config migration, so a sweep for
+  which settings are read finds hits in code that has not shipped since 0.5.11.
+  That is not hypothetical - it is how this entry came to be written. The
+  directory is safe to delete.
 - **`packages/relay/sea/` is build output and gitignored** — the two big
   binaries, the blob, and the bundle. `vps.env` is gitignored too (it holds real
   keys); `vps.env.example` is the tracked template.

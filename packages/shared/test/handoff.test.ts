@@ -560,3 +560,45 @@ describe("the tracking board", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * The Stream Deck plugin is gone, and stays gone.
+ *
+ * `1acd94e` - "Drop the Stream Deck plugin, and the control API it was the only
+ * user of" - removed both. What can still be sitting in a working copy is the
+ * generated `bin/` and `imgs/` from a build before that, which `.gitignore`
+ * keeps out of the repo and which nothing here rebuilds.
+ *
+ * That leftover is not harmless to a reader. `apps/streamdeck/.../bin/plugin.js`
+ * is about 4,700 lines of bundled code from before the drop, including a copy
+ * of `packages/companion`'s config migration - so a sweep that walks `apps/*`
+ * finds a setting "read" by code that has not shipped since 0.5.11. This
+ * iteration's own config sweep did exactly that with `obsOverlay` before
+ * anybody looked at where the hit came from.
+ *
+ * So CLAUDE.md's gotchas say what that directory is, and this keeps the claim
+ * true: the drop was deliberate and nothing under it belongs in the tree again.
+ */
+describe("the dropped Stream Deck plugin", () => {
+  const tracked = (): string[] =>
+    execFileSync("git", ["ls-files", "apps/streamdeck"], { cwd: root, encoding: "utf8" })
+      .split(/\r?\n/)
+      .filter(Boolean);
+
+  it("has nothing of it in the repo", () => {
+    expect(
+      tracked(),
+      "apps/streamdeck has tracked files again. It was dropped in 1acd94e along with the control API it drove, " +
+        "and CLAUDE.md tells a reader that anything found there is retired build output rather than a component",
+    ).toEqual([]);
+  });
+
+  it("is described as retired where a sweep would look", () => {
+    const claude = read("CLAUDE.md");
+    expect(
+      /apps\/streamdeck/.test(claude),
+      "CLAUDE.md no longer mentions apps/streamdeck, so the next sweep that walks apps/* has nothing telling " +
+        "it that the bundle it found is dead code",
+    ).toBe(true);
+  });
+});

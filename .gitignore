@@ -23,7 +23,10 @@ relay-state.json
 apps/standalone/release/
 release/
 
-# streamdeck: bin/ and imgs/ are generated; manifest + property inspector are source
+# streamdeck: the plugin was dropped in 1acd94e, with the loopback control API
+# it was the only user of. Nothing under apps/streamdeck is source any more -
+# these rules stay because a working copy from before that still has the
+# generated bin/ and imgs/ sitting there, and they are not to be committed now.
 apps/streamdeck/*.sdPlugin/bin/
 apps/streamdeck/*.sdPlugin/imgs/
 
