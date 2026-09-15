@@ -60,6 +60,22 @@ export function safeSpeaker(value: unknown): string | undefined {
   return value.slice(0, MAX_SPEAKER_TAG);
 }
 
+/**
+ * Whether a finished line actually said anything.
+ *
+ * A recogniser final with no words is a control message, not a caption: it
+ * exists so a viewer can retire the interim row it has open, and never becomes
+ * a row of its own. Every consumer already treats it that way - the viewer page
+ * returns before building a row, and the desktop's own stage, translator and
+ * transcript writer each check the same thing. A quiet channel emits one every
+ * couple of seconds, so on this hop the difference is entirely how much silence
+ * costs.
+ */
+export function hasWords(msg: Record<string, unknown>): boolean {
+  const worded = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+  return worded(msg.source) || worded(msg.target);
+}
+
 /** the longest brand name this relay will pass on; mirrors shared's MAX_BRAND_NAME */
 export const MAX_BRAND_NAME = 24;
 
@@ -341,9 +357,24 @@ export class Room {
     if (msg.type === "subtitle") {
       const id = Number(msg.id);
       if (!Number.isFinite(id)) return;
-      // a reconnecting uplink restarts its numbering; viewers key their rows by
-      // id, so letting it rewind would overwrite captions already on screen
-      if (id > room.lastSegId) {
+      // Only a line with words ever becomes a row on a viewer's screen, so only
+      // a line with words is worth recording as the furthest this room has got.
+      // A quiet channel emits a wordless final every couple of seconds and the
+      // uplink forwards every one, so this used to put() on each tick of
+      // silence: one measured 94-minute session carried 3,105 of them against
+      // 657 real lines, five writes in six buying nothing. Keeping the running
+      // maximum in memory instead is not open to us - `room` is re-read from
+      // storage at the top of this handler, and a hibernating Durable Object is
+      // evicted between messages, so an instance field would not survive either.
+      //
+      // What this does NOT do - and the comment here used to say it did - is
+      // stop a reconnecting uplink's restarted numbering overwriting captions
+      // already on screen. The broadcast below sits outside this branch, so a
+      // rewound id is relayed either way, and nothing anywhere reads
+      // `lastSegId`. The rewind is real: the viewer keys its rows by id and
+      // never clears them on a restart. The fix for it is a session epoch on
+      // the hello, which needs no per-subtitle state here at all.
+      if (hasWords(msg) && id > room.lastSegId) {
         room.lastSegId = id;
         await this.save(room);
       }

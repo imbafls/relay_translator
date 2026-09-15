@@ -54,6 +54,8 @@ const VIEWER = "viewer";
 
 function stand() {
   const store = new Map<string, unknown>();
+  /** every storage.put this room made - the thing a Durable Object is billed for */
+  let puts = 0;
   store.set("room", {
     publisherSecret: "p",
     viewerSecret: "v",
@@ -75,6 +77,7 @@ function stand() {
       // gets nothing. Without this the `stored()` assertions prove only assignment.
       get: async (key: string) => structuredClone(store.get(key)),
       put: async (key: string, value: unknown) => {
+        puts += 1;
         store.set(key, structuredClone(value));
       },
       delete: async (key: string) => store.delete(key),
@@ -97,6 +100,12 @@ function stand() {
     stored: (): Frame => store.get("room") as Frame,
     /** the last hello this room fanned out to viewers */
     relayed: (): Frame | undefined => viewer.seen.filter((m) => m.type === "hello").pop(),
+    /** storage writes so far; `stand()` itself makes none */
+    writes: (): number => puts,
+    /** every subtitle this room fanned out to viewers, in order */
+    captions: (): Frame[] => viewer.seen.filter((m) => m.type === "subtitle"),
+    subtitle: (seg: Frame): Promise<void> =>
+      room.webSocketMessage(uplink as unknown as WebSocket, JSON.stringify({ type: "subtitle", ...seg })),
     hello: (brand: Frame = {}): Promise<void> =>
       room.webSocketMessage(
         uplink as unknown as WebSocket,
@@ -212,5 +221,112 @@ describe("whether a hello arriving on the hosted relay's uplink means anyone is 
       s.stored().live,
       "an older app's hello stopped meaning ON AIR the moment this Worker deployed",
     ).toBe(true);
+  });
+});
+
+/**
+ * What a silent channel costs the hosted room.
+ *
+ * Every subtitle carrying a higher segment id drove `this.save(room)`, which is
+ * `ctx.storage.put("room", next)`. Wordless finals carry higher ids too - the
+ * recogniser emits one every couple of seconds on a quiet channel, deliberately,
+ * so a viewer can retire its open interim row - and the uplink forwards them
+ * verbatim (`bridgeBroadcasts()` in apps/standalone/src/main.ts has no wordless
+ * check). So silence wrote.
+ *
+ * The measurement is the test. One 94-minute session recorded in this repo
+ * carried 3,105 wordless finals against 657 real ones, and those are the numbers
+ * driven below: 3,762 writes before, 657 after.
+ *
+ * **The broadcast must not change.** A remote viewer needs the empty final for
+ * exactly the reason a local one does, so every subtitle still has to reach it -
+ * that half is asserted here too, and is green either way.
+ *
+ * Keeping the running maximum in memory instead is not available: `room` is
+ * re-read from storage at the top of every `webSocketMessage`, and the Durable
+ * Object can be evicted between messages under the hibernation API, so an
+ * instance field would not survive either. Not writing is the whole saving.
+ */
+describe("what a silent channel costs the hosted room in storage writes", () => {
+  /** the repo's own measured session: 3,105 wordless finals against 657 real */
+  const SPOKEN = 657;
+  const WORDLESS = 3105;
+  /** wordless finals per real line, with the remainder trailing after the last one */
+  const GAP = Math.floor(WORDLESS / SPOKEN);
+
+  /** drive a session shaped like that one, a caption at a time with its silence */
+  async function session(s: ReturnType<typeof stand>): Promise<{ lastSpokenId: number }> {
+    let id = 0;
+    let quiet = 0;
+    let lastSpokenId = 0;
+    for (let line = 0; line < SPOKEN; line++) {
+      for (let q = 0; q < GAP; q++) {
+        await s.subtitle({ id: ++id, source: "" });
+        quiet += 1;
+      }
+      await s.subtitle({ id: ++id, source: "rush B" });
+      lastSpokenId = id;
+    }
+    // the session ends on silence, as one does
+    while (quiet < WORDLESS) {
+      await s.subtitle({ id: ++id, source: "" });
+      quiet += 1;
+    }
+    return { lastSpokenId };
+  }
+
+  it("writes once per caption, not once per silent tick", async () => {
+    const s = stand();
+    await session(s);
+
+    expect(s.writes(), "silence is still driving a storage write on every tick").toBe(SPOKEN);
+  });
+
+  it("still fans every subtitle out, wordless ones included", async () => {
+    const s = stand();
+    await session(s);
+
+    expect(
+      s.captions().length,
+      "a remote viewer stopped getting the empty final it retires its interim row with",
+    ).toBe(SPOKEN + WORDLESS);
+  });
+
+  it("records the last caption a viewer actually rendered, not the last tick of silence", async () => {
+    const s = stand();
+    const { lastSpokenId } = await session(s);
+
+    expect(
+      s.stored().lastSegId,
+      "the furthest-we-have-got mark counts ids no viewer ever put on screen",
+    ).toBe(lastSpokenId);
+  });
+
+  it("passes a wordless final through untouched, so it can still retire an interim row", async () => {
+    const s = stand();
+    await s.subtitle({ id: 7, source: "", channel: 1 });
+
+    const [only] = s.captions();
+    expect(only, "the wordless final never reached the viewer at all").toBeTruthy();
+    expect(only.id).toBe(7);
+    expect(only.source).toBe("");
+    expect(only.channel).toBe(1);
+    expect(s.writes(), "a wordless final on its own still wrote").toBe(0);
+  });
+
+  it("still records a line that carries only a translation", async () => {
+    const s = stand();
+    await s.subtitle({ id: 3, source: "", target: "đẩy B" });
+
+    expect(s.stored().lastSegId, "a translated line was treated as silence").toBe(3);
+  });
+
+  it("does not let a reconnecting uplink's restarted numbering rewind the mark", async () => {
+    const s = stand();
+    await s.subtitle({ id: 100, source: "rush B" });
+    await s.subtitle({ id: 50, source: "they pushed" });
+
+    expect(s.stored().lastSegId, "a rewound id moved the mark backwards").toBe(100);
+    expect(s.captions().length, "the rewound line was dropped instead of relayed").toBe(2);
   });
 });
