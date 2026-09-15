@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { updateFeedAction } from "../src/index";
+import { updateFeedAction, validTranscriptDir } from "../src/index";
 
 /**
  * The documents a session reads before it touches anything, checked for the one
@@ -225,6 +225,31 @@ describe("a documented launch of the packaged app cannot update itself", () => {
         }
         const host = new URL(decision.url).hostname;
         return LOOPBACK.includes(host) ? [] : [`${doc}: ${feed} is not loopback, so a real server could answer it`];
+      }),
+    );
+    expect(problems).toEqual([]);
+  });
+
+  // The third protection, and the one nothing held. Transcripts do NOT live
+  // in the data dir, so CALLOUT_RELAY_DATA does not cover them: without a
+  // transcriptDir of its own a documented run writes its test captions into
+  // the owner's real Documents\\Callout Relay\\Transcripts, among the sessions
+  // they actually kept. `%s` is the scratch dir the same block builds, so a
+  // seed that no longer derives the folder from it is caught here too.
+  it("keeps a documented run's transcripts out of the owner's own folder", () => {
+    const problems = launching.flatMap((doc) =>
+      seeds(read(doc)).flatMap(({ line, json }) => {
+        if (!json) return []; // reported by the parse test above
+        const dir = json.transcriptDir;
+        if (typeof dir !== "string" || !dir.trim()) {
+          return [`${doc}: seed names no transcriptDir, so the run saves into the owner's Documents: ${line}`];
+        }
+        if (!validTranscriptDir(dir)) {
+          return [`${doc}: the app refuses ${dir} and falls back to the owner's Documents: ${line}`];
+        }
+        return dir.startsWith("C:/scratch")
+          ? []
+          : [`${doc}: ${dir} is not built from the scratch dir the same block makes: ${line}`];
       }),
     );
     expect(problems).toEqual([]);
