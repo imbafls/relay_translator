@@ -360,6 +360,45 @@ export function validTranscriptDir(value: unknown): string | undefined {
 }
 
 /**
+ * A base the internet viewer link can be built on, normalised, or undefined.
+ *
+ * `publicBaseUrl` overrides where that link points - a tunnel, a reverse proxy,
+ * a custom domain - and the app builds the link by writing `/watch/<token>`
+ * onto the end of it. That makes it the worst value in `AppConfig` to leave
+ * unchecked: the result goes into a QR code and onto somebody else's phone, so
+ * a base that is a little bit wrong fails on a device the streamer is not
+ * holding, with nothing on their screen to say why.
+ *
+ * The one that matters is the trailing slash, because it is what an address bar
+ * gives you: `https://x.dev/` builds `https://x.dev//watch/<token>`, and
+ * neither relay routes that path - the embedded one matches `url.pathname`
+ * against `/watch/`, and the Worker's router is no looser. Stripped here rather
+ * than at the input, because `config.json` is documented in README.md and hand
+ * edited, which is the same reason `validTranscriptDir` exists.
+ *
+ * A query or a fragment cannot survive the concatenation at all - the token
+ * would land inside the query - so those are refused rather than dropped.
+ * Credentials are refused for a different reason: `URL.origin` discards them
+ * silently, and a link handed to a stranger is the last place to quietly change
+ * what a URL means.
+ */
+export function validPublicBaseUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const raw = value.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined; // "x.dev" with no scheme lands here, which is the common typo
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+  if (url.search || url.hash) return undefined;
+  if (url.username || url.password) return undefined;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+/**
  * Fix-round-2 Finding 3. `idleBillingStopMinutes` is `number` on `AppConfig`
  * (required, per the comment on that field), but `ConfigStore.merge()` in
  * `packages/companion/src/config.ts` writes a hand-edited `config.json`

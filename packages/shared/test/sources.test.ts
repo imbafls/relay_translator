@@ -6,6 +6,7 @@ import {
   safeSpeakerColor,
   speakerTags,
   SPEAKER_COLORS,
+  validPublicBaseUrl,
   validRelayPort,
   validIdleBillingStopMinutes,
   relayRollbackPatch,
@@ -197,6 +198,49 @@ describe("the port the embedded relay is asked to bind", () => {
 
   it("refuses the privileged range, which needs rights the app does not have", () => {
     for (const p of [80, 443, 1, 1023]) expect(validRelayPort(p)).toBeUndefined();
+  });
+});
+
+describe("the base the internet viewer link is built on", () => {
+  /**
+   * `publicBaseUrl` is the override for where that link points, and the app
+   * builds the link by writing `/watch/<token>` onto the end of it. The result
+   * is the thing a streamer hands to somebody else, so a base that is a little
+   * bit wrong fails on a phone they are not holding.
+   *
+   * The trailing slash is the case that matters, because it is what an address
+   * bar gives you. `https://x.dev/` built `https://x.dev//watch/<token>`, and
+   * neither relay routes that.
+   */
+  it("strips the trailing slash an address bar hands you", () => {
+    expect(validPublicBaseUrl("https://x.dev/")).toBe("https://x.dev");
+    expect(validPublicBaseUrl("https://x.dev///")).toBe("https://x.dev");
+    expect(validPublicBaseUrl("  https://x.dev/  ")).toBe("https://x.dev");
+  });
+
+  it("leaves a usable base exactly as it is", () => {
+    for (const b of ["https://x.dev", "http://192.168.1.9:8787", "https://x.dev:8443"]) {
+      expect(validPublicBaseUrl(b), b).toBe(b);
+    }
+  });
+
+  it("keeps a path prefix, which is how a reverse proxy mounts the relay", () => {
+    expect(validPublicBaseUrl("https://x.dev/relay/")).toBe("https://x.dev/relay");
+  });
+
+  it("refuses a base that cannot have a path appended to it", () => {
+    // the token would land inside the query, or after the fragment
+    expect(validPublicBaseUrl("https://x.dev/?v=1")).toBeUndefined();
+    expect(validPublicBaseUrl("https://x.dev/#top")).toBeUndefined();
+    // URL.origin drops credentials in silence; a link handed to a stranger is
+    // the last place to quietly change what a URL means
+    expect(validPublicBaseUrl("https://me:pw@x.dev")).toBeUndefined();
+  });
+
+  it("refuses what is not an http(s) URL at all", () => {
+    for (const b of ["x.dev", "ws://x.dev", "wss://x.dev", "file:///c:/x", "javascript:alert(1)", "", "   ", null, undefined, 7, {}]) {
+      expect(validPublicBaseUrl(b), `accepted ${JSON.stringify(b)}`).toBeUndefined();
+    }
   });
 });
 

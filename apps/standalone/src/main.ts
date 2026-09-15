@@ -33,6 +33,7 @@ import {
   RELAY_CONFIG_KEYS,
   redactLog,
   relayRollbackPatch,
+  validPublicBaseUrl,
   validTranscriptDir,
   viewerLinkFor,
 } from "@callout-relay/shared";
@@ -201,7 +202,7 @@ function phoneUrl(): string | undefined {
   const cfg = config();
   const token = cfg.viewerToken;
   if (!cfg.relayUrl || !token) return undefined;
-  const base = cfg.publicBaseUrl || httpOriginOfRelayUrl(cfg.relayUrl);
+  const base = validPublicBaseUrl(cfg.publicBaseUrl) || httpOriginOfRelayUrl(cfg.relayUrl);
   if (!base) return undefined;
   return `${base}/watch/${token}`;
 }

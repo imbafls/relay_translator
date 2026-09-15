@@ -39,3 +39,35 @@ describe("changing the update feed takes effect without a restart", () => {
     expect(updater, "a cleared override has to be reported, not silently ignored").toContain("restart-needed");
   });
 });
+
+/**
+ * `publicBaseUrl` is the override for the base of the internet viewer link -
+ * a tunnel, a reverse proxy, a custom domain. `phoneUrl()` concatenates
+ * `/watch/<token>` onto it, and the result goes into a QR code and onto
+ * somebody else's phone.
+ *
+ * Which makes it the worst place in the app for a value nobody checked. A base
+ * pasted out of an address bar carries a trailing slash, and `https://x.dev/`
+ * builds `https://x.dev//watch/<token>` - a path neither relay routes. The app
+ * shows a link that reads correctly, the streamer hands it over, and the
+ * failure lands on the person holding the phone.
+ *
+ * Same reasoning as `validTranscriptDir`, and the same shape as the guard
+ * above: check at the edge, and route through the function the suite can test
+ * rather than deciding inline where nothing can reach it.
+ */
+describe("the internet viewer link is built on a base the app has checked", () => {
+  const main = fs.readFileSync(path.join(root, "apps/standalone/src/main.ts"), "utf8");
+
+  it("passes publicBaseUrl through the shared validator", () => {
+    const at = main.indexOf("function phoneUrl()");
+    expect(at, "phoneUrl() is gone - this guard needs re-pointing").toBeGreaterThanOrEqual(0);
+    const body = main.slice(at, main.indexOf("\n}", at));
+
+    expect(
+      body,
+      "phoneUrl() builds the internet link straight off cfg.publicBaseUrl. A base with a trailing " +
+        "slash, a query, or no scheme at all is concatenated as-is into a link the streamer hands out",
+    ).toContain("validPublicBaseUrl");
+  });
+});
