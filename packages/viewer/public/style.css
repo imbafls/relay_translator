@@ -376,3 +376,15 @@ body.obs .obs-only { display: flex; }
    element outside .row.obs-live never fades - it would sit on the broadcast
    through every quiet stretch, which is what the idle fade exists to stop. */
 body.obs .hud-brand { display: none; }
+
+
+/* Same bargain as the desktop renderer and home.html: anything that moves has
+   to offer a way to stop. This one matters more than either - the viewer is a
+   dot on a phone propped up next to a keyboard, or an overlay sitting on top
+   of a game for hours, so an endless pulse is in somebody's vision the whole
+   session. The ON AIR state stays legible without it: the HUD dot is still
+   amber and still labelled, and the interim row still carries its own
+   timestamp colour. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

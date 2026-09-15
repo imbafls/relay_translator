@@ -847,3 +847,17 @@ select option { background: var(--bg); color: var(--ink); }
 .wn-foot { display: flex; align-items: center; gap: 14px; margin-top: 20px; border-top: 1px solid var(--rule-2); padding-top: 16px; }
 .wn-from { color: var(--dim); font-size: 11px; }
 .wn-foot .mono-btn { margin-left: auto; }
+
+
+/* The dot that says ON AIR pulses for ever, and so does the starting dot and
+   the update chip. `prefers-reduced-motion` is not a taste setting - it is the
+   accommodation for vestibular disorders, and an animation with no end is
+   exactly what it exists for. home.html has honoured it since the redesign;
+   this is the surface somebody actually sits in front of.
+
+   Nothing is lost by switching it off. The state is carried by the amber token
+   and the words ON AIR, and the interim row by its amber timestamp and its
+   position at the bottom - the motion was never the only signal. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
