@@ -1120,3 +1120,55 @@ describe("a reader who chose the Light theme before its accent was legible", () 
     );
   });
 });
+
+/**
+ * A caption page whose whole job is to show one language beside another, with
+ * nothing saying which is which.
+ *
+ * The page is `<html lang="en">` and the translation went in as bare text, so
+ * assistive technology announced Vietnamese, Japanese or Russian with an
+ * English voice and English pronunciation rules. That is WCAG 3.1.2 - Language
+ * of Parts - and it lands hardest here of anywhere in the product, because the
+ * translated line is the reason somebody opened the link.
+ *
+ * The codes were already on the wire: `langsLabel` has always read
+ * `msg.languages` to write "EN → VI" into the HUD. Nothing had to be added to
+ * the protocol - only applied to the text.
+ */
+describe("which language a line is in", () => {
+  it("marks the source and the translation separately", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "rush B", target: "lao B", final: true });
+
+    expect(document.querySelector("#lines .row .src")?.getAttribute("lang")).toBe("en");
+    expect(document.querySelector("#lines .row .tgt")?.getAttribute("lang")).toBe("vi");
+  });
+
+  it("marks a translation that arrives after its line", () => {
+    // the relay sends the source first and the translation second, same id -
+    // the row is patched in place, and the patch has to carry the language too
+    push({ type: "hello", languages: { source: "en", target: "ja" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+    push({ type: "subtitle", id: 1, source: "rush B", target: "ラッシュB", final: true });
+
+    expect(document.querySelector("#lines .row .tgt")?.getAttribute("lang")).toBe("ja");
+  });
+
+  it("does not claim a language it was never told", () => {
+    // a relay that sends no languages must not have one invented for it
+    push({ type: "hello", live: true, translates: false });
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+
+    expect(document.querySelector("#lines .row .src")?.hasAttribute("lang")).toBe(false);
+  });
+
+  it("follows the languages changing mid-session", () => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "one", target: "mot", final: true });
+    push({ type: "hello", languages: { source: "en", target: "es" }, live: true, translates: true });
+    push({ type: "subtitle", id: 2, source: "two", target: "dos", final: true });
+
+    const tgts = Array.from(document.querySelectorAll("#lines .row .tgt"));
+    expect(tgts[tgts.length - 1]?.getAttribute("lang")).toBe("es");
+  });
+});

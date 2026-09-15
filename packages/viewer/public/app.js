@@ -338,9 +338,11 @@
     const body = document.createElement("div");
     const s = document.createElement("div");
     s.className = "src";
+    markLang(s, langs.source);
     setSrc(s, src, speaker, color);
     const g = document.createElement("div");
     g.className = "tgt" + (tgt ? "" : " pending");
+    markLang(g, langs.target);
     g.textContent = tgt || "…";
     body.append(s, g);
     row.append(t, body);
@@ -540,6 +542,7 @@
     setSrc(el.querySelector(".src"), msg.source, msg.speaker, msg.color);
     if (msg.target != null) {
       const g = el.querySelector(".tgt");
+      markLang(g, langs.target);
       g.textContent = msg.target;
       g.classList.remove("pending");
       el.classList.add("has-tgt");
@@ -561,6 +564,21 @@
   let closedByKick = false;
   /** the armed reconnect, so a second connect() cannot leave one running */
   let retryTimer = null;
+
+  /**
+   * The language codes the relay last reported, so a caption can say which
+   * language it is in. The page is `lang="en"`; without marking the parts, a
+   * screen reader announces Vietnamese or Japanese with an English voice.
+   * WCAG 3.1.2. Empty until a relay tells us - a language is never guessed.
+   */
+  let langs = { source: "", target: "" };
+
+  /** put `lang` on an element, or take it off if we have not been told */
+  function markLang(el, code) {
+    if (!el) return;
+    if (code) el.setAttribute("lang", code);
+    else el.removeAttribute("lang");
+  }
 
   function langsLabel(msg) {
     const src = (msg.languages && msg.languages.source ? msg.languages.source : "").toUpperCase();
@@ -709,6 +727,10 @@
           // exists to catch, and turning that test vacuous.
           applyStyle();
           applyBrand(msg.brandName, msg.brandColor);
+          langs = {
+            source: (msg.languages && msg.languages.source) || "",
+            target: (msg.languages && msg.languages.target) || "",
+          };
           $("hudLangs").textContent = langsLabel(msg);
           applyLive(msg.live, msg.since, msg.elapsedMs);
           // same as `status` below. A viewer disconnected while status

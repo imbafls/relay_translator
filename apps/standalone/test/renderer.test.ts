@@ -2220,6 +2220,34 @@ describe("a recogniser final with no words in it", () => {
 
     expect(openInterims(), "a wordless final on one channel retired another channel's interim").toBe(1);
   });
+
+  /**
+   * The stage puts two languages side by side and said which was which
+   * nowhere. index.html is `lang="en"`, so a screen reader announced the
+   * TRANSLATION column in English - WCAG 3.1.2, and the column headers do not
+   * help, because they are English words naming a language rather than text in
+   * it. The viewer page had the same gap and is fixed alongside this.
+   */
+  it("says which language each half of a row is in", async () => {
+    await goLive();
+    hooks.onSubtitle!({ id: 1, source: "rush B", target: "lao B", channel: 0 });
+    await settle(20);
+
+    const row = document.querySelector("#lines .row");
+    expect(row?.querySelector(".src")?.getAttribute("lang")).toBe("en");
+    expect(row?.querySelector(".tgt")?.getAttribute("lang")).toBe("vi");
+  });
+
+  it("marks a translation that lands after its line", async () => {
+    // the relay sends the source, then the same id again carrying the target
+    await goLive();
+    hooks.onSubtitle!({ id: 1, source: "rush B", channel: 0 });
+    await settle(20);
+    hooks.onSubtitle!({ id: 1, source: "rush B", target: "lao B", channel: 0 });
+    await settle(20);
+
+    expect(document.querySelector("#lines .row .tgt")?.getAttribute("lang")).toBe("vi");
+  });
 });
 
 /**

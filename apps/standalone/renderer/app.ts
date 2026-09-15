@@ -192,6 +192,20 @@ function fmtClock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
 }
+/**
+ * Say which language a piece of text is in. index.html is `lang="en"`, so
+ * without this a screen reader announces the TRANSLATION column in English -
+ * WCAG 3.1.2, Language of Parts. The column headers do not cover it: they are
+ * English words naming a language, not text in it.
+ *
+ * A code is never invented. Nothing is marked when nothing said what it is.
+ */
+function markLang(el: Element | null, code: string | undefined): void {
+  if (!el) return;
+  if (code) el.setAttribute("lang", code);
+  else el.removeAttribute("lang");
+}
+
 function fmtTs(d: Date): string {
   return `${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
@@ -449,6 +463,8 @@ async function renderSavedReader(): Promise<void> {
     who.textContent = r.speaker || "";
     const colour = safeSpeakerColor(r.color);
     if (colour) who.style.color = colour;
+    markLang(row.querySelector(".src"), t.header?.languages?.source);
+    markLang(row.querySelector(".tgt"), t.header?.languages?.target);
     (row.querySelector(".src .text") as HTMLElement).textContent = r.source;
     (row.querySelector(".tgt .text") as HTMLElement).textContent = r.target ?? "";
     lines.appendChild(row);
@@ -582,6 +598,8 @@ function makeRow(id: number, isInterim: boolean): Row {
   el.innerHTML =
     '<div class="src"><span class="ts"></span><span class="body"><span class="who"></span><span class="text"></span></span><span class="lat"></span></div>' +
     '<div class="tgt"><span class="text pending">…</span><span class="lat"></span></div>';
+  markLang(el.querySelector(".src"), config?.languages?.source);
+  markLang(el.querySelector(".tgt"), config?.languages?.target);
   const row: Row = {
     id,
     el,
