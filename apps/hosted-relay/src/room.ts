@@ -90,6 +90,31 @@ export function safeBrandName(value: unknown): string | undefined {
   return v.length > 0 ? v : undefined;
 }
 
+/**
+ * The record as it stands, for comparing against after a handler has written to
+ * it - so a message that changed nothing costs no storage write.
+ *
+ * The desktop app re-sends its hello on every uplink reconnect, every embedded
+ * relay restart and every settings change while it merely sits in the tray, and
+ * a flapping speech pipeline sends `status live:false` and `live:true` back to
+ * back. None of those has to change anything, and each write is a Durable Object
+ * storage operation somebody pays for.
+ *
+ * `JSON.stringify` rather than a field-by-field compare, for two reasons. The
+ * record is a dozen small values, so it is cheaper than the write it is avoiding.
+ * And it gets the case that needs care right for free: an absent brand on a later
+ * hello is how a streamer CLEARS one, `room.brandName = undefined` is omitted by
+ * stringify, and a brand that went from a string to absent therefore reads as the
+ * change it is.
+ *
+ * It cannot help a hello that carries no `since`, because the room then invents
+ * one from its own clock and every such hello differs by construction. That is a
+ * property of the fallback above, not of this check.
+ */
+function snapshot(room: RoomState): string {
+  return JSON.stringify(room);
+}
+
 /** what a room is, between messages */
 interface RoomState {
   publisherSecret: string;
@@ -323,6 +348,7 @@ export class Room {
     if (!room) return;
 
     if (msg.type === "hello") {
+      const was = snapshot(room);
       const langs = msg.languages as RoomState["languages"] | undefined;
       if (langs && typeof langs.source === "string" && typeof langs.target === "string") {
         room.languages = { source: langs.source, target: langs.target };
@@ -345,7 +371,7 @@ export class Room {
       // work the same as setting it.
       room.brandName = safeBrandName(msg.brandName);
       room.brandColor = safeColor(msg.brandColor);
-      await this.save(room);
+      if (snapshot(room) !== was) await this.save(room);
       this.broadcast(TAG_VIEWER, {
         type: "hello",
         languages: room.languages,
@@ -360,10 +386,11 @@ export class Room {
     }
 
     if (msg.type === "status") {
+      const was = snapshot(room);
       room.live = msg.live === true;
       if (typeof msg.since === "number") room.since = msg.since;
       if (typeof msg.epoch === "number") room.epoch = msg.epoch;
-      await this.save(room);
+      if (snapshot(room) !== was) await this.save(room);
       this.broadcast(TAG_VIEWER, {
         type: "status",
         live: room.live,

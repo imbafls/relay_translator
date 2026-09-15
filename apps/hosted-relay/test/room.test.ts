@@ -106,6 +106,11 @@ function stand() {
     captions: (): Frame[] => viewer.seen.filter((m) => m.type === "subtitle"),
     subtitle: (seg: Frame): Promise<void> =>
       room.webSocketMessage(uplink as unknown as WebSocket, JSON.stringify({ type: "subtitle", ...seg })),
+    status: (patch: Frame = {}): Promise<void> =>
+      room.webSocketMessage(
+        uplink as unknown as WebSocket,
+        JSON.stringify({ type: "status", live: true, since: 1_788_000_000_000, ...patch }),
+      ),
     hello: (brand: Frame = {}): Promise<void> =>
       room.webSocketMessage(
         uplink as unknown as WebSocket,
@@ -383,5 +388,78 @@ describe("the numbering domain crossing the hosted relay", () => {
       s.stored().epoch,
       "an omitted epoch cleared the one the room was holding, so the next hello reads as a restart",
     ).toBe(1_788_000_111_000);
+  });
+});
+
+
+/**
+ * A room told something it already knew.
+ *
+ * `hello` and `status` both wrote on every message. The desktop app re-sends its
+ * hello on every uplink reconnect, every embedded-relay restart and every
+ * settings change while it merely sits in the tray, and a flapping speech
+ * pipeline sends `status live:false` and `live:true` back to back - so a room
+ * nobody is streaming to could still be written to repeatedly, and each write is
+ * a Durable Object storage operation somebody pays for.
+ *
+ * The care needed here is in what must NOT be mistaken for a repeat. An absent
+ * brand on a later hello is how a streamer CLEARS one they set earlier, and an
+ * absent `live` field is how an app older than that field says it is live. Both
+ * already have guard tests; the two below are the other half, saying that a
+ * change of that kind still reaches the record.
+ */
+describe("a hosted room told something it already knew", () => {
+  it("writes nothing for a hello that repeats what is already stored", async () => {
+    const s = stand();
+    await s.hello({ live: true, brandName: "Omer's stream", brandColor: "#e0a43a" });
+    const after = s.writes();
+
+    await s.hello({ live: true, brandName: "Omer's stream", brandColor: "#e0a43a" });
+
+    expect(s.writes() - after, "a reconnect re-sending the same hello wrote to storage again").toBe(0);
+  });
+
+  it("writes nothing for a status that repeats what is already stored", async () => {
+    const s = stand();
+    await s.status({ live: true });
+    const after = s.writes();
+
+    await s.status({ live: true });
+
+    expect(s.writes() - after, "a status saying what the room already said wrote to storage again").toBe(0);
+  });
+
+  it("still writes when a hello actually changes something", async () => {
+    const s = stand();
+    await s.hello({ live: true, brandName: "one" });
+    const after = s.writes();
+
+    await s.hello({ live: true, brandName: "two" });
+
+    expect(s.writes() - after, "a changed brand never reached the record").toBe(1);
+    expect(s.stored().brandName).toBe("two");
+  });
+
+  it("still writes when a streamer clears the brand they had set", async () => {
+    // an absent brand is how clearing is done - it must not read as a repeat
+    const s = stand();
+    await s.hello({ live: true, brandName: "one" });
+    const after = s.writes();
+
+    await s.hello({ live: true });
+
+    expect(s.writes() - after, "clearing a brand was mistaken for a hello that changed nothing").toBe(1);
+    expect(s.stored().brandName, "the cleared brand is still in the record a late joiner is greeted from").toBeUndefined();
+  });
+
+  it("still writes when the status changes whether anyone is streaming", async () => {
+    const s = stand();
+    await s.status({ live: true });
+    const after = s.writes();
+
+    await s.status({ live: false });
+
+    expect(s.writes() - after, "the stream stopping never reached the record").toBe(1);
+    expect(s.stored().live).toBe(false);
   });
 });
