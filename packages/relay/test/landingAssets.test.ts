@@ -176,3 +176,68 @@ describe("what the standalone binary carries", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * One level deeper: what the stylesheet asks for.
+ *
+ * The check above follows what the PAGES request, and stops there. A page asks
+ * for `fonts/fonts.css`, and that file then asks for seven `.woff2` files by
+ * name. Nothing had read it - it is the one shipped stylesheet no checker in
+ * this repo opens, which is how a second-order reference goes unnoticed.
+ *
+ * A renamed face does not error. `@font-face` simply fails to load and the
+ * browser falls back to a system font, so the captions a reader sees are in the
+ * wrong typeface and nothing anywhere says why. DESIGN.md fixes those two
+ * families, and `designTokens.test.ts` holds the stylesheets to them - which
+ * means the spec would still be satisfied by a page whose fonts never arrived.
+ *
+ * Three ends, because a font can go missing at any of them: absent from disk,
+ * unreachable through the relay's routes, or missing from the binary a
+ * self-hoster runs. The icons were wrong at two of those three at once.
+ */
+describe("what the font stylesheet asks for", () => {
+  const fontsCss = fs.readFileSync(path.join(publicDir, "fonts", "fonts.css"), "utf8");
+
+  /** every `url(...)` target, unquoted and relative to the stylesheet */
+  const faces = (): string[] => {
+    const out = new Set<string>();
+    for (const m of fontsCss.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/g)) {
+      out.add((m[1] ?? "").replace(/^\.\//, ""));
+    }
+    return [...out];
+  };
+
+  it("names some, so the checks below are not vacuous", () => {
+    expect(faces().length, "fonts.css references no font files at all").toBeGreaterThan(3);
+  });
+
+  it("names only files that are there", () => {
+    const missing = faces().filter((f) => !fs.existsSync(path.join(publicDir, "fonts", f)));
+    expect(missing, "fonts.css points at font files that do not exist, so those faces never load").toEqual([]);
+  });
+
+  it("gets every one of them from the relay", async () => {
+    const missing: string[] = [];
+    for (const f of faces()) {
+      const res = await get(`/fonts/${f}`);
+      if (res.status !== 200) missing.push(`${f} -> ${res.status}`);
+    }
+    expect(
+      missing,
+      "the font stylesheet asks this relay for these and does not get them. @font-face does not error - the " +
+        "browser quietly falls back to a system font, so the captions are in the wrong typeface and nothing says why",
+    ).toEqual([]);
+  });
+
+  it("is carried into the standalone binary along with them", () => {
+    const cfg = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "..", "sea", "sea-config.json"), "utf8"),
+    ) as { assets?: Record<string, string> };
+    const embedded = new Set(Object.keys(cfg.assets ?? {}));
+    const missing = ["fonts.css", ...faces()].filter((f) => !embedded.has(`viewer/fonts/${f}`));
+    expect(
+      missing,
+      "the binary a self-hoster runs does not contain these, so its pages load a stylesheet whose faces 404",
+    ).toEqual([]);
+  });
+});
