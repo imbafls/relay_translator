@@ -32,7 +32,17 @@ import * as path from "node:path";
  */
 
 const root = path.resolve(__dirname, "..");
-const build = fs.readFileSync(path.join(root, "build.mjs"), "utf8");
+
+/**
+ * The build script with its comments removed. A `cpSync` inside a block comment
+ * is not a copy - matching the raw text let this pass while `dist/renderer` no
+ * longer received `index.html` at all, which is the opposite of what it claims
+ * to check.
+ */
+const code = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+const build = code(fs.readFileSync(path.join(root, "build.mjs"), "utf8"));
 
 /** the files a guard elsewhere reads from source and assumes is what ships */
 const GUARDED = ["index.html", "style.css"];

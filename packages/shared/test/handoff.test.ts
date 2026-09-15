@@ -17,6 +17,19 @@ import { updateFeedAction, validTranscriptDir } from "../src/index";
  * command it tells you to run either exists or does not.
  */
 
+/**
+ * Source with its comments removed, for checks that mean to look at code.
+ *
+ * A block comment preserves the text inside it exactly, so a construct that has
+ * been commented OUT still matches a raw-text search - the check passes while
+ * the program no longer contains it. Found by sabotage rather than by reading:
+ * wrapping the uplink gate in a block comment left the quote check below green.
+ *
+ * The `[^:]` guard before a line comment is there to leave `https://` alone.
+ */
+const code = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
 const root = path.resolve(__dirname, "..", "..", "..");
 const scripts = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts as Record<
   string,
@@ -383,7 +396,10 @@ describe("the TypeScript CLAUDE.md quotes", () => {
   it("quotes only code the tree still contains", () => {
     const files = [...sources(path.join(root, "apps")), ...sources(path.join(root, "packages"))];
     expect(files.length, "no TypeScript was discovered to check against").toBeGreaterThan(20);
-    const haystacks = files.map((f) => flat(fs.readFileSync(f, "utf8")));
+    // comments stripped first, or a gate wrapped in /* */ still satisfies this
+    // while being gone from the program - which is the state it was in until a
+    // sabotage meant to prove this red came back green
+    const haystacks = files.map((f) => flat(code(fs.readFileSync(f, "utf8"))));
 
     const missing = blocks.filter((b) => !haystacks.some((h) => h.includes(flat(b))));
     expect(

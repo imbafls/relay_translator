@@ -39,6 +39,16 @@ import * as path from "node:path";
 const root = path.resolve(__dirname, "..", "..", "..");
 const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
 
+/**
+ * Source with its comments removed. A commented-out `process.env.X` is not a
+ * read, and counting it as one is not academic: comment out the
+ * `RELAY_VIEWER_TOKEN` lookup and every document goes on telling self-hosters
+ * to set it while this stays green - which is the incident `85706ca` exists
+ * because of, arriving through the guard meant to prevent it.
+ */
+const code = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
 /** the namespaces this project owns, and can therefore rename */
 const OURS = /^(RELAY|CALLOUT_RELAY|DEEPGRAM|GEMINI)_[A-Z0-9_]+$/;
 
@@ -66,7 +76,7 @@ function readByCode(): Set<string> {
     ...sourceFiles("apps/standalone/src"),
   ];
   for (const rel of files) {
-    const src = read(rel);
+    const src = code(read(rel));
     for (const m of src.matchAll(/process\.env\.([A-Z0-9_]+)/g)) if (OURS.test(m[1] ?? "")) found.add(m[1] ?? "");
     for (const m of src.matchAll(/process\.env\[\s*["'`]([A-Z0-9_]+)["'`]\s*\]/g)) {
       if (OURS.test(m[1] ?? "")) found.add(m[1] ?? "");
