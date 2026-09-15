@@ -159,9 +159,24 @@ hour of a live room, and whether concurrent rooms stay inside the free tier's
 daily duration allowance. Do that with two or three real streams before
 inviting anyone.
 
+## Rooms nobody uses
+
+A room nobody has ever touched is removed 30 days after it was claimed. A
+room somebody HAS touched is kept for ever, however old: age is not evidence
+that a link has stopped mattering, and there is nobody to ask.
+
+"Touched" is any authenticated use - a publisher connecting, a viewer
+connecting, the owner reading or rotating the viewer token. Each proves a person
+is on the other end. It is recorded once, on the first touch, so a room costs one
+extra write in its life rather than one per reconnect.
+
+The sweep runs from an alarm set when the room is claimed, under
+`blockConcurrencyWhile` so it cannot race a request arriving at the same moment.
+`src/reap.ts` holds the decision and `test/reap.test.ts` covers it; the window is
+`UNTOUCHED_ROOM_TTL_MS`.
+
 ## Still open
 
-- Idle rooms are never reaped. A room's record is tiny, but there is no TTL.
 - **An unexplained viewer socket, seen once.** The first room the desktop app
   attached to reported one viewer with nothing watching; a room claimed after
   the subdomain change reported zero from the same app, so it was that object
@@ -226,4 +241,5 @@ inviting anyone.
   An exact limit would need a Durable Object counter on the claim path, which
   costs an invocation per claim to protect something nearly free.
 
-  Those ~24 rooms from the measurement joined the un-reaped pile above.
+  Those ~24 rooms from the measurement were never touched by anybody, so the
+  sweep below removes them 30 days after they were claimed.

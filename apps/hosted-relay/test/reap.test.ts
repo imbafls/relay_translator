@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { markUsed, nextReapCheck, reapTick, shouldReap, UNTOUCHED_ROOM_TTL_MS } from "../src/reap";
 import type { ReapableRoom, RoomIo } from "../src/reap";
 
@@ -181,5 +183,49 @@ describe("recording that somebody is using a room", () => {
     const f = fakeIo(undefined);
     expect(await markUsed(f.io, now)).toBe("gone");
     expect(f.calls.saves).toBe(0);
+  });
+});
+
+/**
+ * The README against the code it describes.
+ *
+ * CLAUDE.md names this failure mode exactly: "A guard test cannot catch a stale
+ * claim, though, only a dangling pointer - which is exactly how both files
+ * drifted." That is true of stale claims in general and not true of this one,
+ * because this one contradicts something the tests above already pin. The reap
+ * shipped on 2026-09-07 and `docs/OPEN-WORK.md` recorded it; the hosted relay's
+ * own README went on saying rooms are never reaped and that there is no TTL,
+ * which is the first thing somebody reads before deciding whether the service
+ * accumulates records for ever.
+ *
+ * So: while a reaper exists, the README may not say there is not one.
+ */
+describe("what the hosted relay's README says about reaping", () => {
+  const readme = fs.readFileSync(
+    path.join(__dirname, "..", "README.md"),
+    "utf8",
+  );
+
+  it("does not claim rooms are never reaped, while this file tests the reaper", () => {
+    const contradictions = [
+      /never reaped/i,
+      /there is no TTL/i,
+      /un-reaped/i,
+    ]
+      .filter((re) => re.test(readme))
+      .map((re) => String(re));
+
+    expect(
+      contradictions,
+      "the README tells a reader rooms accumulate for ever, and reap.ts deletes untouched ones after a month",
+    ).toEqual([]);
+  });
+
+  it("says how long an untouched room is kept, in the same terms the code uses", () => {
+    const days = UNTOUCHED_ROOM_TTL_MS / (24 * 60 * 60 * 1000);
+    expect(
+      readme.includes(String(days) + " day"),
+      `the README does not mention the ${days}-day window a reader needs to know about`,
+    ).toBe(true);
   });
 });
