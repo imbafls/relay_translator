@@ -41,3 +41,6 @@ graphify-out/
 
 # marketing / seo planning scratch — not part of the product
 .marketing/
+
+# AI handoff package (docs + copied secrets) - never commit
+_handoff/
