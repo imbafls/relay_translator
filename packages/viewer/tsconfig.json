@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "types": [],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    // The one exemption, and the reason it is here rather than assumed: this
+    // file is served to a phone exactly as it sits on disk, with no build step,
+    // so every type it carries has to be written as JSDoc. Demanding an
+    // annotation on all ~48 parameters would be a rewrite of a 762-line file
+    // for no new error caught - the two this config DID catch were a number
+    // assigned to `.value` and a `shift()` the loop assumed was non-empty.
+    // Everything that finds mistakes stays on.
+    "noImplicitAny": false,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["public/app.js"]
+}

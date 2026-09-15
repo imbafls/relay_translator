@@ -14,7 +14,23 @@
   if (obs && settingsInObs) document.body.classList.add("settings-pinned");
   if (obs && params.get("bar") === "0") document.body.classList.add("no-bar");
 
-  const $ = (id) => document.getElementById(id);
+  /**
+   * The element getters. `check-renderer-ids.mjs` is what makes the cast safe:
+   * it fails the gate when an id handed to one of these is not in the markup,
+   * which is the same bargain `renderer/dom.ts` makes on the desktop side.
+   *
+   * The split matters to a checker. `getElementById` is typed `HTMLElement`,
+   * which has no `value` and no `checked`, so every form control read in here
+   * was unverifiable until they were told apart.
+   *
+   * @param {string} id
+   * @returns {HTMLElement}
+   */
+  const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
+  /** @param {string} id @returns {HTMLInputElement} */
+  const inp = (id) => /** @type {HTMLInputElement} */ ($(id));
+  /** @param {string} id @returns {HTMLSelectElement} */
+  const sel = (id) => /** @type {HTMLSelectElement} */ ($(id));
   const linesEl = $("lines");
 
   // ---------------------------------------------------------------------------
@@ -177,23 +193,23 @@
 
   function syncDisplayUI() {
     for (const b of $("themeBar").querySelectorAll("button")) b.classList.toggle("active", themeMatches(b.dataset.theme));
-    $("setSize").value = style.size;
+    inp("setSize").value = String(style.size);
     $("sizeVal").textContent = String(style.size);
-    $("setShowSource").checked = !!style.showSource;
-    $("setShowTranslation").checked = !!style.showTranslation;
-    $("setTimestamps").checked = !!style.timestamps;
-    $("setShadow").checked = !!style.shadow;
-    $("setFont").value = style.font;
+    inp("setShowSource").checked = !!style.showSource;
+    inp("setShowTranslation").checked = !!style.showTranslation;
+    inp("setTimestamps").checked = !!style.timestamps;
+    inp("setShadow").checked = !!style.shadow;
+    sel("setFont").value = style.font;
     $("fontVal").textContent = FONT_NAMES[style.font] || "RELAY";
-    $("setAlign").value = style.align;
+    sel("setAlign").value = style.align;
     $("alignVal").textContent = style.align.toUpperCase();
-    $("setLines").value = String(style.lines);
+    sel("setLines").value = String(style.lines);
     $("linesVal").textContent = String(style.lines);
-    $("setHold").value = String(style.holdSeconds);
+    sel("setHold").value = String(style.holdSeconds);
     $("holdVal").textContent = style.holdSeconds ? style.holdSeconds + "s" : "NEVER";
-    $("setFg").value = style.fg;
-    $("setAccent").value = style.accent;
-    $("setBg").value = style.bg;
+    inp("setFg").value = style.fg;
+    inp("setAccent").value = style.accent;
+    inp("setBg").value = style.bg;
     $("swFg").style.background = style.fg;
     $("swAccent").style.background = style.accent;
     $("swBg").style.background = style.bg;
@@ -211,16 +227,16 @@
   }
 
   function initDisplayUI() {
-    const sel = $("setLines");
+    const linesSel = sel("setLines");
     for (let n = 3; n <= 15; n++) {
       const o = document.createElement("option");
       o.value = String(n);
       o.textContent = String(n);
-      sel.appendChild(o);
+      linesSel.appendChild(o);
     }
     // 0 first, because "Never" is the old behaviour and the one someone goes
     // looking for when the fade surprises them
-    const hold = $("setHold");
+    const hold = sel("setHold");
     for (const n of [0, 5, 10, 20, 30, 60, 120]) {
       const o = document.createElement("option");
       o.value = String(n);
@@ -232,18 +248,18 @@
     for (const b of $("themeBar").querySelectorAll("button")) {
       b.addEventListener("click", () => update({ theme: b.dataset.theme, ...THEMES[b.dataset.theme] }));
     }
-    $("setSize").addEventListener("input", () => update({ size: Number($("setSize").value) }));
-    $("setShowSource").addEventListener("change", () => update({ showSource: $("setShowSource").checked }));
-    $("setShowTranslation").addEventListener("change", () => update({ showTranslation: $("setShowTranslation").checked }));
-    $("setTimestamps").addEventListener("change", () => update({ timestamps: $("setTimestamps").checked }));
-    $("setShadow").addEventListener("change", () => update({ shadow: $("setShadow").checked }));
-    $("setFont").addEventListener("change", () => update({ font: $("setFont").value }));
-    $("setAlign").addEventListener("change", () => update({ align: $("setAlign").value }));
-    $("setLines").addEventListener("change", () => update({ lines: Number($("setLines").value) }));
-    $("setHold").addEventListener("change", () => update({ holdSeconds: Number($("setHold").value) }));
-    $("setFg").addEventListener("input", () => update({ fg: $("setFg").value }));
-    $("setAccent").addEventListener("input", () => update({ accent: $("setAccent").value }));
-    $("setBg").addEventListener("input", () => update({ bg: $("setBg").value }));
+    inp("setSize").addEventListener("input", () => update({ size: Number(inp("setSize").value) }));
+    inp("setShowSource").addEventListener("change", () => update({ showSource: inp("setShowSource").checked }));
+    inp("setShowTranslation").addEventListener("change", () => update({ showTranslation: inp("setShowTranslation").checked }));
+    inp("setTimestamps").addEventListener("change", () => update({ timestamps: inp("setTimestamps").checked }));
+    inp("setShadow").addEventListener("change", () => update({ shadow: inp("setShadow").checked }));
+    sel("setFont").addEventListener("change", () => update({ font: sel("setFont").value }));
+    sel("setAlign").addEventListener("change", () => update({ align: sel("setAlign").value }));
+    sel("setLines").addEventListener("change", () => update({ lines: Number(sel("setLines").value) }));
+    sel("setHold").addEventListener("change", () => update({ holdSeconds: Number(sel("setHold").value) }));
+    inp("setFg").addEventListener("input", () => update({ fg: inp("setFg").value }));
+    inp("setAccent").addEventListener("input", () => update({ accent: inp("setAccent").value }));
+    inp("setBg").addEventListener("input", () => update({ bg: inp("setBg").value }));
     $("resetStyle").addEventListener("click", () => update({ ...DEFAULT_STYLE }));
     syncDisplayUI();
     // the button is no longer hidden in obs mode - the HUD it lives in is
@@ -367,6 +383,7 @@
     const finals = [...linesEl.querySelectorAll(".row:not(.interim)")];
     while (finals.length > style.lines) {
       const el = finals.shift();
+      if (!el) break;
       for (const [id, r] of rows) if (r === el) rows.delete(id);
       for (const [ch, r] of interims) if (r === el) interims.delete(ch);
       el.remove();
