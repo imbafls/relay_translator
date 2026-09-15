@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { CANONICAL_ORIGIN, noindex, robotsTxt, sitemapXml } from "../src/index";
 
 /**
@@ -68,5 +70,71 @@ describe("noindex", () => {
     expect(out.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
     expect(out.headers.get("content-type")).toBe("text/html");
     expect(out.status).toBe(200);
+  });
+});
+
+/**
+ * The half of that problem this file did not cover.
+ *
+ * `robots.txt` and `sitemap.xml` are generated from `CANONICAL_ORIGIN`, so they
+ * cannot drift. The page a crawler actually reads is `home.html`, which is
+ * static and served as-is - it can import nothing, and it names the origin six
+ * times as a literal. Nothing held those literals to the constant.
+ *
+ * That is not hypothetical here. This site moved once already: `relay.supr.systems`
+ * was the address before `textrelay.cc`, both still answer this Worker, and
+ * `wrangler.toml` lists both. A literal left behind on the old name is a
+ * canonical tag pointing a crawler at the copy that is not on the download
+ * button - the exact failure the comment at the top of this file describes,
+ * arriving through the one file that has no compiler and no imports.
+ *
+ * The hostnames are read out of `wrangler.toml` rather than written here, so
+ * the check follows the deployment instead of restating it.
+ */
+describe("the page a crawler actually reads", () => {
+  const root = path.resolve(__dirname, "..", "..", "..");
+  const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
+  const home = read("packages/viewer/public/home.html");
+  const hosts = [...read("apps/hosted-relay/wrangler.toml").matchAll(/pattern\s*=\s*"([^"]+)"/g)].map(
+    (m) => m[1],
+  );
+
+  /** the three places the page tells a crawler what this site is called */
+  const identity = {
+    canonical: /<link rel="canonical" href="([^"]+)"/.exec(home)?.[1],
+    ogUrl: /<meta property="og:url" content="([^"]+)"/.exec(home)?.[1],
+    jsonLd: /"url"\s*:\s*"([^"]+)"/.exec(home)?.[1],
+  };
+
+  it("found both sides, so the checks below are not vacuous", () => {
+    expect(hosts.length, "no custom domains parsed out of wrangler.toml").toBeGreaterThan(1);
+    expect(
+      Object.entries(identity).filter(([, v]) => !v).map(([k]) => k),
+      "home.html no longer declares one of these, so this file stopped checking it",
+    ).toEqual([]);
+  });
+
+  it("is canonical on a name the Worker is actually deployed on", () => {
+    expect(
+      hosts.map((h) => `https://${h}`),
+      `CANONICAL_ORIGIN is ${CANONICAL_ORIGIN} and wrangler.toml deploys ${hosts.join(", ")}`,
+    ).toContain(CANONICAL_ORIGIN);
+  });
+
+  it("names no other hostname this Worker answers on", () => {
+    const others = hosts.filter((h) => `https://${h}` !== CANONICAL_ORIGIN);
+    expect(
+      others.filter((h) => home.includes(h)),
+      "home.html still mentions a name that is not the canonical one. Every copy of this page is " +
+        "byte-identical, so a crawler that follows it ranks the address nobody is given",
+    ).toEqual([]);
+  });
+
+  it("says the same origin in all three places that declare identity", () => {
+    expect(identity).toEqual({
+      canonical: `${CANONICAL_ORIGIN}/`,
+      ogUrl: `${CANONICAL_ORIGIN}/`,
+      jsonLd: `${CANONICAL_ORIGIN}/`,
+    });
   });
 });
