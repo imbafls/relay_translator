@@ -127,7 +127,7 @@ All verified against `package.json` at v0.8.1.
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
 | `pnpm -r build` | Build every package. `shared` emits the `.d.ts` the others need. |
 | `pnpm smoke` | `packages/relay/scripts/smoke.mjs` — end-to-end against a real `startRelay` on an ephemeral port (`port: 0`): token auth, the subtitle pipeline, two channels, the admin endpoints. Requires `packages/relay/dist`, so build first. |
-| `node scripts/check-renderer-ids.mjs` | Every element id the desktop renderer and the viewer page reference must exist in the markup. Prints the counts and exits non-zero if one dangles. |
+| `node scripts/check-renderer-ids.mjs` | Every element id the desktop renderer and the viewer page reference must exist in the markup - from their scripts, and from their stylesheets, where a dangling `#id` rule is silent and invisible to happy-dom. Prints the counts and exits non-zero if one dangles. |
 | `pnpm dist:relay` | Build the relay + bundle + inject the SEA binary (`packages/relay/sea/`). |
 | `pnpm dist:app` | electron-builder, Windows. |
 | `pnpm deploy:hosted` | `wrangler deploy` of `apps/hosted-relay` - both custom domains at once. Uses this machine's `wrangler login`. |

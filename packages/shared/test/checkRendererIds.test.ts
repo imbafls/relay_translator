@@ -55,6 +55,10 @@ const OK = {
   "packages/viewer/public/app.js": `$("beta");`,
   // the home page is its own script source - the markup carries an inline script
   "packages/viewer/public/home.html": `<div id="gamma"></div><script>$("gamma");</script>`,
+  // the stylesheets: the viewer page and the home page share one, which is the
+  // reason the checker unions their ids rather than checking each page alone
+  "apps/standalone/renderer/style.css": `#alpha { color: #e0a43a; }`,
+  "packages/viewer/public/style.css": `#beta { color: #efeae0; } #gamma { margin: 0; }`,
 };
 
 describe("the id checker", () => {
@@ -114,5 +118,45 @@ describe("the id checker", () => {
     );
     expect(res.code).toBe(1);
     expect(res.out).toContain("gamma");
+  });
+
+  /**
+   * The stylesheet half. A `#id` rule whose element was renamed dies silently
+   * and completely - no error, no failing test, since happy-dom does not apply
+   * stylesheets - and the only symptom is a panel that quietly loses its
+   * appearance.
+   */
+  it("catches a stylesheet rule that matches nothing in the markup", () => {
+    const res = run(tree({ ...OK, "packages/viewer/public/style.css": `#beta {} #renamedAway { color: red; }` }));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("renamedAway");
+  });
+
+  it("does not mistake a hex colour for an id selector", () => {
+    // #efeae0, #b8b3a8 and #e0a43a are real tokens in this app's palette and
+    // every one of them starts with a letter, so a naive scan reports three
+    // phantom dangling ids per sheet and the check is deleted within a week
+    const res = run(
+      tree({
+        ...OK,
+        "apps/standalone/renderer/style.css": `#alpha { color: #efeae0; border-color: #b8b3a8; outline: 1px solid #e0a43a; }`,
+      }),
+    );
+    expect(res.code, res.out).toBe(0);
+  });
+
+  it("checks a shared stylesheet against every page that loads it, not one of them", () => {
+    // #gamma is defined by home.html and #beta by index.html; they share a
+    // stylesheet, so checking either page alone reports the other as dangling
+    const res = run(tree({ ...OK, "packages/viewer/public/style.css": `#beta {} #gamma {}` }));
+    expect(res.code, res.out).toBe(0);
+  });
+
+  it("fails when a stylesheet it is meant to check has gone missing", () => {
+    const missing = { ...OK } as Record<string, string>;
+    delete missing["packages/viewer/public/style.css"];
+    const res = run(tree(missing));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("is missing");
   });
 });
