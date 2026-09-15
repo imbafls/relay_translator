@@ -274,12 +274,20 @@ function sourcesSummary(): string {
   const src = activeSources();
   return src.map(sourceLabel).join(" + ");
 }
-function debounce<T extends (...a: never[]) => void>(fn: T, ms: number): T {
+/**
+ * The returned function does not return what `fn` returns - it returns nothing,
+ * because the call is queued and the result is produced later, detached. The
+ * old signature said `T` and cast to it, so debouncing an `async` function
+ * produced something typed `() => Promise<void>` whose real return is
+ * `undefined`: every call site looked like an unhandled promise, and "fixing"
+ * one with `.catch()` would have thrown a TypeError on undefined.
+ */
+function debounce<A extends unknown[]>(fn: (...a: A) => unknown, ms: number): (...a: A) => void {
   let t: ReturnType<typeof setTimeout> | null = null;
-  return ((...args: Parameters<T>) => {
+  return (...args: A) => {
     if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  }) as T;
+    t = setTimeout(() => void fn(...args), ms);
+  };
 }
 
 // ---------------------------------------------------------------------------

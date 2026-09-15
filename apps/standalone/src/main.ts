@@ -31,6 +31,7 @@ import {
   UsageInfo,
   HOSTED_RELAY_URL,
   RELAY_CONFIG_KEYS,
+  redactLog,
   relayRollbackPatch,
   validTranscriptDir,
   viewerLinkFor,
@@ -155,6 +156,22 @@ function log(level: "info" | "warn" | "error", message: string): void {
 
 function config(): AppConfig {
   return configStore.get();
+}
+
+/**
+ * Open a link in the user's browser. `shell.openExternal` rejects when nothing
+ * can handle the URL, and three call sites discarded that, so a click did
+ * nothing and left no trace. One line is the right amount of noise - the same
+ * as `could not open ${dir}` for the transcripts folder.
+ *
+ * The URL goes through `redactLog` because one of these IS the viewer link,
+ * whose token sits in its /watch/ path, and this log is a file in the data dir
+ * that users are asked to send when something breaks.
+ */
+function openExternal(url: string): void {
+  shell.openExternal(url).catch((err) => {
+    log("warn", `could not open ${redactLog(url)}: ${String((err as Error)?.message || err)}`);
+  });
 }
 
 /** ws(s)://host[:port] -> http(s)://host[:port]; keeps TLS intact */
@@ -589,7 +606,7 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("open-external", (_e, url: string) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) openExternal(url);
   });
 
   // navigator.clipboard.writeText needs the "clipboard-sanitized-write"
@@ -797,7 +814,11 @@ function createWindow(): void {
   });
 
   win.setMenuBarVisibility(false);
-  win.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // a rejection here is a window that came up blank; without this the only
+  // symptom is an empty frame and nothing written down anywhere
+  win.loadFile(path.join(__dirname, "renderer", "index.html")).catch((err) => {
+    log("error", `could not load the renderer: ${String((err as Error)?.message || err)}`);
+  });
 
   // closing the window hides to tray so capture keeps running mid-game
   win.on("close", (e) => {
@@ -860,7 +881,7 @@ function buildTrayMenu(): Electron.Menu {
         label: "Rotate viewer link",
         click: async () => {
           await rotateLink();
-          if (viewerUrl()) shell.openExternal(viewerUrl()!);
+          if (viewerUrl()) openExternal(viewerUrl()!);
         },
       },
       { type: "separator" },
@@ -875,7 +896,7 @@ function buildTrayMenu(): Electron.Menu {
         label: updateTrayLabel(),
         click: () => {
           if (updater?.current.state === "ready") updater.install();
-          else if (updater?.current.state === "unsupported") shell.openExternal(RELEASES_URL);
+          else if (updater?.current.state === "unsupported") openExternal(RELEASES_URL);
           else void updater?.check(true);
         },
       },
@@ -952,7 +973,15 @@ if (!gotLock) {
     win?.webContents.on("did-finish-load", () => {
       win?.webContents.send("config:changed", config());
     });
-  });
+  })
+    // one argument to .then() means a throw anywhere in the block above - the
+    // relay coming up, the tray, the window - was an unhandled rejection: the
+    // app half-starts and the reason goes nowhere. This is the run that most
+    // needs a line in the file log, since it is the one the user cannot
+    // describe beyond "it didn't open".
+    .catch((err) => {
+      log("error", `startup failed: ${String((err as Error)?.stack || (err as Error)?.message || err)}`);
+    });
 
   app.on("before-quit", () => {
     quitting = true;
