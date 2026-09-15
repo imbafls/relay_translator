@@ -4,10 +4,11 @@
  * Layout: top bar · stage (or keys / log / onboarding view) · signal-chain strip · footer.
  * All state lives here; the main process owns config, the local relay and the uplink.
  */
-import { BrowserAudioCapture, captureErrorText, RelayPublisherClient, rmsLevel } from "@callout-relay/companion";
+import { BrowserAudioCapture, captureErrorText, RelayPublisherClient } from "@callout-relay/companion";
 import { $, inp, sel } from "./dom";
 import { log, logSubtitle, wordless } from "./log";
 import { renderWhatsNew } from "./whatsNew";
+import { feedLevel, renderMeter, resetLevel } from "./meter";
 import {
   AppConfig,
   AudioDeviceInfo,
@@ -740,23 +741,6 @@ function renderIdle(): void {
 }
 
 // ---------------------------------------------------------------------------
-// level meter (01 SOURCE while live)
-// ---------------------------------------------------------------------------
-
-let level = 0;
-function feedLevel(chunk: Int16Array): void {
-  // rmsLevel reads every lane of the interleave; the stride this used to walk
-  // with saw only channel 0 once there were three sources
-  level = Math.max(level * 0.85, rmsLevel(chunk));
-}
-function renderMeter(): void {
-  const bars = $("meter").children;
-  const db = level > 0 ? 20 * Math.log10(level) : -100;
-  const lit = Math.round(Math.min(1, Math.max(0, (db + 50) / 50)) * bars.length);
-  for (let i = 0; i < bars.length; i++) bars[i].classList.toggle("on", i < lit);
-}
-
-// ---------------------------------------------------------------------------
 // session control
 // ---------------------------------------------------------------------------
 
@@ -834,7 +818,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       brandColor: config.brandColor,
     });
 
-    level = 0;
+    resetLevel();
     lostSlots = new Set();
     const started = await capture.start(sources, (chunk) => {
       feedLevel(chunk);

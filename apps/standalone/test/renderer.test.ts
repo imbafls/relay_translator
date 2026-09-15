@@ -2789,3 +2789,95 @@ describe("the LOG box while a session fills it", () => {
     expect(counter(), "the counter kept climbing past the cap the box holds at").toBe(`${CAP} LINES`);
   });
 });
+
+/**
+ * The level meter in 01 SOURCE, characterised before it moves out of app.ts.
+ *
+ * `rmsLevel` - the part that reads a frame - is tested in packages/companion.
+ * What was never tested is what the renderer does with the number: the decay
+ * that makes the bars fall smoothly instead of snapping to zero between chunks,
+ * and the mapping from decibels onto the twelve bars in the markup. That is the
+ * whole visible behaviour of the meter, and it is exactly what a move could
+ * break without any existing assertion noticing.
+ */
+describe("the level meter in 01 SOURCE", () => {
+  /** the capture callback the renderer hands to BrowserAudioCapture.start */
+  let feed: ((chunk: Int16Array) => void) | undefined;
+
+  /** bars in the shipped markup */
+  const BARS = 12;
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: { onState?: (s: string) => void };
+    }) {
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    // keep the callback this time: it is the only way into feedLevel
+    companion.BrowserAudioCapture.prototype.start = async (
+      _sources: unknown,
+      onChunk: (chunk: Int16Array) => void,
+    ) => {
+      feed = onChunk;
+      return true;
+    };
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+    await waitFor(() => feed !== undefined, "capture to be handed its callback");
+  };
+
+  /** a frame at a constant amplitude; 32767 is full scale, 0 is silence */
+  const frame = (amplitude: number): Int16Array => Int16Array.from({ length: 320 }, () => amplitude);
+  const silence = (n: number): void => {
+    for (let i = 0; i < n; i++) feed!(frame(0));
+  };
+
+  /** the meter renders on an interval, so give it one tick */
+  const painted = async (): Promise<number> => {
+    await settle(150);
+    return document.querySelectorAll("#meter i.on").length;
+  };
+
+  it("lights nothing while there is only silence", async () => {
+    await goLive();
+    silence(5);
+
+    expect(await painted(), "the meter lit bars for a silent microphone").toBe(0);
+  });
+
+  it("fills on a frame at full scale", async () => {
+    await goLive();
+    feed!(frame(32767));
+
+    expect(await painted(), "a frame at full scale did not fill the meter").toBe(BARS);
+  });
+
+  it("falls away gradually once the sound stops, rather than snapping to nothing", async () => {
+    await goLive();
+    feed!(frame(32767));
+    expect(await painted()).toBe(BARS);
+
+    silence(20);
+    const partway = await painted();
+    expect(partway, "the meter emptied the moment the sound stopped").toBeGreaterThan(0);
+    expect(partway, "the meter did not fall at all while nothing was said").toBeLessThan(BARS);
+
+    silence(30);
+    expect(await painted(), "the meter never reached the bottom after a long silence").toBe(0);
+  });
+});
