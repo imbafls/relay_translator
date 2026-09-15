@@ -602,3 +602,47 @@ describe("the dropped Stream Deck plugin", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The viewer page takes three URL parameters and README.md is the only place
+ * they are written down. Neither side can see the other: `app.js` is served as
+ * is and imports nothing, and a document cannot be typechecked.
+ *
+ * Both directions matter and they fail differently. A parameter the page reads
+ * and nobody documents is a feature that exists for whoever reads the source -
+ * `?settings=1` was exactly that for a while, and the iteration log records a
+ * user never finding it. A parameter the README names and the page does not
+ * read is worse: somebody follows the instruction, nothing happens, and there
+ * is nothing to see - no error, no log, no wrong-looking page.
+ */
+describe("the viewer's URL parameters", () => {
+  const app = read("packages/viewer/public/app.js");
+  const readme = read("README.md");
+
+  /** `params.get("x")` in the shipped page */
+  const inCode = [...app.matchAll(/params\.get\("([a-z]+)"\)/g)].map((m) => m[1]);
+  /** `?x=` or `&x=` in a code span in the README's viewer section */
+  const inDocs = [...readme.matchAll(/`[?&]([a-z]+)=/g)].map((m) => m[1]);
+
+  it("found some on both sides, so neither list is empty by accident", () => {
+    expect(new Set(inCode).size, "app.js no longer reads any URL parameter").toBeGreaterThan(1);
+    expect(new Set(inDocs).size, "README.md no longer names any").toBeGreaterThan(1);
+  });
+
+  it("documents every one the page acts on", () => {
+    const undocumented = [...new Set(inCode)].filter((p) => !inDocs.includes(p));
+    expect(
+      undocumented,
+      "the viewer page acts on a parameter README.md does not mention, so it exists for whoever reads the source",
+    ).toEqual([]);
+  });
+
+  it("names none the page ignores", () => {
+    const unread = [...new Set(inDocs)].filter((p) => !inCode.includes(p));
+    expect(
+      unread,
+      "README.md tells a reader to add a parameter the page never looks at. They follow the instruction, " +
+        "nothing happens, and nothing anywhere says why",
+    ).toEqual([]);
+  });
+});

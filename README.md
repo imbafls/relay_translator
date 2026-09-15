@@ -310,10 +310,11 @@ in it - which is how the live page once ended up four fixes behind the repo.
 - Mobile-friendly dark UI with the last few callout lines.
 - `?obs=1` - transparent background, only the latest subtitle pair, sized for
   OBS browser sources (add it as a Browser source, 1920x1080). The OBS link is
-  the same token with this appended.
+  the same token with this appended. Add `&bar=0` to drop the amber marker down
+  the left of the line; it is read only alongside `?obs=1`, because the marker
+  exists only on the overlay.
 - `?settings=1` - pins the display-settings bar, which in OBS otherwise only
-  appears on hover. This is what `SETTINGS → OPEN CAPTION VIEW` uses. Add
-  `&bar=0` to drop the amber marker.
+  appears on hover. This is what `SETTINGS → OPEN CAPTION VIEW` uses.
 - The link is the token: whoever has it can watch, and there is nothing else
   checked. **NEW** rotates it and kicks everyone on the old one.
 - On the app's own relay only one device can be connected at a time; the
