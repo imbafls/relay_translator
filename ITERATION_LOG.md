@@ -3152,7 +3152,8 @@ after the guide was written.
 
 **One test I could not prove.** The `latest.yml` parser has a CRLF case, and no
 revert I could construct makes it fail: the split tolerates the CR, and so does
-every reasonable form of the regex - `.` does not match `` either. It asserts
+every reasonable form of the regex - `.` does not match `
+` either. It asserts
 real behaviour, so it stays, but it is a behaviour assertion and not a guard,
 and calling it one would be the thing this log exists to stop. The other ten in
 this turn were each proved by breaking exactly the line they cover.
@@ -3401,3 +3402,81 @@ findings, 8 did not survive three adversarial readings - including a confident
 "the version was never bumped" blocker, which is not a defect in the commits but
 the release step about to be taken. Worth remembering that a reviewer reading a
 tree mid-release will report the release's own unfinished state as a bug.
+
+---
+
+### The improvement loop - twenty-nine commits, and the lesson they kept teaching
+
+A second autonomous run, this one working from a kanban board rather than a turn
+list. The board lives outside the repo, at
+`~/.claude/project-tracking/relay/board.js`, and is deliberately not committed -
+so this section is the only account of the run that ships with the code.
+
+The rules it ran under are in `docs/RALPH-IMPROVEMENT-LOOP.md`: one card per
+iteration, a guard test watched failing before every fix, the full six-step gate
+before every commit, and no push, tag, release or deploy under any
+circumstances. It held to all of them. Twenty-nine commits, none pushed.
+
+**What it did.** The suite went from 1,051 tests to 1,206. The work fell into
+four groups. Correctness that the compiler could be made to find: six free
+`tsc` rules turned on and the five things they reported fixed, then
+`noUncheckedIndexedAccess` across every shipping project - 56 sites, three of
+them a real `undefined` that could escape, including a mock publishing
+`undefined` as caption text when handed an empty script. A rule the compiler has
+at no strictness: `scripts/check-floating-promises.mjs`, which found nine, four
+of which turned out to be `debounce` lying about its return type - it was
+declared to return what it was given and returned `undefined`, so
+`obCheckDeepgram().catch(...)` would have thrown on undefined rather than
+handled anything. Accessibility: nothing could stop an animation that never
+ended, and neither caption surface said which language it was showing, so a
+screen reader announced every translation with an English voice. And documents
+that had stopped being true: a README that misstated seven of ten model download
+sizes, one by a factor of four and a half; a backlog listing two finished
+findings as open; an orientation page describing a repo that had moved.
+
+**The lesson, and what it cost to learn.** Lesson 1 in the list above says a
+test that goes green when you expected red has probably not run. This run found
+its sibling, and took four iterations to name it: **a checker that reports
+success having read nothing looks exactly like one that works.**
+
+- `check-floating-promises.mjs` shipped deciding which files a project owned by
+  resolving them against the working directory. Every fixture lived in a temp
+  dir, so every fixture scanned zero files and exited 0. Five fixture tests went
+  green and four of them were vacuous. The two that expected RED are the only
+  reason it was caught.
+- Two iterations later, the same checker's hardcoded list of five projects went
+  stale the moment a sixth package gained a tsconfig. It reported a clean run
+  over 37 of the repo's 38 source files, without ever opening the 38th - the
+  page a phone actually loads.
+- A guard on the hosted README was written through a heredoc that ate a
+  backslash, leaving a regex matching nothing. It failed whatever the README
+  said, and the variant run that "proved" it looked exactly like a pass.
+- `check-renderer-ids.mjs` had shipped with the same hole long before either:
+  it printed "skip" and exited 0 when a page it was meant to read had gone
+  missing.
+
+Two habits fall out of it, and both are now in the code. **Every checker needs
+an assertion that it examined something** - `check-floating-promises.mjs` exits
+non-zero having scanned zero files, and every guard written after that point
+carries a "found something to check" test beside the real one. **Every coverage
+list should be discovered rather than written down** - the floating-promise
+checker reads the tree for projects, `tsconfigCorrectness.test.ts` reads it for
+configs, and `reducedMotion.test.ts` reads it for stylesheets, because a list of
+what to check is one more thing that can quietly disagree with reality.
+
+**A third habit, which CLAUDE.md used to advise against.** That file said a
+guard test cannot catch a stale claim, only a dangling pointer. It is right
+about most of a document and wrong about the claims that matter, and this run
+disproved it four times: `reap.test.ts` holds the hosted README to what the
+reaper actually does, `openWorkCurrent.test.ts` holds the backlog to what the
+code actually does, `catalogue.test.ts` holds the README's model table to the
+catalogue, and `handoff.test.ts` holds this page to the tree it describes. The
+pattern is always the same - assert the state of the code, then assert the
+sentence does not deny it.
+
+**What it did not do.** Four cards sat in To Do and In Progress the whole run
+and are still there: the textrelay DNS cutover, code signing, audit finding 17,
+and how far the renderer's structure should be taken. Every one is the owner's
+call rather than the loop's, which is why the loop's own completion condition -
+an empty board - was never reachable, and it said so rather than emptying the
+board to reach it.

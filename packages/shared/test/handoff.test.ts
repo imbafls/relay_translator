@@ -393,14 +393,36 @@ describe("the pointer from CLAUDE.md into the iteration log", () => {
       `CLAUDE.md should point at the heading the lessons live under - "${heading}" - rather than at a position that moves`,
     ).toBe(true);
 
-    // "Four, learned the hard way" - the word has to match what is there
+  });
+
+  /** the numbered, bolded lessons CLAUDE.md itself lists */
+  function quotedLessons(): string[] {
+    const body = /### Lessons carried forward[\s\S]*?(?=\n## )/.exec(claude())?.[0] ?? "";
+    return [...body.matchAll(/^\d+\.\s+\*\*(.+?)\*\*/gms)].map((m) => (m[1] ?? "").replace(/\s+/g, " ").trim());
+  }
+
+  it("says how many lessons it lists, and lists that many", () => {
     const words: Record<string, number> = { One: 1, Two: 2, Three: 3, Four: 4, Five: 5, Six: 6 };
-    const quoted = /\*\*Lessons carried forward[\s\S]{0,200}?\n\n(\w+), learned the hard way/.exec(claude())
-      ?? /### Lessons carried forward[\s\S]{0,200}?\n\n(\w+), learned the hard way/.exec(claude());
-    const said = words[quoted?.[1] ?? ""];
-    expect(said, `CLAUDE.md no longer says how many lessons there are`).toBeDefined();
-    expect(said, `CLAUDE.md says ${quoted?.[1]} and the log holds ${section?.lessons.length}`).toBe(
-      section?.lessons.length,
+    const said = /\n(\w+), learned the hard way/.exec(claude())?.[1] ?? "";
+    expect(words[said], "CLAUDE.md no longer says how many lessons there are").toBeDefined();
+    expect(words[said], `CLAUDE.md says ${said} and then lists ${quotedLessons().length}`).toBe(
+      quotedLessons().length,
     );
+  });
+
+  it("quotes no lesson the log does not carry", () => {
+    // the log is where a lesson is EARNED - CLAUDE.md is the summary. One that
+    // exists only in the summary has no evidence behind it, and the evidence is
+    // the half that makes it persuasive to a future session.
+    // normalised on both sides - whitespace because markdown wraps, case
+    // because a headline that opens a sentence in one document sits mid-sentence
+    // in the other. A guard over prose that cannot survive re-wrapping or a
+    // capital letter is a guard somebody deletes rather than satisfies.
+    const flatLog = log().replace(/\s+/g, " ").toLowerCase();
+    const missing = quotedLessons().filter((headline) => !flatLog.includes(headline.toLowerCase()));
+    expect(
+      missing,
+      `CLAUDE.md lists these and ITERATION_LOG.md does not carry them:\n${missing.join("\n")}`,
+    ).toEqual([]);
   });
 });

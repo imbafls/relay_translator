@@ -264,8 +264,8 @@ of these bugs.
 
 ### Lessons carried forward from `ITERATION_LOG.md`
 
-Four, learned the hard way over 41 turns. They are under **Where this run ended
-up** in that file - which was its end when this sentence was written and is now
+Five, learned the hard way. The first four came over 41 turns and are under
+**Where this run ended up** in that file - which was its end when this sentence was written and is now
 about a third of the way in, because fifty turns were appended after them. Worth
 re-reading:
 
@@ -284,6 +284,21 @@ re-reading:
    claiming a check that was never written.
 4. **Liveness is the wrong observable for a crash** once anything catches
    exceptions. Look for the throw.
+5. **A checker that reports success having read nothing looks exactly like one
+   that works.** The fifth came later, from the improvement loop, and it cost
+   four separate iterations before it was named. `check-floating-promises.mjs`
+   shipped resolving file ownership against the working directory, so every
+   fixture scanned zero files and exited 0 - five fixture tests green, four of
+   them vacuous, and only the two expecting RED exposed it. Two iterations later
+   its hardcoded project list went stale and it reported a clean run over 37 of
+   the repo's 38 source files without ever opening the 38th - the page a phone
+   actually loads. A heredoc ate a backslash and
+   left a regex matching nothing, so a guard failed for its own reasons while
+   its "proof" run looked like a pass. `check-renderer-ids.mjs` had shipped with
+   the same hole years earlier, printing "skip" and exiting 0 when a page it was
+   meant to read had gone missing. **Every checker needs an assertion that it
+   examined something, and every coverage list should be discovered rather than
+   written down.**
 
 ## Known-open risks a session should not re-derive
 
