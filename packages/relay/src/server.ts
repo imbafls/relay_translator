@@ -24,7 +24,13 @@ import { PublisherSession, SessionConfig, GeminiStats, SttStats, SessionDeps } f
 import { SAMPLE_RATE } from "./deepgram";
 import { LocalSttOptions } from "./localStt";
 
-const MIME: Record<string, string> = {
+/**
+ * Content types for everything this server hands back: the viewer bundle and,
+ * under /updates/, the release binaries. Exported so a test can hold it to the
+ * bundle - an extension missing here is served as octet-stream, which a browser
+ * with nosniff refuses for a stylesheet or a script.
+ */
+export const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -37,6 +43,9 @@ const MIME: Record<string, string> = {
   ".blockmap": "application/octet-stream",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
+  // the fonts' OFL licence ships inside the bundle; as octet-stream a browser
+  // downloads it instead of showing it
+  ".txt": "text/plain; charset=utf-8",
 };
 
 /**
