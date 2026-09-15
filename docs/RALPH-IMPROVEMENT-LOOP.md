@@ -191,7 +191,16 @@ Notes that will save an iteration:
   tells you to build.
 - Port **8791** is this project's designated harness port. If it is busy, find out
   what is holding it (`netstat -ano | findstr :8791`) and deal with that. Never
-  fall back to a different port.
+  fall back to a different port. The harness refuses to start rather than
+  moving, and `packages/shared/test/rendererHarness.test.ts` holds it to that.
+- **It keeps serving until something stops it.** There is no timeout and no
+  "one look and exit"; an iteration that starts one and moves on leaves a
+  server listening for the rest of the session. That is how the thing holding
+  8791 turns out to be you, several hours later, with the collision message
+  reading like a real conflict. Find the owner before assuming it is:
+  `netstat -ano | findstr :8791` gives the pid, `Get-CimInstance Win32_Process
+  -Filter "ProcessId = <pid>"` gives the command line, and `Stop-Process -Id
+  <pid>` ends it.
 - `cr-stub.js` and `cr-stub-saved.js` are the stubs that feed it sample state,
   including sample saved transcripts.
 - Driving it: clicks sent by coordinate mis-map under viewport emulation. Use
