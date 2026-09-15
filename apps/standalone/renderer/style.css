@@ -785,7 +785,9 @@ select option { background: var(--bg); color: var(--ink); }
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 10, 10, 0.72);
+  /* the warm black at 72%, not a cooler one of its own: DESIGN.md fixes --bg as
+     "every surface", and the idle panel's scrim above already dims with it */
+  background: rgba(19, 19, 19, 0.72);
   padding: 32px;
 }
 .wn-card {

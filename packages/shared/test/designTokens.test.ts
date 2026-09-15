@@ -1,0 +1,235 @@
+import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+/**
+ * The two shipped stylesheets, judged against `DESIGN.md`.
+ *
+ * DESIGN.md is the source of truth for visuals - it fixes the palette by hex,
+ * `--radius: 0`, the two families, and the rule that amber is the only
+ * chromatic colour. Nothing checked any of it. 828 lines of renderer CSS and
+ * 370 of viewer CSS drifted against a spec that could only be enforced by
+ * somebody remembering it, and a spec nothing enforces is a spec that is
+ * already wrong somewhere.
+ *
+ * `rendererCsp.test.ts` is the precedent: read the shipped stylesheet off disk
+ * and reason about it, rather than trusting that anyone looked.
+ *
+ * WHAT IS DELIBERATELY NOT CHECKED HERE, and why, so the next reader does not
+ * mistake the gap for an oversight:
+ *
+ * - **"Amber appears only when something is live or needs attention."** A
+ *   stylesheet cannot know whether `.wn-kind` is a warning. This is semantic and
+ *   is not mechanically enforceable; what IS enforceable is the half that
+ *   catches the failure the rule exists to prevent - that nothing chromatic
+ *   joins the palette at all. `only amber and the speaker colours are chromatic`
+ *   below is that half.
+ * - **Type scale.** DESIGN.md gives sizes per surface (18px stage, 21px phone
+ *   latest, 34/46px OBS) but the viewer's are driven by a user `--size` setting
+ *   with multipliers, so a literal comparison would assert the default and go
+ *   red on a feature working as designed.
+ * - **Anything inside a `--custom-property` definition.** A theme block
+ *   redefining `--ink` for the phone's Light mode is a token definition, not a
+ *   hard-coded colour, and DESIGN.md names the Light theme without giving it a
+ *   palette. Use sites are what this judges.
+ */
+
+const root = path.resolve(__dirname, "..", "..", "..");
+
+const SHEETS = [
+  {
+    name: "desktop renderer",
+    file: path.join(root, "apps", "standalone", "renderer", "style.css"),
+    chromatic: ["--amber", "--chat", "--chat-2"],
+  },
+  {
+    name: "phone/OBS viewer",
+    file: path.join(root, "packages", "viewer", "public", "style.css"),
+    // `--accent` is the reader's own, under `/* viewer-configurable */`: the
+    // display bar's Colors swatches write it at runtime, and app.js says in so
+    // many words that "the reader owns that one". What the product controls is
+    // the value it SHIPS, and that is asserted on its own below.
+    chromatic: ["--accent", "--amber", "--chat", "--chat-2"],
+  },
+];
+
+/** the palette DESIGN.md fixes by hex, as `--token` -> exact value */
+const SPEC_TOKENS: Record<string, string> = {
+  "--bg": "#131313",
+  "--ink": "#efeae0",
+  "--ink-2": "#b8b3a8",
+  "--dim": "#8a877f",
+  "--mute": "#3a3834",
+  "--amber": "#e0a43a",
+};
+
+/** the same palette as rgb triples, plus the black DESIGN.md names for the OBS shadow */
+const PALETTE_RGB = new Set([
+  "19,19,19", // --bg
+  "239,234,224", // --ink
+  "184,179,168", // --ink-2
+  "138,135,127", // --dim
+  "58,56,52", // --mute
+  "224,164,58", // --amber
+  // "Transparent, bottom-left ... text-shadow 0 2px 6px rgba(0,0,0,.7)" and the
+  // OBS-black theme the display bar offers. Named by the spec, so not an invention.
+  "0,0,0",
+]);
+
+/**
+ * Chromatic tokens the product carries that DESIGN.md does not name.
+ *
+ * The spec says "Only `--amber` is chromatic; never add green/red." The 0.4
+ * additions then gave every speaker its own colour - shipped, verified live with
+ * three sources, and editable by the user - so the code carries two blues the
+ * spec never described. That is a disagreement between the spec and the product,
+ * and resolving it is the owner's call: changing either the colours or the
+ * sentence is a design decision, not a conformance fix. Named here so the guard
+ * reports the drift once, in one place, instead of failing on it for ever.
+ */
+const UNSPEC_CHROMATIC = new Set(["--chat", "--chat-2", "--accent"]);
+
+const read = (file: string): string => fs.readFileSync(file, "utf8");
+
+/** every `--token: value` declaration, wherever it appears */
+function tokens(css: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of css.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+    // first wins: `:root` is at the top, theme blocks below override for a surface
+    if (!out.has(m[1])) out.set(m[1], m[2].trim());
+  }
+  return out;
+}
+
+/** "#efeae0" / "rgba(239, 234, 224, .14)" -> "239,234,224", or null if not a colour */
+function rgbOf(value: string): string | null {
+  const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(value.trim());
+  if (hex) {
+    const h = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join("") : hex[1];
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(",");
+  }
+  const fn = /^rgba?\(([^)]*)\)$/.exec(value.trim());
+  if (!fn) return null;
+  const parts = fn[1].split(/[,/\s]+/).filter(Boolean).slice(0, 3).map((n) => Math.round(Number(n)));
+  return parts.length === 3 && parts.every((n) => Number.isFinite(n)) ? parts.join(",") : null;
+}
+
+/** how far from grey a colour is; the palette's warm neutrals sit at 16 and below */
+function chroma(rgb: string): number {
+  const n = rgb.split(",").map(Number);
+  return Math.max(...n) - Math.min(...n);
+}
+
+/** declarations that are NOT custom-property definitions, with their line numbers */
+function useSites(css: string): { line: number; prop: string; value: string }[] {
+  const out: { line: number; prop: string; value: string }[] = [];
+  css.split("\n").forEach((text, i) => {
+    // strip comments so prose about a colour is not read as one
+    const line = text.replace(/\/\*.*?\*\//g, "");
+    for (const m of line.matchAll(/(?:^|[;{])\s*([a-z-]+)\s*:\s*([^;{}]+)/g)) {
+      if (m[1].startsWith("--")) continue;
+      out.push({ line: i + 1, prop: m[1], value: m[2].trim() });
+    }
+  });
+  return out;
+}
+
+describe("the shipped stylesheets against DESIGN.md", () => {
+  for (const sheet of SHEETS) {
+    describe(sheet.name, () => {
+      it("declares the palette at exactly the values the spec fixes", () => {
+        const declared = tokens(read(sheet.file));
+        for (const [name, want] of Object.entries(SPEC_TOKENS)) {
+          expect(declared.get(name), `${name} is missing from ${sheet.name}`).toBeDefined();
+          expect(
+            rgbOf(declared.get(name) ?? ""),
+            `${name} is ${declared.get(name)}, and DESIGN.md fixes it at ${want}`,
+          ).toBe(rgbOf(want));
+        }
+      });
+
+      it("uses no colour the palette does not contain", () => {
+        const css = read(sheet.file);
+        const bad: string[] = [];
+        for (const { line, prop, value } of useSites(css)) {
+          for (const m of value.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)) {
+            const rgb = rgbOf(m[0]);
+            if (rgb && !PALETTE_RGB.has(rgb)) bad.push(`${sheet.file}:${line} ${prop}: ${m[0]}`);
+          }
+        }
+        expect(bad, `a colour outside the palette, which DESIGN.md calls "every surface"`).toEqual([]);
+      });
+
+      it("rounds no corner the spec squares", () => {
+        const css = read(sheet.file);
+        // `--radius: 0` - "square everything". 50% is allowed and only 50%:
+        // DESIGN.md asks for the glyphs ●/○/■, and the status dots draw them in
+        // CSS rather than as characters. A rounded PANEL or button - the thing
+        // "no cards, no rounded panels" forbids - takes a px value and is caught.
+        const bad = useSites(css)
+          .filter((d) => d.prop === "border-radius")
+          .filter((d) => !/^(0|50%|var\(--radius\))$/.test(d.value.trim()))
+          .map((d) => `${sheet.file}:${d.line} border-radius: ${d.value}`);
+        expect(bad, "DESIGN.md sets --radius: 0 and says square everything").toEqual([]);
+      });
+
+      it("names no font family beyond the two the spec ships", () => {
+        const css = read(sheet.file);
+        const bad = useSites(css)
+          .filter((d) => d.prop === "font-family")
+          .filter((d) => !/^var\(--(sans|mono|cap-font)\)$/.test(d.value.trim()))
+          .map((d) => `${sheet.file}:${d.line} font-family: ${d.value}`);
+        expect(bad, "DESIGN.md ships Archivo and Martian Mono, self-hosted, and nothing else").toEqual([]);
+      });
+
+      it("lets only amber and the speaker colours be chromatic", () => {
+        const declared = tokens(read(sheet.file));
+        const chromatic: string[] = [];
+        for (const [name, value] of declared) {
+          const rgb = rgbOf(value);
+          // 16 is the widest spread in the spec's own neutrals (--ink-2 at b8b3a8)
+          if (rgb && chroma(rgb) > 20 && name !== "--amber" && !UNSPEC_CHROMATIC.has(name)) {
+            chromatic.push(`${name}: ${value}`);
+          }
+        }
+        expect(chromatic, 'DESIGN.md: "Only --amber is chromatic; never add green/red"').toEqual([]);
+      });
+    });
+  }
+
+  /**
+   * Both sheets carry `--chat` and `--chat-2`, and DESIGN.md does not. This
+   * asserts the divergence is exactly that size rather than growing quietly: a
+   * third speaker colour, or a green, would be a design decision somebody made
+   * without the spec, and it should reach a person rather than a stylesheet.
+   */
+  it("carries no chromatic token beyond the ones already reconciled", () => {
+    for (const sheet of SHEETS) {
+      const declared = tokens(read(sheet.file));
+      const chromatic = [...declared]
+        .filter(([, v]) => {
+          const rgb = rgbOf(v);
+          return rgb !== null && chroma(rgb) > 20;
+        })
+        .map(([name]) => name)
+        .sort();
+      expect(
+        chromatic,
+        `${sheet.name} grew a chromatic token DESIGN.md has never been asked about`,
+      ).toEqual(sheet.chromatic);
+    }
+  });
+
+  /**
+   * The reader may set any accent they like - that is what the Colors swatches
+   * are for - but the one the product ships is amber, and a default that had
+   * drifted would put a colour of nobody's choosing on every phone that has
+   * never opened the display settings.
+   */
+  it("ships the reader's accent defaulting to amber", () => {
+    const declared = tokens(read(SHEETS[1].file));
+    expect(rgbOf(declared.get("--accent") ?? ""), "the shipped accent is no longer amber").toBe(
+      rgbOf(SPEC_TOKENS["--amber"]),
+    );
+  });
+});
