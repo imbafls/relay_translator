@@ -76,3 +76,38 @@ describe("a release has notes to publish", () => {
     expect(script).toContain("CHANGELOG");
   });
 });
+
+/**
+ * CLAUDE.md states the repo's version in the present tense, and that sentence
+ * is the first thing a new session reads about what it is working on.
+ *
+ * `versions.test.ts` above holds every package.json to one number, and the
+ * release workflow refuses a tag that disagrees with `apps/standalone`. The
+ * PROSE copy of that number was held by nothing, so it stayed at 0.8.0 through
+ * the 0.8.1 release and a session reading the orientation page would have taken
+ * the wrong version into `pnpm version-bump`.
+ *
+ * Only the present-tense claim is checked. Elsewhere the file says things like
+ * "rewritten at v0.8.0", which is provenance - a statement about when something
+ * happened, true for ever - and holding those to the current version would be
+ * asking the document to lie about its own history.
+ */
+describe("what CLAUDE.md says the repo's version is", () => {
+  const claude = fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8");
+
+  it("states one at all, in a form this can find", () => {
+    expect(
+      claude,
+      "CLAUDE.md no longer states the repo version as `version \`x.y.z\``, so this checks nothing",
+    ).toMatch(/version `\d+\.\d+\.\d+`/);
+  });
+
+  it("states the one the packages actually carry", () => {
+    const stated = /version `(\d+\.\d+\.\d+)`/.exec(claude)?.[1];
+    expect(
+      stated,
+      `CLAUDE.md tells a new session this repo is version ${stated}; every package.json says ${appVersion}. ` +
+        "That sentence is the first thing read about the tree, and the release process starts from it.",
+    ).toBe(appVersion);
+  });
+});
