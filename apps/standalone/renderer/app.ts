@@ -293,7 +293,26 @@ function log(message: string, cls: "" | "err" | "ok" = ""): void {
   el.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
   appendLog(el);
 }
+/**
+ * A final the engine sent to say that utterance came to nothing.
+ *
+ * Deepgram emits one every couple of seconds on a silent channel, and does so
+ * deliberately - dispatchDeepgramMessage (packages/relay/src/deepgram.ts)
+ * stopped swallowing them precisely because the session reserves a segment id
+ * for a channel's interim and only releases it on a final. They are a control
+ * message, not a caption, and every other consumer already says so: onPartial
+ * below, the viewer page, the translator (packages/relay/src/session.ts) and
+ * the saved-transcript writer (../src/transcripts.ts) all check before acting.
+ * One measured 94-minute session carried 3,105 of these against 657 real lines.
+ */
+function wordless(seg: { source: string; target?: string }): boolean {
+  return !seg.source.trim() && !seg.target?.trim();
+}
+
 function logSubtitle(seg: { source: string; target?: string; speaker?: string; latency?: { stt?: number; translate?: number } }): void {
+  // nothing was said, so there is nothing to log - and the box holds 400 lines,
+  // so logging them anyway costs the real ones their place
+  if (wordless(seg)) return;
   const t = new Date().toLocaleTimeString();
   const en = document.createElement("div");
   en.className = "sub-en";
@@ -675,14 +694,34 @@ function onPartial(seg: { id: number; source: string; channel?: number; speaker?
 }
 
 function onSubtitle(seg: Seg): void {
+  const channel = seg.channel ?? 0;
+  // Retire, then return - and in that order. A wordless final is the only thing
+  // that consumes this channel's open interim, so dropping it at the wiring
+  // point instead would strand the half-caption: trimRows excludes .interim
+  // from the MAX_ROWS budget on purpose, so nothing would age it out until the
+  // next speech on the channel, or STOP. That stranded blinking row is the
+  // exact bug the empty final was introduced to prevent on the viewer.
+  // Building a row for it instead is the bug being fixed here - twelve of them
+  // is the whole stage, so a long enough silence erases every real caption.
+  if (wordless(seg)) {
+    const stale = interims.get(channel);
+    if (stale) {
+      // both, together: the element out of the document and the entry out of
+      // the map. Leaving the entry behind has onPartial repainting a node that
+      // is no longer on the page, and the next thing said never appears.
+      stale.el.remove();
+      interims.delete(channel);
+      renderIdle();
+    }
+    return;
+  }
   let row = rows.get(seg.id);
   if (!row) {
-    const ch = seg.channel ?? 0;
-    const interim = interims.get(ch);
+    const interim = interims.get(channel);
     if (interim) {
       // the interim row becomes this final segment
       row = interim;
-      interims.delete(ch);
+      interims.delete(channel);
       row.el.classList.remove("interim");
       row.id = seg.id;
     } else {

@@ -1917,6 +1917,190 @@ describe("the topbar during a dead speech pipeline", () => {
 });
 
 /**
+ * A recogniser final with no words in it is not a caption. Deepgram sends one
+ * every couple of seconds on a silent channel, deliberately: dispatchDeepgramMessage
+ * (packages/relay/src/deepgram.ts) stopped swallowing them precisely because the
+ * session reserves a segment id for a channel's interim and only releases it on a
+ * final, so an utterance that came to nothing left a blinking half-caption that
+ * trimRows - which excludes .interim - could never age out.
+ *
+ * Three consumers see that final. onPartial checks !seg.source.trim(), the viewer
+ * page checks !msg.source && !msg.target AFTER retiring its interim, and 0.8.1
+ * added the same check to the translator (session.ts) and the saved-transcript
+ * writer (transcripts.ts). The streamer's own 04 OUTPUT stage checks nothing and
+ * builds a full row - so a silence long enough evicts all twelve real captions
+ * (MAX_ROWS) and leaves blank timestamped rows carrying a `...` that never
+ * resolves, because 0.8.1 correctly stopped translating them. One measured
+ * 94-minute session produced 3,105 wordless finals against 657 real ones.
+ *
+ * The guard has to sit where BOTH consumers hang off it - logSubtitle shares the
+ * same 400-entry capped LOG buffer and floods identically - and it has to retire
+ * the interim before it returns, or it re-opens on the desktop the exact bug the
+ * empty final was introduced to fix on the viewer.
+ */
+describe("a recogniser final with no words in it", () => {
+  type Seg = {
+    id: number;
+    source: string;
+    target?: string;
+    channel?: number;
+    speaker?: string;
+    latency?: { stt?: number; translate?: number };
+  };
+  let hooks: { onSubtitle?: (seg: Seg) => void; onPartial?: (seg: Seg) => void };
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    // the network edge, as the two topbar suites above stand it up - except
+    // that this one keeps the hooks, because they are the wiring point under test
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: typeof hooks & { onState?: (s: string) => void };
+    }) {
+      hooks = this.hooks;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+
+  const finals = (): number => document.querySelectorAll("#lines .row:not(.interim)").length;
+  const openInterims = (): number => document.querySelectorAll("#lines .row.interim").length;
+  const logCount = (): number => (document.getElementById("log") as HTMLElement).children.length;
+  const stageText = (): string[] =>
+    [...document.querySelectorAll("#lines .row:not(.interim) .src .text")].map((e) => e.textContent || "");
+
+  it("puts no row on the stage", async () => {
+    await goLive();
+    for (let i = 0; i < 20; i++) hooks.onSubtitle!({ id: 100 + i, source: "", channel: 0 });
+    await settle(40);
+
+    expect(finals(), "a silent channel built a row on the caption stage").toBe(0);
+  });
+
+  it("writes no line into the log", async () => {
+    await goLive();
+    const before = logCount();
+    for (let i = 0; i < 20; i++) hooks.onSubtitle!({ id: 200 + i, source: "   ", channel: 0 });
+    await settle(40);
+
+    expect(logCount() - before, "a silent channel flooded the capped LOG buffer").toBe(0);
+  });
+
+  it("does not evict the real captions already on the stage", async () => {
+    await goLive();
+    hooks.onSubtitle!({ id: 1, source: "rush B", channel: 0 });
+    // MAX_ROWS is 12, so twenty of these clear the stage if they are rendered
+    for (let i = 0; i < 20; i++) hooks.onSubtitle!({ id: 300 + i, source: "", channel: 0 });
+    await settle(40);
+
+    expect(stageText(), "silence pushed the only real caption off the stage").toEqual(["rush B"]);
+  });
+
+  it("still retires the open interim the empty final exists to release", async () => {
+    await goLive();
+    hooks.onPartial!({ id: 7, source: "rush", channel: 0 });
+    await settle(20);
+    expect(openInterims(), "the partial never opened an interim, so this proves nothing").toBe(1);
+
+    hooks.onSubtitle!({ id: 7, source: "", channel: 0 });
+    await settle(20);
+
+    expect(openInterims(), "the half-caption was left blinking on the stage for the rest of the session").toBe(0);
+    expect(finals(), "the wordless final left a blank row behind where the half-caption was").toBe(0);
+  });
+
+  it("leaves the channel able to open a fresh interim afterwards", async () => {
+    await goLive();
+    hooks.onPartial!({ id: 7, source: "rush", channel: 0 });
+    await settle(20);
+    hooks.onSubtitle!({ id: 7, source: "", channel: 0 });
+    await settle(20);
+
+    // removing the element without deleting the map entry leaves onPartial
+    // repainting a node that is no longer in the document, and the next thing
+    // said never reaches the stage at all - the two have to happen together
+    hooks.onPartial!({ id: 8, source: "they", channel: 0 });
+    await settle(20);
+    hooks.onSubtitle!({ id: 8, source: "they pushed B", channel: 0 });
+    await settle(20);
+
+    expect(stageText(), "the next utterance after a retired interim never reached the stage").toEqual([
+      "they pushed B",
+    ]);
+  });
+
+  it("puts the idle panel back over the stage its last row just left", async () => {
+    await goLive();
+    const idle = (): boolean => (document.getElementById("idle") as HTMLElement).hidden;
+    hooks.onPartial!({ id: 7, source: "rush", channel: 0 });
+    await settle(20);
+    expect(idle(), "the interim never covered the idle panel, so this proves nothing").toBe(true);
+
+    hooks.onSubtitle!({ id: 7, source: "", channel: 0 });
+    await settle(20);
+
+    expect(idle(), "the stage went empty and nothing on screen said so").toBe(false);
+  });
+
+  it("keeps the latency average describing speech rather than silence", async () => {
+    await goLive();
+    hooks.onSubtitle!({ id: 1, source: "rush B", channel: 0, latency: { stt: 900 } });
+    await settle(20);
+    const spoken = (document.getElementById("srcAvg") as HTMLElement).textContent;
+    expect(spoken, "no average was published for a real caption, so this proves nothing").not.toBe("");
+
+    // recentStt is a twelve-sample window, so twelve silent finals fill it
+    for (let i = 0; i < 12; i++) hooks.onSubtitle!({ id: 400 + i, source: "", channel: 0, latency: { stt: 10 } });
+    await settle(20);
+
+    expect(
+      (document.getElementById("srcAvg") as HTMLElement).textContent,
+      "the AVG STT badge is reporting how fast the engine transcribes silence",
+    ).toBe(spoken);
+  });
+
+  it("still renders a final that does carry words", async () => {
+    await goLive();
+    hooks.onPartial!({ id: 9, source: "rush", channel: 0 });
+    await settle(20);
+    hooks.onSubtitle!({ id: 9, source: "rush B now", channel: 0, speaker: "YOU" });
+    await settle(20);
+
+    expect(openInterims(), "the interim was not promoted to a final").toBe(0);
+    expect(stageText(), "a real caption stopped reaching the stage").toEqual(["rush B now"]);
+  });
+
+  it("still retires an interim on a channel of its own, leaving the others alone", async () => {
+    await goLive();
+    hooks.onPartial!({ id: 10, source: "rush", channel: 0 });
+    hooks.onPartial!({ id: 20, source: "on my way", channel: 1 });
+    await settle(20);
+    expect(openInterims(), "two channels did not open two interims").toBe(2);
+
+    hooks.onSubtitle!({ id: 20, source: "", channel: 1 });
+    await settle(20);
+
+    expect(openInterims(), "a wordless final on one channel retired another channel's interim").toBe(1);
+  });
+});
+
+/**
  * Fix-round-3 Finding 4. Spec section C: the idle-billing pause has to
  * "surface the reason in the app", not only write to relay.log - a screen
  * the spec itself calls out the user is not on. Before this, a paused

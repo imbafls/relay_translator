@@ -371,22 +371,34 @@ fix — read the numbered section there before starting.
 
 All three were confirmed against the source by independent verification and
 are **pre-existing** - none is a regression from the eight commits in v0.8.1.
-They are recorded rather than fixed because each needs a guard test of its own,
-and a release commit is the wrong place to write one.
+They were recorded rather than fixed because each needs a guard test of its own,
+and a release commit is the wrong place to write one. One is now fixed; the
+other two are still open.
 
-- **The desktop's own caption stage renders empty finals.** `onSubtitle` in
-  `apps/standalone/renderer/app.ts` is the third consumer of a recogniser final
-  and the one nothing guards. `onPartial` twenty lines above it checks
-  `!seg.source.trim()`, the viewer page checks `!msg.source && !msg.target`, and
-  0.8.1 added the same check to the translator and to the saved transcript - but
-  the streamer's own 04 OUTPUT stage still builds a full row for a wordless
-  final. A quiet channel emits one every couple of seconds, so a silence long
-  enough evicts all twelve real captions (`MAX_ROWS`) and leaves blank
-  timestamped rows carrying a `...` that now never resolves, because 0.8.1
-  correctly stops translating them. Guard the wiring point, not the two
-  consumers separately - `logSubtitle` shares the same capped LOG buffer and has
-  the same problem. Present at v0.8.0 and before; `85c4531` only changed the
-  blank row's translation column from an invented callout to a permanent `...`.
+- ~~**The desktop's own caption stage renders empty finals.**~~ Fixed
+  2026-09-15. `onSubtitle` in `apps/standalone/renderer/app.ts` was the third
+  consumer of a recogniser final and the one nothing guarded, so a quiet channel
+  - one every couple of seconds - evicted all twelve real captions (`MAX_ROWS`)
+  and left blank timestamped rows carrying a `...` that never resolved, because
+  0.8.1 correctly stops translating them. A shared `wordless()` predicate now
+  guards both consumers: `logSubtitle` returns early, and `onSubtitle` retires
+  the channel's open interim and returns without building a row.
+  **The advice this entry used to give - guard the wiring point, not the two
+  consumers separately - turned out to be half wrong, and the half that was
+  wrong mattered.** It is right about `logSubtitle`, which shares the same
+  capped LOG buffer. It is wrong about `onSubtitle`, because the wordless final
+  is the *only* thing that consumes a channel's open interim: dropping it before
+  `onSubtitle` ran would have stranded the half-caption on the stage, and
+  `trimRows` excludes `.interim` from the row budget deliberately, so nothing
+  would have aged it out until the next speech on that channel or STOP. That is
+  precisely the bug the empty final was introduced to prevent on the viewer
+  (`packages/relay/src/deepgram.ts`). The guard has to retire, then return.
+  Two things fell out of the same change: the `.latest` highlight no longer
+  lands on an empty row, and `AVG STT` stops averaging how fast the engine
+  transcribes silence - `recentStt` is a twelve-sample window, so a quiet
+  channel used to fill it completely. Present at v0.8.0 and before; `85c4531`
+  only changed the blank row's translation column from an invented callout to a
+  permanent `...`.
 
 - **File-based local models have no integrity check at all.** The SHA-256 pin
   `516247f` added covers only the seven `archive` models. The file-based ones
