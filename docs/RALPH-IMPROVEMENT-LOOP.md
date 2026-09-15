@@ -177,15 +177,18 @@ Tests run under happy-dom, which does not paint. To actually look at the desktop
 renderer there is a static harness:
 
 ```bash
-node apps/standalone/dist/harness/serve.mjs     # http://127.0.0.1:8791
+pnpm --filter @callout-relay/standalone build   # produces dist/renderer
+node scripts/renderer-harness.mjs               # http://127.0.0.1:8791
 ```
 
 Notes that will save an iteration:
 
-- `apps/standalone/dist/` is **gitignored build output**. The harness may simply
-  not be there. If it is missing, rebuild the renderer
-  (`pnpm --filter @callout-relay/standalone build`) and recreate the harness
-  rather than assuming it exists.
+- The harness itself is tracked, in `scripts/`. It used to live in
+  `apps/standalone/dist/harness/`, which is **gitignored build output**, so it
+  was never committed and vanished the first time anything cleaned `dist/` -
+  taking with it the only way this document offers to look at the UI. What it
+  serves is still build output: if `dist/renderer` is missing it says so and
+  tells you to build.
 - Port **8791** is this project's designated harness port. If it is busy, find out
   what is holding it (`netstat -ano | findstr :8791`) and deal with that. Never
   fall back to a different port.
