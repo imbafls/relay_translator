@@ -277,6 +277,12 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const transcriptListeners = new Set<(msg: TranscriptLine) => void>();
   /** epoch ms when the current stream went live (viewers run a session clock from it) */
   let liveSince: number | undefined;
+  /**
+   * Which numbering domain this relay's segment ids belong to; see
+   * `SessionElapsed.epoch`. Minted beside the carry-over below, because that is
+   * where the question "do the ids start again?" is actually answered.
+   */
+  let segEpoch: number | undefined;
   /** false once the speech pipeline has gone away under a connected publisher */
   let sttLive = true;
   /**
@@ -313,7 +319,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       } else {
         liveSince = undefined;
       }
-      return { ...msg, since: liveSince, elapsedMs: elapsed() };
+      return { ...msg, since: liveSince, elapsedMs: elapsed(), epoch: msg.epoch ?? segEpoch };
     }
     // A HELLO REBUILD, and the one no guard can see. Every hello sent through
     // toViewers passes through here, and this one is correct because it
@@ -341,7 +347,16 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       // Not while a publisher's own session is live here - that clock is not
       // the uplink's to end.
       if (!msg.live && !publisherLive()) liveSince = undefined;
-      return { ...msg, since: msg.live ? liveSince : undefined, elapsedMs: msg.live ? elapsed() : undefined };
+      // `msg.epoch ?? segEpoch`, not `segEpoch`: a hello forwarded from an
+      // uplink already carries the REMOTE relay's epoch, and that is the one
+      // its viewers are watching. Overwriting it here would hand them this
+      // relay's numbering domain for ids it never generated.
+      return {
+        ...msg,
+        since: msg.live ? liveSince : undefined,
+        elapsedMs: msg.live ? elapsed() : undefined,
+        epoch: msg.epoch ?? segEpoch,
+      };
     }
     return msg;
   };
@@ -408,6 +423,11 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     // viewers are not kicked on a rebuild, so their rows survive it - the new
     // session has to keep numbering where the old one left off
     const carryOver = publisher?.session?.lastSegId ?? 0;
+    // The one place that knows whether the ids are about to start again. A
+    // rebuild that carries the counter over keeps its epoch, so viewers keep
+    // the rows they are holding; a session numbering from zero gets a new one,
+    // so they start clean instead of painting the new stream over the old.
+    if (!carryOver) segEpoch = Date.now();
     if (publisher) {
       try {
         publisher.session?.stop();
@@ -831,6 +851,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         // in-progress stream falls straight back to subtracting the streamer's
         // clock from its own
         elapsedMs: isLive() ? elapsed() : undefined,
+        // and the numbering domain, for the same reason: a viewer joining an
+        // in-progress stream has to know which one its first ids belong to
+        epoch: segEpoch,
         ...currentBrand,
       } satisfies ServerToViewer),
     );
@@ -852,6 +875,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
         // in-progress stream falls straight back to subtracting the streamer's
         // clock from its own
         elapsedMs: isLive() ? elapsed() : undefined,
+        // and the numbering domain, for the same reason: a viewer joining an
+        // in-progress stream has to know which one its first ids belong to
+        epoch: segEpoch,
         ...currentBrand,
             } satisfies ServerToViewer),
           );
@@ -939,6 +965,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           live: msg.live !== false,
           translates: currentTranslates,
           since: msg.since,
+          // the remote relay's numbering domain, forwarded rather than
+          // replaced - stamp() leaves an epoch that is already set alone
+          epoch: msg.epoch,
           ...currentBrand,
         });
         return;
@@ -962,7 +991,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       }
       if (msg.type === "status") {
         uplinkLive = msg.live === true;
-        toViewers({ type: "status", live: msg.live, message: msg.message, since: msg.since });
+        toViewers({ type: "status", live: msg.live, message: msg.message, since: msg.since, epoch: msg.epoch });
       }
     });
 

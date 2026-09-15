@@ -443,6 +443,48 @@
     interims.clear();
   }
 
+  /** the numbering domain this page is showing, so a new one can be told apart */
+  let segEpoch;
+
+  /**
+   * Start a clean transcript when the stream we are watching is a new one.
+   *
+   * Segment ids restart with every session, and `rows` above is keyed by that
+   * id - so without this the new stream's first caption is written into the row
+   * the old stream's first caption still occupies. The old line is destroyed and
+   * the new one appears wherever that row happened to sit, which is above every
+   * line said after it. Live typing stops too: `showPartial` refuses any id
+   * `rows` already holds, so nothing types until the new session's counter
+   * passes the old one's high-water mark. Audit finding 12 describes both.
+   *
+   * `buildSession` in packages/relay/src/server.ts already carries the counter
+   * across a session REBUILT inside a running relay, which is the case that
+   * audit reported. It cannot carry it across a relay that has itself restarted
+   * - the streamer closing the app - and there `publisher` is gone and the
+   * carry-over is zero.
+   *
+   * `since` is NOT the field to key on, however much it looks like one. It is a
+   * display clock: `stamp()` clears it on `status live:false` and mints a fresh
+   * one on the next `live:true`, and an STT socket blip sends exactly that pair
+   * from inside one session whose numbering never paused. Keying on it would
+   * wipe a live transcript every time the speech engine reconnected. `epoch` is
+   * minted beside the carry-over itself, so it changes if and only if the ids
+   * restart.
+   *
+   * Only a number that differs from a number already seen counts. An absent
+   * epoch is an app older than the field, and is read exactly as this page read
+   * every message before the field existed: do nothing.
+   */
+  function noteSession(epoch) {
+    if (typeof epoch !== "number") return;
+    const previous = segEpoch;
+    segEpoch = epoch;
+    if (previous === undefined || previous === epoch) return;
+    for (const el of rows.values()) el.remove();
+    rows.clear();
+    clearInterims();
+  }
+
   function showSubtitle(msg) {
     let el = rows.get(msg.id);
     if (!el) {
@@ -619,6 +661,9 @@
       }
       switch (msg.type) {
         case "hello":
+          // before anything is drawn: if this is a different stream from the
+          // one on screen, its captions must not land in the old one's rows
+          noteSession(msg.epoch);
           serverTranslates = msg.translates !== false;
           // Order matters: applyStyle() must run BEFORE applyBrand(), not
           // after. applyStyle unconditionally rewrites --accent from the
@@ -638,6 +683,8 @@
           if (!msg.live) clearInterims();
           break;
         case "status":
+          // a restart can be announced here rather than by a hello
+          noteSession(msg.epoch);
           applyLive(msg.live, msg.since, msg.elapsedMs);
           if (!msg.live) clearInterims();
           break;

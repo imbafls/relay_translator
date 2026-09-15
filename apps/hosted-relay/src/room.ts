@@ -104,6 +104,16 @@ interface RoomState {
   brandColor?: string;
   /** epoch ms the current session started, for the viewer's clock */
   since?: number;
+  /**
+   * Which numbering domain the segment ids belong to, forwarded from the
+   * streamer's own relay so a viewer can tell one stream from the next.
+   *
+   * No `?? Date.now()` fallback, unlike `since` above, and that is the whole
+   * point of it: an epoch this Worker invented would correspond to no id space
+   * at all, and an uplink reconnect that happened to omit the field would read
+   * as a restart and wipe a live transcript. Absent stays absent.
+   */
+  epoch?: number;
   /** last caption id seen, so a reconnecting uplink cannot rewind viewers */
   lastSegId: number;
   createdAt: number;
@@ -277,6 +287,7 @@ export class Room {
           live: room.live,
           translates: room.translates,
           since: room.since,
+        epoch: room.epoch,
           brandName: room.brandName,
           brandColor: room.brandColor,
         });
@@ -318,6 +329,7 @@ export class Room {
       }
       room.translates = msg.translates !== false;
       room.since = typeof msg.since === "number" ? msg.since : Date.now();
+      if (typeof msg.epoch === "number") room.epoch = msg.epoch;
       // A hello is the liveness signal - `startUplink()` connects at app boot,
       // not at session start, so this used to be unconditional `true` and the
       // room was re-marked live on every reconnect, every embedded-relay
@@ -340,6 +352,7 @@ export class Room {
         live: room.live,
         translates: room.translates,
         since: room.since,
+        epoch: room.epoch,
         brandName: room.brandName,
         brandColor: room.brandColor,
       });
@@ -349,8 +362,15 @@ export class Room {
     if (msg.type === "status") {
       room.live = msg.live === true;
       if (typeof msg.since === "number") room.since = msg.since;
+      if (typeof msg.epoch === "number") room.epoch = msg.epoch;
       await this.save(room);
-      this.broadcast(TAG_VIEWER, { type: "status", live: room.live, message: msg.message, since: room.since });
+      this.broadcast(TAG_VIEWER, {
+        type: "status",
+        live: room.live,
+        message: msg.message,
+        since: room.since,
+        epoch: room.epoch,
+      });
       return;
     }
 

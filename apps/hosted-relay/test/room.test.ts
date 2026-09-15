@@ -330,3 +330,58 @@ describe("what a silent channel costs the hosted room in storage writes", () => 
     expect(s.captions().length, "the rewound line was dropped instead of relayed").toBe(2);
   });
 });
+
+/**
+ * The numbering domain, across the hop no developer tests against.
+ *
+ * Segment ids restart whenever a session is built without carrying the old
+ * one's counter over, and a viewer keys its rendered rows by id - so the relay
+ * mints an `epoch` beside that carry-over and every hello and status carries
+ * it. This Worker is in the middle of that, and it stores and replays the rest
+ * of the hello already, so a late joiner would otherwise be greeted with a
+ * domain of `undefined` and paint the running stream over whatever it had.
+ *
+ * The absent case is the one with teeth. `since` a few lines up falls back to
+ * `Date.now()` when the uplink omits it, which is right for a clock and would
+ * be wrong here: an epoch this Worker invented corresponds to no id space at
+ * all, and an uplink reconnect that happened to omit the field would read to
+ * every viewer as a restart and wipe a live transcript.
+ */
+describe("the numbering domain crossing the hosted relay", () => {
+  const helloOut = (s: ReturnType<typeof stand>): Frame | undefined => s.relayed();
+
+  it("replays the domain the uplink sent, to the viewers watching and to the record", async () => {
+    const s = stand();
+    await s.hello({ live: true, epoch: 1_788_000_111_000 });
+
+    expect(helloOut(s)?.epoch, "viewers watching were never told the numbering domain").toBe(
+      1_788_000_111_000,
+    );
+    expect(s.stored().epoch, "a late joiner would be greeted with no domain at all").toBe(
+      1_788_000_111_000,
+    );
+  });
+
+  it("invents none of its own when the uplink sends none", async () => {
+    const s = stand();
+    await s.hello({ live: true });
+
+    expect(
+      s.stored().epoch,
+      "the Worker minted an epoch that corresponds to no id space, which reads to every viewer as a restart",
+    ).toBeUndefined();
+    expect(helloOut(s)?.epoch, "and handed it to the viewers watching").toBeUndefined();
+  });
+
+  it("keeps the domain it already had when a later hello omits it", async () => {
+    const s = stand();
+    await s.hello({ live: true, epoch: 1_788_000_111_000 });
+    // an older app reconnecting, or a hello built without the field
+    await s.hello({ live: true });
+
+    expect(
+      s.stored().epoch,
+      "an omitted epoch cleared the one the room was holding, so the next hello reads as a restart",
+    ).toBe(1_788_000_111_000);
+  });
+});

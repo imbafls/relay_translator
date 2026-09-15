@@ -1073,6 +1073,25 @@ export interface SpeakerTag {
 export interface SessionElapsed {
   since?: number;
   elapsedMs?: number;
+  /**
+   * Which numbering domain the segment ids belong to.
+   *
+   * Ids restart at zero whenever a session is built without carrying the old
+   * one's counter over, and a viewer keys its rendered rows by id - so without
+   * a way to tell one domain from the next, the new stream's first caption is
+   * written into the row the old stream's first caption still occupies.
+   *
+   * It is NOT a clock, and `since` is not a substitute for it however much it
+   * looks like one: `since` is cleared and re-minted every time the speech
+   * engine reconnects inside a live session, where the numbering carries
+   * straight on. Keying on that would wipe a live transcript on a wifi hiccup.
+   * This changes if and only if the ids restart - it is minted where that is
+   * decided, beside the carry-over in `buildSession`.
+   *
+   * Absent means an app older than this field. A viewer must read that exactly
+   * as it read everything before it existed: do nothing.
+   */
+  epoch?: number;
 }
 
 export type ServerToViewer =
@@ -1142,9 +1161,9 @@ export type PublisherToServer =
 // ---------------------------------------------------------------------------
 
 export type UplinkToServer =
-  | ({ type: "hello"; languages: Languages; translates: boolean; since?: number; live?: boolean } & Brand)
+  | ({ type: "hello"; languages: Languages; translates: boolean; since?: number; epoch?: number; live?: boolean } & Brand)
   | ({ type: "subtitle"; id: number; source: string; target?: string; final: boolean; latency?: SubtitleLatency } & SpeakerTag)
-  | { type: "status"; live: boolean; message?: string; since?: number }
+  | { type: "status"; live: boolean; message?: string; since?: number; epoch?: number }
   | { type: "ping" };
 
 export type ServerToUplink =

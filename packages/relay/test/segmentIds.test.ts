@@ -145,3 +145,78 @@ describe("segment ids across a session rebuild", () => {
     expect(captions(viewer.seen)[0].id).toBe(1);
   });
 });
+
+/**
+ * The other half of the same problem, and the half carrying the counter cannot
+ * reach: a relay that has itself restarted has no counter to carry. `publisher`
+ * is gone, `carryOver` is zero, and the ids begin again at 1 while a viewer is
+ * still holding rows 1..N from the stream before.
+ *
+ * So viewers are told which numbering domain the ids belong to. The field is
+ * minted beside the carry-over itself rather than from any clock, because that
+ * is the only place that knows the answer: `since` is cleared and re-minted on
+ * every STT reconnect inside a live session, where the numbering never paused.
+ */
+describe("the numbering domain a viewer is told about", () => {
+  const hellos = (seen: Record<string, unknown>[]): Record<string, unknown>[] =>
+    seen.filter((m) => m.type === "hello");
+  const latestEpoch = (seen: Record<string, unknown>[]): unknown => hellos(seen).pop()?.epoch;
+
+  it("holds steady across a rebuild that carries the ids over", async () => {
+    const viewer = await connect(`ws://127.0.0.1:${relay.port}/ws/viewer?token=${relay.state.viewerToken}`);
+    const pub = await connect(`ws://127.0.0.1:${relay.port}/ws/publisher?token=${relay.state.publisherToken}`);
+
+    pub.ws.send(hello("vi"));
+    await speakUntil(pub.ws, viewer.seen, 2);
+    const first = latestEpoch(viewer.seen);
+    expect(typeof first, "no numbering domain reached the viewer at all").toBe("number");
+
+    // a settings change: same socket, new session, ids carry over, and the rows
+    // a viewer is holding must therefore survive
+    pub.ws.send(hello("ja"));
+    await settle(250);
+    await speakUntil(pub.ws, viewer.seen, 3);
+
+    expect(
+      latestEpoch(viewer.seen),
+      "a rebuild that kept the numbering told viewers it had restarted, which wipes their transcript",
+    ).toBe(first);
+  });
+
+  it("changes for a publisher whose numbering starts again", async () => {
+    const viewer = await connect(`ws://127.0.0.1:${relay.port}/ws/viewer?token=${relay.state.viewerToken}`);
+    const first = await connect(`ws://127.0.0.1:${relay.port}/ws/publisher?token=${relay.state.publisherToken}`);
+
+    first.ws.send(hello("vi"));
+    await speakUntil(first.ws, viewer.seen, 1);
+    const before = latestEpoch(viewer.seen);
+    expect(typeof before, "no numbering domain reached the viewer at all").toBe("number");
+
+    // the app closes and comes back: nothing is left to carry over, so the next
+    // caption is id 1 again while the viewer still has the old id 1 on screen
+    first.ws.close();
+    await settle(200);
+    const second = await connect(`ws://127.0.0.1:${relay.port}/ws/publisher?token=${relay.state.publisherToken}`);
+    second.ws.send(hello("vi"));
+    await speakUntil(second.ws, viewer.seen, 2);
+
+    expect(captions(viewer.seen).map((m) => m.id as number), "the ids did not in fact restart, so this proves nothing").toContain(1);
+    expect(
+      latestEpoch(viewer.seen),
+      "the ids started again and viewers were told nothing had changed",
+    ).not.toBe(before);
+  });
+
+  it("greets a viewer who joins later with the domain already running", async () => {
+    const pub = await connect(`ws://127.0.0.1:${relay.port}/ws/publisher?token=${relay.state.publisherToken}`);
+    pub.ws.send(hello("vi"));
+    await settle(250);
+
+    // this hello is hand-built rather than passed through stamp(), so it is its
+    // own way of getting the field wrong
+    const late = await connect(`ws://127.0.0.1:${relay.port}/ws/viewer?token=${relay.state.viewerToken}`);
+    await until(() => hellos(late.seen).length > 0, "the greeting hello");
+
+    expect(typeof latestEpoch(late.seen), "a viewer joining mid-stream was told no domain").toBe("number");
+  });
+});

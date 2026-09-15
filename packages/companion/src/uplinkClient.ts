@@ -16,6 +16,8 @@ export class UplinkClient {
     languages: Languages;
     translates: boolean;
     since?: number;
+    /** which numbering domain the segment ids belong to; forwarded verbatim */
+    epoch?: number;
     /** whether a session is actually running - absent from an older app's hello */
     live?: boolean;
     brandName?: string;
@@ -65,6 +67,8 @@ export class UplinkClient {
     languages: Languages;
     translates: boolean;
     since?: number;
+    /** which numbering domain the segment ids belong to; forwarded verbatim */
+    epoch?: number;
     live?: boolean;
     brandName?: string;
     brandColor?: string;
@@ -117,6 +121,9 @@ export class UplinkClient {
         languages: this.hello.languages,
         translates: this.hello.translates,
         since: this.hello.since,
+        // forwarded, never invented: this client relays another relay's
+        // numbering domain and has none of its own to offer
+        epoch: this.hello.epoch,
         live: freshLive,
         brandName: this.hello.brandName,
         brandColor: this.hello.brandColor,
@@ -211,6 +218,8 @@ export class UplinkClient {
     languages: Languages;
     translates: boolean;
     since?: number;
+    /** which numbering domain the segment ids belong to; forwarded verbatim */
+    epoch?: number;
     live?: boolean;
     brandName?: string;
     brandColor?: string;
@@ -223,8 +232,8 @@ export class UplinkClient {
     this.send(msg);
   }
 
-  sendStatus(live: boolean, message?: string, since?: number): void {
-    this.send({ type: "status", live, message, since });
+  sendStatus(live: boolean, message?: string, since?: number, epoch?: number): void {
+    this.send({ type: "status", live, message, since, epoch });
   }
 
   disconnect(): void {

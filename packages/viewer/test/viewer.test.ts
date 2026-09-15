@@ -899,3 +899,178 @@ describe("whose captions these are", () => {
     });
   }
 });
+
+/**
+ * Audit finding 12, the half that carrying the counter did not close.
+ *
+ * `private segId = 0` is per session, so ids restart whenever a new one is
+ * built. The audit offered two fixes and the repo took the first: `buildSession`
+ * in packages/relay/src/server.ts seeds the replacement from the old session's
+ * `lastSegId`, which covers a rebuild inside one running relay - a settings
+ * change, say. It cannot cover a relay that has itself restarted, and that is
+ * the ordinary case: the streamer closes the app, or the embedded relay comes
+ * back up, and `publisher` is gone so the carry-over is 0. Ids start again at 1
+ * while a viewer is still holding rows 1..N from before.
+ *
+ * The audit's own words for what happens next: "showSubtitle finds the surviving
+ * row 1 and rewrites it in place, so the new caption appears at the top of the
+ * stage with the old line's timestamp and the replaced line is lost; showPartial
+ * drops every interim for ids 1-5, so live typing stops until segId passes 5."
+ * Both are asserted below.
+ *
+ * The fix is the audit's second option - "send a session epoch in hello and have
+ * viewers clear rows when it changes" - except that no new field is needed,
+ * which matters because this hop serves apps at every shipped version. `since`
+ * is already that epoch and already on the wire: `stamp()` in server.ts mints it
+ * once when a session goes live and clears it when the stream stops, and the
+ * publisher's own hello carries none, so a rebuild that keeps the relay running
+ * keeps the same value. It changes on exactly the boundary that restarts ids.
+ *
+ * The three tests that pass either way are the ones that matter most for the
+ * fix not overreaching: a viewer reconnecting mid-stream, a hello carrying no
+ * `since` at all, and a stream that merely stops must each keep the transcript.
+ */
+describe("a stream that restarts while somebody is watching", () => {
+  const FIRST = 1_788_000_000_000;
+  const SECOND = FIRST + 600_000;
+
+  /**
+   * A live hello from the numbering domain `epoch`. `since` is deliberately
+   * held constant across all of them: it is the session clock, not the
+   * identity, and pinning it here keeps every assertion below about the one
+   * field that decides whether the ids restarted.
+   */
+  const live = (epoch?: number): Record<string, unknown> => ({
+    type: "hello",
+    languages: { source: "en", target: "vi" },
+    live: true,
+    translates: true,
+    since: FIRST,
+    ...(epoch === undefined ? {} : { epoch }),
+  });
+
+  const interims = (): number => document.querySelectorAll("#lines .row.interim").length;
+
+  it("starts the new session's transcript clean instead of painting over the old one", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+    push({ type: "subtitle", id: 2, source: "they pushed mid", final: true });
+
+    // the app restarts: a new session, numbering from the beginning again
+    push(live(SECOND));
+    push({ type: "subtitle", id: 1, source: "one down", final: true });
+
+    expect(
+      lineTexts(),
+      "the new caption was written into the old row 1 and the line it replaced is gone",
+    ).toEqual(["one down"]);
+  });
+
+  it("puts the new session's first caption below nothing, not above an older line", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+    push({ type: "subtitle", id: 2, source: "they pushed mid", final: true });
+    push(live(SECOND));
+    push({ type: "subtitle", id: 1, source: "one down", final: true });
+
+    expect(
+      lineTexts()[lineTexts().length - 1],
+      "the newest caption is not the last line on screen - it landed where the old row 1 sat",
+    ).toBe("one down");
+  });
+
+  it("lets the new session's live typing through again", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+
+    push(live(SECOND));
+    push({ type: "partial", id: 1, source: "one d" });
+
+    expect(
+      interims(),
+      "live typing stayed dead, because showPartial found the old session still holding that id",
+    ).toBe(1);
+  });
+
+  it("clears on a status that reports a new session, not only on a hello", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+    // two rows, not one: with a single row on screen the overwrite and the
+    // clear leave the stage looking identical, and this test passed against
+    // the unfixed page for that reason alone
+    push({ type: "subtitle", id: 2, source: "they pushed mid", final: true });
+
+    push({ type: "status", live: true, since: SECOND, epoch: SECOND });
+    push({ type: "subtitle", id: 1, source: "one down", final: true });
+
+    expect(lineTexts(), "a restart announced by status overwrote the old row").toEqual(["one down"]);
+  });
+
+  it("keeps the transcript when the same session greets it again", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+
+    // a viewer whose own socket dropped and came back mid-stream
+    push(live(FIRST));
+
+    expect(lineTexts(), "a reconnect inside one session threw the transcript away").toEqual([
+      "rush B",
+    ]);
+  });
+
+  it("keeps the transcript when a hello carries no numbering domain at all", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+
+    push(live());
+
+    expect(lineTexts(), "an absent epoch was read as a new session").toEqual(["rush B"]);
+  });
+
+  /**
+   * The case that decides the design, and the reason `since` cannot be the
+   * epoch however convenient it looks. An STT socket blip - a quota, an idle
+   * close, a wifi hiccup, the whole reason the reopen ladder exists - makes
+   * `session.ts` send `status live:false` and then `status live:true` from
+   * WITHIN one session. `stamp()` clears `liveSince` on the first and mints a
+   * fresh one on the second, while `segId` is never touched: the numbering
+   * carries straight on. Keying the clear on `since` would throw away a live
+   * transcript every time the speech engine reconnected, which is worse than
+   * the overwrite this whole card is about.
+   */
+  it("keeps the transcript when the speech pipeline drops and comes back", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+
+    push({ type: "status", live: false, message: "speech pipeline lost" });
+    // the session clock jumps here and the numbering domain does not, which is
+    // exactly the pair stamp() produces on a reopen: liveSince is cleared by the
+    // not-live status and re-minted by this one, while segId is never touched
+    push({ type: "status", live: true, since: SECOND, epoch: FIRST });
+    push({ type: "subtitle", id: 2, source: "they pushed mid", final: true });
+
+    expect(
+      lineTexts(),
+      "a reconnect inside one session wiped a transcript whose numbering never restarted",
+    ).toEqual(["rush B", "they pushed mid"]);
+  });
+
+  it("keeps the transcript when the stream merely stops", () => {
+    boot();
+    push(live(FIRST));
+    push({ type: "subtitle", id: 1, source: "rush B", final: true });
+
+    // a stop clears `since`, and that must not read as a restart - what was
+    // said stays on screen under an OFF AIR badge, as it always has
+    push({ type: "status", live: false, message: "stream ended" });
+
+    expect(lineTexts(), "stopping the stream wiped what had been said").toEqual(["rush B"]);
+  });
+});
