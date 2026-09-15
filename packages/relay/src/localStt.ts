@@ -83,7 +83,21 @@ export function localVadReady(modelsDir: string): boolean {
   });
 }
 
-/** the default worker location for a plain (non-bundled) relay build */
+/**
+ * Where the compiled worker sits next to this module.
+ *
+ * Nothing in this repo calls it, and that is not an oversight waiting to be
+ * corrected - which is worth saying, because it reads like one. The CLI never
+ * passes `localStt` at all (`ServerOptions.localStt`: "Absent = cloud only"),
+ * so a self-hosted relay is cloud STT by construction and has no worker to
+ * find; local models need the desktop app, which is what `createLocalSttStream`
+ * says when the path is missing. And the desktop app cannot use this, because
+ * it has to resolve a path inside its own packaging.
+ *
+ * So it is here for an embedder using this package as a library with local STT,
+ * and for the day the CLI grows that - `localSttWiring.test.ts` fails then, and
+ * this comment is what it fails into.
+ */
 export function defaultWorkerPath(): string {
   return path.join(__dirname, "localSttWorker.js");
 }
