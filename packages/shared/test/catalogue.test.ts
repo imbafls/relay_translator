@@ -132,6 +132,31 @@ describe("local models carry everything the loader needs", () => {
     expect(moving, "a file whose bytes can be replaced without the catalogue changing").toEqual([]);
   });
 
+  /**
+   * The size check in 2329673 closes truncation. It does not close substitution:
+   * a file of exactly the right length is accepted whatever is in it. The
+   * archives have had a pinned SHA-256 since 516247f, and the reason the loose
+   * files did not was that pinning content to a moving pointer is meaningless -
+   * 90b27e5 fixed the pointer, so there is no longer a reason.
+   *
+   * Required of a file WITH a url, not of every file. An archive model's `files`
+   * describe what it unpacks to; they have no url, nothing fetches them
+   * individually, and the archive carries the digest for all of them.
+   */
+  it("says what every file it fetches should hash to", () => {
+    const undigested: string[] = [];
+    for (const m of local) {
+      for (const f of m.files ?? []) {
+        if (!f.url) continue;
+        if (!/^[0-9a-f]{64}$/.test(f.sha256 ?? "")) undigested.push(`${m.id}/${f.name}`);
+      }
+    }
+    for (const f of LOCAL_VAD.files ?? []) {
+      if (f.url && !/^[0-9a-f]{64}$/.test(f.sha256 ?? "")) undigested.push(`local-vad-silero/${f.name}`);
+    }
+    expect(undigested, "a file fetched over the network with nothing saying what it should be").toEqual([]);
+  });
+
   it("pins every Hugging Face file to a full commit, not a name that can be re-pointed", () => {
     const loose: string[] = [];
     for (const m of local) {

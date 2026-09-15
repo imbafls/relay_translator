@@ -537,6 +537,16 @@ export interface SttModelFile {
   url: string;
   /** bytes, for progress */
   size: number;
+  /**
+   * sha256 of the file, for a model fetched as loose files.
+   *
+   * Optional on the type and required by the catalogue test, which is the only
+   * place the distinction can be drawn: an ARCHIVE model's `files` describe what
+   * it unpacks to, so they carry no url and there is nothing to digest - the
+   * archive itself has one. A file WITH a url is fetched over the network and
+   * must say what it should be.
+   */
+  sha256?: string;
 }
 
 /**
@@ -646,10 +656,10 @@ export const STT_MODELS: SttModelInfo[] = [
     accuracy: 2,
     note: "Live word-by-word captions for almost no CPU. Misses names and slang.",
     files: [
-      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/encoder-epoch-99-avg-1.int8.onnx`, size: 42845182 },
-      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/decoder-epoch-99-avg-1.int8.onnx`, size: 539499 },
-      { name: "joiner.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/joiner-epoch-99-avg-1.int8.onnx`, size: 259572 },
-      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/tokens.txt`, size: 5048 },
+      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/encoder-epoch-99-avg-1.int8.onnx`, size: 42845182 , sha256: "3810755ce7c3ab26b42a8bcf39d191308fa27fb0f53358823ba46141d03b7eb3" },
+      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/decoder-epoch-99-avg-1.int8.onnx`, size: 539499 , sha256: "21e2a2acd961b3ac72f55be2f10f1a285e1b0b0ba010d7c0b6eab141411b163c" },
+      { name: "joiner.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/joiner-epoch-99-avg-1.int8.onnx`, size: 259572 , sha256: "e085d73b593cf9b0707f370dbd656d58327d3fe36d80d849202ef81df02cb01e" },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/${HF_REV.zipformerEn20m}/tokens.txt`, size: 5048 , sha256: "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb" },
     ],
   },
   {
@@ -665,10 +675,10 @@ export const STT_MODELS: SttModelInfo[] = [
     accuracy: 5,
     note: "Top of the open leaderboards, and quick for its size. Auto-detects the language.",
     files: [
-      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/encoder.int8.onnx`, size: 652184281 },
-      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/decoder.int8.onnx`, size: 11845275 },
-      { name: "joiner.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/joiner.int8.onnx`, size: 6355277 },
-      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/tokens.txt`, size: 93939 },
+      { name: "encoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/encoder.int8.onnx`, size: 652184281 , sha256: "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247" },
+      { name: "decoder.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/decoder.int8.onnx`, size: 11845275 , sha256: "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e" },
+      { name: "joiner.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/joiner.int8.onnx`, size: 6355277 , sha256: "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3" },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/${HF_REV.parakeetTdt06bV3}/tokens.txt`, size: 93939 , sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
     ],
   },
   {
@@ -684,8 +694,8 @@ export const STT_MODELS: SttModelInfo[] = [
     accuracy: 4,
     note: "Fast across Chinese, Japanese, Korean, Cantonese and English.",
     files: [
-      { name: "model.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/${HF_REV.senseVoice}/model.int8.onnx`, size: 239233841 },
-      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/${HF_REV.senseVoice}/tokens.txt`, size: 315894 },
+      { name: "model.int8.onnx", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/${HF_REV.senseVoice}/model.int8.onnx`, size: 239233841 , sha256: "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51" },
+      { name: "tokens.txt", url: `${HF}/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/${HF_REV.senseVoice}/tokens.txt`, size: 315894 , sha256: "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc" },
     ],
   },
   // "local-whisper-small" lived here. sherpa-onnx aborts the process while
@@ -933,7 +943,7 @@ export const LOCAL_VAD: SttModelInfo = {
   kind: "offline",
   sizeMb: 1,
   files: [
-    { name: "silero_vad.onnx", url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx", size: 643854 },
+    { name: "silero_vad.onnx", url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx", size: 643854 , sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6" },
   ],
 };
 

@@ -326,7 +326,11 @@ export class ModelStore {
     const plan: { info: SttModelInfo; file: SttModelInfo["files"] extends (infer F)[] | undefined ? F : never }[] = [];
     // archive models are one download; `files` only says what it unpacks to
     if (!info.archive) for (const f of info.files) plan.push({ info, file: f });
-    if (info.kind === "offline") for (const f of LOCAL_VAD.files!) plan.push({ info: LOCAL_VAD, file: f });
+    // the catalogue's own entry when it carries one, so a caller that stands the
+    // VAD in for a test describes it the same way it describes every other model
+    // - including its digest, which is now checked
+    const vad = this.catalogue.find((m) => m.id === LOCAL_VAD.id) ?? LOCAL_VAD;
+    if (info.kind === "offline") for (const f of vad.files!) plan.push({ info: vad, file: f });
     const total = plan.reduce((n, p) => n + p.file.size, 0) + (info.archive?.size || 0);
     let doneBytes = 0;
     let lastTick = 0;
@@ -395,7 +399,14 @@ export class ModelStore {
               this.log("warn", `model download: ${target.id}/${file.name} lost the connection at ${pct}% - resuming from byte ${at} (${detail})`);
             },
           });
-          body.on("data", tick);
+          // hashed as it arrives rather than read back afterwards: the largest
+          // file in the catalogue is 652 MB, and the archive path upstairs
+          // already takes its digest from the stream for the same reason
+          const digest = createHash("sha256");
+          body.on("data", (chunk: Buffer) => {
+            tick(chunk);
+            digest.update(chunk);
+          });
           await pipeline(body, out);
           // A body that ends cleanly but short raises nothing for resumableBody
           // to catch - its own contract says so, and points at fetchArchive as
@@ -418,6 +429,19 @@ export class ModelStore {
             fs.rmSync(part, { force: true });
             throw new Error(
               `${target.id}/${file.name} arrived as ${got} B, the catalogue declares ${file.size} B`,
+            );
+          }
+          // The length was right; this says the bytes were too. A size check
+          // alone accepts any file of the same length, which is the whole gap
+          // the archives' pinned digest closes and this one did not - until
+          // 90b27e5 fixed the revision these are fetched from, pinning content
+          // would have meant pinning it to something allowed to move.
+          const actual = digest.digest("hex");
+          if (file.sha256 && actual !== file.sha256) {
+            fs.rmSync(part, { force: true });
+            throw new Error(
+              `${target.id}/${file.name} is not the file the catalogue describes: ` +
+                `expected SHA-256 ${file.sha256}, got ${actual}`,
             );
           }
           fs.renameSync(part, dest);

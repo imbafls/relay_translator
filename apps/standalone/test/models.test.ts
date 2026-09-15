@@ -6,6 +6,8 @@ import type { SttModelInfo } from "@callout-relay/shared";
 import * as http from "node:http";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createHash } from "node:crypto";
+import { LOCAL_VAD } from "@callout-relay/shared";
 import { ModelStore, publishRetry, resumableBody } from "../src/models";
 
 /**
@@ -463,8 +465,31 @@ describe("two models that need the same shared file", () => {
     return { hits };
   }
 
+  /**
+   * The VAD this fixture actually serves, described the way the catalogue
+   * describes a model - digest included, since the download path checks it now.
+   * The real entry names the real file's bytes, and a test cannot produce those.
+   */
+  const fakeVad = (): SttModelInfo => ({
+    ...LOCAL_VAD,
+    files: [
+      {
+        name: "silero_vad.onnx",
+        url: VAD_URL,
+        size: VAD_SIZE,
+        sha256: createHash("sha256").update(Buffer.alloc(VAD_SIZE, 7)).digest("hex"),
+      },
+    ],
+  });
+
   const twoStore = (): ModelStore =>
-    new ModelStore(dir, () => {}, (level, message) => logs.push({ level, message }), [offline("model-a"), offline("model-b")], () => 10e9);
+    new ModelStore(
+      dir,
+      () => {},
+      (level, message) => logs.push({ level, message }),
+      [offline("model-a"), offline("model-b"), fakeVad()],
+      () => 10e9,
+    );
 
   const vadFile = (): string => path.join(dir, "local-vad-silero", "silero_vad.onnx");
 
@@ -905,6 +930,9 @@ describe("a file-based model the host did not deliver in full", () => {
   const TOKENS_URL = "https://models.invalid/tokens.txt";
   const DECLARED = 4096;
   const TOKENS = 32;
+  /** what a run of `fill` bytes hashes to - the fixture describes what it serves */
+  const sha = (n: number, fill: number): string =>
+    createHash("sha256").update(Buffer.alloc(n, fill)).digest("hex");
 
   /** a streaming model with no archive, so the plan is loose files and no VAD */
   const fileModel = (): SttModelInfo =>
@@ -912,8 +940,8 @@ describe("a file-based model the host did not deliver in full", () => {
       id: "test-file-model",
       archive: undefined,
       files: [
-        { name: "model.onnx", url: MODEL_URL, size: DECLARED },
-        { name: "tokens.txt", url: TOKENS_URL, size: TOKENS },
+        { name: "model.onnx", url: MODEL_URL, size: DECLARED, sha256: sha(DECLARED, 9) },
+        { name: "tokens.txt", url: TOKENS_URL, size: TOKENS, sha256: sha(TOKENS, 9) },
       ],
     });
 
@@ -922,10 +950,10 @@ describe("a file-based model the host did not deliver in full", () => {
    * the body ends cleanly. This is the case the resume logic explicitly cannot
    * see: there is no transport error to catch, and nothing is retried.
    */
-  function serveFiles(modelBytes: number, tokenBytes = TOKENS): void {
+  function serveFiles(modelBytes: number, tokenBytes = TOKENS, fill = 9): void {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = Buffer.alloc(url === MODEL_URL ? modelBytes : tokenBytes, 9);
+      const body = Buffer.alloc(url === MODEL_URL ? modelBytes : tokenBytes, url === MODEL_URL ? fill : 9);
       const stream = new ReadableStream({
         start(c) {
           for (let at = 0; at < body.length; at += 512) {
@@ -956,6 +984,17 @@ describe("a file-based model the host did not deliver in full", () => {
 
     expect(failure(), "a short file was published without complaint").toMatch(/1024 B.*4096|4096.*1024/);
     expect(published("model.onnx"), "the truncated file was published under its final name").toBe(false);
+    expect(published("model.onnx.part"), "the refused bytes were left on disk").toBe(false);
+  });
+
+  it("refuses a file whose bytes are not the ones the catalogue describes", async () => {
+    // exactly the right length, entirely the wrong file - which is the whole
+    // gap a size check leaves open, and what the archives' pinned digest closes
+    serveFiles(DECLARED, TOKENS, 7);
+    await fileStore().download("test-file-model");
+
+    expect(failure(), "a file of the right length but the wrong content was published").toMatch(/SHA-256/i);
+    expect(published("model.onnx"), "the substituted file was published under its final name").toBe(false);
     expect(published("model.onnx.part"), "the refused bytes were left on disk").toBe(false);
   });
 
