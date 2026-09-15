@@ -20,7 +20,7 @@ import {
   UsageInfo,
 } from "@callout-relay/shared";
 import { loadState, generateToken, RelayState, saveState } from "./config";
-import { PublisherSession, SessionConfig, GeminiStats, SttStats, SessionDeps } from "./session";
+import { PublisherSession, SessionConfig, GeminiStats, SttStats, SessionDeps, willTranslate } from "./session";
 import { SAMPLE_RATE } from "./deepgram";
 import { LocalSttOptions } from "./localStt";
 
@@ -455,7 +455,9 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     // say otherwise soon enough if a fresh idle period is already running
     billingPaused = false;
     currentLanguages = { ...cfg.languages };
-    currentTranslates = cfg.translationEnabled !== false;
+    // the same rule the session runs on, from the same place: what viewers are
+    // told has to be what the session will actually do
+    currentTranslates = willTranslate(cfg, { mockGemini, geminiApiKey: opts.geminiApiKey });
     currentBrand = { brandName: cfg.brandName, brandColor: cfg.brandColor };
     const session = new PublisherSession(cfg, {
       deepgramApiKey: opts.deepgramApiKey,

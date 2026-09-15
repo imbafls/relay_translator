@@ -2224,3 +2224,86 @@ describe("fix-round-2 finding 3: a corrupted idleBillingStopMinutes must not sil
     g.session.stop();
   });
 });
+
+/**
+ * The mock translator is a test fixture, and it was reachable in production.
+ *
+ * `start()` picks it with `this.deps.mockGemini || !this.deps.geminiApiKey`, so
+ * a relay holding no Gemini key translates every line by putting the target
+ * language code in front of it - `[vi] push B` - and broadcasts that to
+ * everyone watching, as though it were a translation.
+ *
+ * The desktop app never reaches it: its hello carries
+ * `translationEnabled: translationActive()`, which is already `enabled && key`,
+ * so an app with no key asks for no translation. The relay shipped as its own
+ * binary has no such gate in front of it. `packages/relay/sea/vps.env.example`
+ * ships `GEMINI_API_KEY=` empty, and the app pointed at such a relay is the one
+ * holding the key - it publishes audio and the RELAY translates. Nothing on the
+ * streamer's screen shows what went out, because the app renders the stage from
+ * its own config rather than from what viewers were sent.
+ *
+ * So a missing key means no translation, and only `mockGemini` - which nothing
+ * sets by accident - or an injected translator can produce one.
+ */
+describe("a relay with no Gemini key", () => {
+  function unkeyed(over: Record<string, unknown> = {}) {
+    const viewers: ServerToViewer[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        mockStt: true,
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        log: () => {},
+        ...over,
+      },
+    );
+    return { session, viewers };
+  }
+
+  it("does not invent a translation for the audience", async () => {
+    const { session, viewers } = unkeyed();
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    await tick(120);
+
+    const invented = translated(viewers).map((m) => m.target);
+    expect(
+      invented,
+      "a relay with no key put the language code in front of the English and sent it out as the translation",
+    ).toEqual([]);
+    session.stop();
+  });
+
+  it("still says so to anything that asks what it will do", () => {
+    const { session } = unkeyed();
+    session.start();
+    expect(
+      session.translates,
+      "the session says it translates, so viewers are told to expect a column that will never fill",
+    ).toBe(false);
+    session.stop();
+  });
+
+  it("translates when the mock is asked for by name", async () => {
+    // the fixture has to keep working where it is meant to: the smoke test and
+    // several tests here run a whole relay on it
+    const { session, viewers } = unkeyed({ mockGemini: true });
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    await tick(120);
+
+    expect(translated(viewers).length, "mockGemini no longer produces a translation").toBeGreaterThan(0);
+    session.stop();
+  });
+});

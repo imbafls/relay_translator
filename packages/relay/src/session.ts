@@ -171,6 +171,33 @@ export interface SttStats {
   localSeconds: number;
 }
 
+/**
+ * Whether this session will actually produce a translation.
+ *
+ * Wanting one is not enough - there has to be something to translate WITH. The
+ * mock translator is a fixture: reachable when it is asked for by name, and
+ * never as a fallback for a key that is missing. It used to be the fallback,
+ * and it puts the target language code in front of the English (`[vi] push B`),
+ * so a relay with no key broadcast that to everyone watching as though it were
+ * a translation.
+ *
+ * The desktop app never reached it - its hello carries
+ * `translationEnabled: translationActive()`, which is already `enabled && key`.
+ * The relay shipped as its own binary has no such gate in front of it, and
+ * `sea/vps.env.example` ships `GEMINI_API_KEY=` empty.
+ *
+ * Exported because `server.ts` has to tell viewers the same thing in the hello.
+ * Two copies of this rule is how the stage and the audience come to disagree
+ * about what is on screen.
+ */
+export function willTranslate(
+  cfg: { translationEnabled?: boolean },
+  deps: { translator?: Translator; mockGemini?: boolean; geminiApiKey?: string },
+): boolean {
+  if (cfg.translationEnabled === false) return false;
+  return !!deps.translator || deps.mockGemini === true || !!deps.geminiApiKey;
+}
+
 export interface SessionDeps {
   deepgramApiKey?: string;
   geminiApiKey?: string;
@@ -477,14 +504,14 @@ export class PublisherSession {
 
   start(): void {
     const { source, target } = this.cfg.languages;
-    const translates = this.cfg.translationEnabled !== false;
+    const translates = willTranslate(this.cfg, this.deps);
     this.translates = translates;
 
     this.translator = !translates
       ? null
       : this.deps.translator
         ? this.deps.translator
-        : this.deps.mockGemini || !this.deps.geminiApiKey
+        : this.deps.mockGemini
         ? createMockTranslator(target)
         : createGeminiTranslator({
             apiKey: this.deps.geminiApiKey!,
