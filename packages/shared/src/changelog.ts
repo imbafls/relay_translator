@@ -28,6 +28,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.8.1",
+    date: "2026-09-15",
+    headline: "Silence stops talking, and a bad download tries again",
+    changes: [
+      {
+        kind: "fixed",
+        text: "Silence no longer invents callouts. A quiet channel finishes an empty line every couple of seconds - that is how a viewer's caption row knows to clear itself - and those empty lines were still being sent off to be translated, which could answer with a callout nobody had said and then repeat it for every silence after that. The empty line still goes out, so captions still clear on time, but nothing is translated unless somebody actually said something.",
+      },
+      {
+        kind: "fixed",
+        text: "A saved session now holds what was said, and nothing else. Those same empty lines were being written to the file as well: one real 94-minute session came out with 3,105 records that had no words in them against 657 that did. A line with no words is now left out before anything is written, so a saved session reads as a transcript instead of as a record of the silence between callouts.",
+      },
+      {
+        kind: "fixed",
+        text: "The small arrow is back on every dropdown. All of them lost it in the packaged app - the microphone picker, the language lists, the speech model - because the app's own security rules refused to load the image the arrow was drawn from, and refused it silently: no error, nothing on screen, just menus that looked flat. The arrow is now drawn rather than loaded, so it is there again wherever it used to be.",
+      },
+      {
+        kind: "fixed",
+        text: "A model download that arrives damaged now tries again instead of giving up. Each attempt gets a clean folder of its own, so a half-finished download left behind by an earlier try can no longer stop the next one before it even starts - which is what left an empty folder and no model on the machines where this kept failing. Every download is also checked against the exact fingerprint of the file it is supposed to be, so an archive that arrives altered or incomplete is fetched again rather than unpacked into a model you would have to notice was wrong later.",
+      },
+    ],
+  },
+  {
     version: "0.8.0",
     date: "2026-09-10",
     headline: "Every session is kept on your PC, whatever happens to it",
