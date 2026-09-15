@@ -3427,8 +3427,8 @@ iteration, a guard test watched failing before every fix, the full six-step gate
 before every commit, and no push, tag, release or deploy under any
 circumstances. It held to all of them. Twenty-nine commits, none pushed.
 
-**What it did.** The suite went from 1,051 tests to 1,206. The work fell into
-four groups. Correctness that the compiler could be made to find: six free
+**What it did, by `3d4fb6e`.** The suite went from 1,051 tests to 1,206. The
+work fell into four groups. Correctness that the compiler could be made to find: six free
 `tsc` rules turned on and the five things they reported fixed, then
 `noUncheckedIndexedAccess` across every shipping project - 56 sites, three of
 them a real `undefined` that could escape, including a mock publishing
@@ -3516,6 +3516,49 @@ was for and what does that job now**. For `sync`, something else does it. For
 the cost of treating it as an answer was four iterations and a class of failure
 that leaves a reader staring at a caption that will never update, under a HUD
 saying everything is fine.
+
+**What it did after that, which is about half of it.** The account above stops
+where it was written, and the run carried on for roughly as long again. Three
+real defects came out of it, and all three were found the same way - by asking
+where else an argument already made happens to apply.
+
+- **A phone could not tell a dead relay from a quiet one.** `server.ts` had long
+  since learned that a TCP connection whose peer vanished without a FIN stays
+  OPEN indefinitely, and terminated such sockets. The uplink client had the same
+  gap and got the same fix. That left a third socket, the viewer's - the only
+  one that actually lives on mobile data behind a carrier NAT - with no way to
+  notice, *and both of its recovery paths written in terms of a socket that
+  knows it is shut*: the retry is armed by `onclose`, which never fires, and the
+  wake-up path wants `readyState > OPEN`, which never becomes true. `ping` had
+  been in `ViewerToServer` and answered by both relays the whole time. The page
+  had simply never asked.
+- **One viewer reported, nothing watching.** The hosted README had carried that
+  as unexplained since the service went up. A socket that died without a FIN
+  accounts for every detail of it, including why a freshly claimed room read
+  zero - and it was only fixable once viewers began beating, because detecting
+  it any other way meant an alarm, and an alarm on an object billed per request
+  is the thing that design exists to avoid.
+- **Six element ids nothing was checking.** `check-renderer-ids.mjs` named one
+  script per page while the renderer had quietly become five modules, so
+  `#wnHeadline` and five others were unguarded. Dropping one in a re-layout
+  would have taken the what's-new panel out silently while the gate printed
+  "all renderer element ids resolve".
+
+The rest of that stretch closed holes rather than fixing bugs, mostly along one
+seam: **a name crossing a boundary that cannot be imported across.** Ids from
+scripts and from stylesheets, the custom properties `applyStyle()` writes,
+the `data-*` values a rule waits for, the thirty IPC channels between the
+preload bridge and the main process, the environment variables four documents
+tell a self-hoster to set, and the Worker's bindings against `wrangler.toml`.
+Only the first of those found something already broken. The others were
+written because the failure is invisible by construction - happy-dom does not
+apply stylesheets, `Env` is hand-declared so tsc agrees with whatever is asked
+for, and an unread environment variable is simply ignored.
+
+Two things worth saying plainly about that stretch. The environment-variable one
+had already failed here once, which is why `85706ca` exists. And every one of
+those guards was watched failing against the real files rather than a fixture
+invented to suit it - which is how the id-checker gap surfaced at all.
 
 **What it did not do.** Four cards sat in To Do and In Progress the whole run
 and are still there: the textrelay DNS cutover, code signing, audit finding 17,

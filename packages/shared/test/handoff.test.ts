@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { updateFeedAction, validTranscriptDir } from "../src/index";
@@ -506,6 +507,40 @@ describe("the pointer from CLAUDE.md into the iteration log", () => {
     expect(
       missing,
       `CLAUDE.md lists these and ITERATION_LOG.md does not carry them:\n${missing.join("\n")}`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * The board this run works from is not in the repo, and says so in print.
+ *
+ * `ITERATION_LOG.md` explains that the kanban board lives at
+ * `~/.claude/project-tracking/relay/board.js`, is deliberately not committed,
+ * and that the section around it is therefore the only account of the run that
+ * ships with the code. `docs/RALPH-IMPROVEMENT-LOOP.md` states the rule
+ * directly: never git-commit anything under `~/.claude/project-tracking`.
+ *
+ * Nothing checked it. The board is a working file full of half-formed notes
+ * and unfinished reasoning that nobody outside this machine should inherit,
+ * and it sits one `git add` away from the tree every time somebody copies it in
+ * to look at it. If it were ever committed the claim above would be false and
+ * the rule broken in the same move - which is exactly the pair this file exists
+ * to catch.
+ */
+describe("the tracking board", () => {
+  const tracked = (): string[] =>
+    execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
+
+  it("lists files at all, so the check below is not vacuous", () => {
+    expect(tracked().length, "git ls-files returned nothing, so nothing was actually checked").toBeGreaterThan(50);
+  });
+
+  it("is not in the repo, which is what the log says about it", () => {
+    const vendored = tracked().filter((f) => /project-tracking|(^|\/)board\.js$/i.test(f));
+    expect(
+      vendored,
+      "the loop's board has been committed. docs/RALPH-IMPROVEMENT-LOOP.md says never to, ITERATION_LOG.md " +
+        "tells a reader it is not, and it carries working notes that were never written to be shipped",
     ).toEqual([]);
   });
 });
