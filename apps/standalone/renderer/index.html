@@ -21,8 +21,8 @@
         <span data-step="3">3 READY</span>
       </div>
     </div>
-    <div id="status" class="status" data-state="standby">
-      <span class="status-dot"></span>
+    <div id="status" class="status" data-state="standby" role="status">
+      <span class="status-dot" aria-hidden="true"></span>
       <span id="statusText">STANDBY</span>
     </div>
   </header>
@@ -40,7 +40,7 @@
       </div>
       <div id="idleTitle" class="idle-title">Nothing on air</div>
       <div id="idleChain" class="idle-chain mono"></div>
-      <div id="idleError" class="idle-error mono" hidden></div>
+      <div id="idleError" class="idle-error mono" role="alert" hidden></div>
     </div>
   </section>
 
