@@ -332,8 +332,14 @@ export class ModelStore {
     // the catalogue's own entry when it carries one, so a caller that stands the
     // VAD in for a test describes it the same way it describes every other model
     // - including its digest, which is now checked
-    const vad = this.catalogue.find((m) => m.id === LOCAL_VAD.id) ?? LOCAL_VAD;
-    if (info.kind === "offline") for (const f of vad.files!) plan.push({ info: vad, file: f });
+    // An injected catalogue may describe the VAD itself, and one that describes
+    // it WITHOUT files cannot describe a download - planning zero files there
+    // would leave `localVadReady` false for ever with nothing to explain it. The
+    // shipped entry stands in for that case. The `!` this replaces hid it: the
+    // possibility is real here, because the catalogue is injectable.
+    const listed = this.catalogue.find((m) => m.id === LOCAL_VAD.id);
+    const vad = listed?.files?.length ? { ...listed, files: listed.files } : LOCAL_VAD;
+    if (info.kind === "offline") for (const f of vad.files) plan.push({ info: vad, file: f });
     const total = plan.reduce((n, p) => n + p.file.size, 0) + (info.archive?.size || 0);
     let doneBytes = 0;
     let lastTick = 0;

@@ -939,7 +939,16 @@ export function recommendTier(threads: number, ramGb: number): ModelTier {
 }
 
 /** silero VAD - segments speech for every offline local model */
-export const LOCAL_VAD: SttModelInfo = {
+/**
+ * The shared voice detector every local model needs.
+ *
+ * Typed with `files` REQUIRED rather than the optional one `SttModelInfo`
+ * declares. It is a literal with a file in it and always has been, and while
+ * the type merely allowed a list, four call sites coped with its absence in
+ * three different ways - two `!` assertions, one thrown error, one `?? []`.
+ * Saying what is true is cheaper than defending against what is not.
+ */
+export const LOCAL_VAD: SttModelInfo & { files: SttModelFile[] } = {
   id: "local-vad-silero",
   label: "Silero VAD",
   provider: "local",

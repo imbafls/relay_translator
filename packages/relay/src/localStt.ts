@@ -73,7 +73,7 @@ export function localModelReady(modelsDir: string, id: string): boolean {
  * so the two move together.
  */
 export function localVadReady(modelsDir: string): boolean {
-  return LOCAL_VAD.files!.every((f) => {
+  return LOCAL_VAD.files.every((f) => {
     const at = path.join(modelsDir, LOCAL_VAD.id, f.name);
     try {
       return fs.statSync(at).size === f.size;
