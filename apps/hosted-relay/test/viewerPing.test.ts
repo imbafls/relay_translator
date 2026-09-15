@@ -142,3 +142,56 @@ describe("the README's note on what a heartbeat costs", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The bytes agree. The schedule was nobody's job.
+ *
+ * Two numbers decide between them whether a viewer that is fine gets thrown
+ * off, and they sit in files that cannot import each other - `PING_MS` and
+ * `PING_MISSES` in the viewer page, `VIEWER_SILENT_MS` in this Worker. The
+ * same shape as the three sizes in `feedbackSizes.test.ts`: numbers in
+ * different packages that have to stay in an order, with nothing connecting
+ * them.
+ *
+ * The order, and the reason it is that way round: **the relay must not decide
+ * a viewer is gone before the viewer itself would have.** The page gives up
+ * after `PING_MISSES` unanswered beats and reconnects on its own, which is a
+ * blink. If the relay reaps first, a reader on a slow link is closed while
+ * they still believe they are connected, and told `4408 no heartbeat` - which
+ * is not what happened, because they were beating.
+ *
+ * So the reap window has to clear the viewer's own give-up point with a whole
+ * beat to spare. Raise the interval to save a phone's battery and this is the
+ * check that says the far end has to move too.
+ */
+describe("the timing the two sides have to agree on", () => {
+  const room = fs.readFileSync(path.join(root, "apps", "hosted-relay", "src", "room.ts"), "utf8");
+
+  /** a `const NAME = <number>;` with `_` separators allowed, as written */
+  function num(src: string, name: string): number | undefined {
+    const m = new RegExp(`const ${name} = (\\d[\\d_]*)`).exec(src);
+    return m ? Number(m[1].replace(/_/g, "")) : undefined;
+  }
+
+  const pingMs = num(viewerJs, "PING_MS");
+  const misses = num(viewerJs, "PING_MISSES");
+  const silentMs = num(room, "VIEWER_SILENT_MS");
+
+  it("still has all three numbers to compare", () => {
+    // a rename is a question rather than a failure: somebody has to say what
+    // the new name is, because the check below cannot ask
+    expect(pingMs, "PING_MS is not declared in the viewer page any more").toBeDefined();
+    expect(misses, "PING_MISSES is not declared in the viewer page any more").toBeDefined();
+    expect(silentMs, "VIEWER_SILENT_MS is not declared in room.ts any more").toBeDefined();
+  });
+
+  it("gives up on a viewer only after the viewer would have given up on it", () => {
+    const viewerGivesUp = pingMs! * misses!;
+    expect(
+      silentMs,
+      `the viewer beats every ${pingMs}ms and stops after ${misses} unanswered (${viewerGivesUp}ms), and this ` +
+        `relay reaps at ${silentMs}ms. Reaping first closes a reader who is beating fine on a slow link and ` +
+        "tells them there was no heartbeat",
+    ).toBeGreaterThanOrEqual(viewerGivesUp + pingMs!);
+  });
+});
