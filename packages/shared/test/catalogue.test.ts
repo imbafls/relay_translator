@@ -102,6 +102,48 @@ describe("local models carry everything the loader needs", () => {
     }
   });
 
+  /**
+   * Where a model's bytes come from, and whether that place can change under us.
+   *
+   * Every archive model, and the shared VAD, fetch a GitHub release asset, which
+   * is immutable - which is what made pinning their SHA-256 safe in 516247f. The
+   * loose-file models fetched `huggingface.co/<repo>/resolve/main/<file>`, and
+   * `main` is a branch: whatever it points at today is not a promise about
+   * tomorrow. Since 03a3308 that matters more than it did, because readiness now
+   * holds those files to the exact size the catalogue declares - so an upstream
+   * re-upload would make an installed model read as damaged AND make the
+   * re-download fail the write-side check, with no way out but deleting it.
+   *
+   * Verified before pinning, against all ten files: the revision-pinned URL and
+   * the branch URL serve identical bytes, by ETag, and every size matches the
+   * catalogue exactly.
+   */
+  it("fetches no model file from a branch that can move under it", () => {
+    const moving: string[] = [];
+    for (const m of local) {
+      for (const f of m.files ?? []) {
+        if (!f.url) continue;
+        if (/\/resolve\/(main|master)\//.test(f.url)) moving.push(`${m.id}/${f.name}`);
+      }
+    }
+    for (const f of LOCAL_VAD.files ?? []) {
+      if (/\/resolve\/(main|master)\//.test(f.url)) moving.push(`local-vad-silero/${f.name}`);
+    }
+    expect(moving, "a file whose bytes can be replaced without the catalogue changing").toEqual([]);
+  });
+
+  it("pins every Hugging Face file to a full commit, not a name that can be re-pointed", () => {
+    const loose: string[] = [];
+    for (const m of local) {
+      for (const f of m.files ?? []) {
+        if (!f.url || !f.url.includes("huggingface.co")) continue;
+        const rev = /\/resolve\/([^/]+)\//.exec(f.url)?.[1] ?? "";
+        if (!/^[0-9a-f]{40}$/.test(rev)) loose.push(`${m.id}/${f.name} -> ${rev}`);
+      }
+    }
+    expect(loose, "a revision that is not a 40-character commit can be moved to point elsewhere").toEqual([]);
+  });
+
   it("gives every declared file a url or an archive to come out of", () => {
     for (const m of local) {
       for (const f of m.files ?? []) {
