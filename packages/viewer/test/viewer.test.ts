@@ -1261,3 +1261,71 @@ describe("a relay that stops answering", () => {
     expect(opened.length, "it reconnected underneath a relay that was working perfectly").toBe(1);
   });
 });
+
+/**
+ * How many lines the page keeps is a setting - three to fifteen - and nothing
+ * here covered it.
+ *
+ * The part worth pinning is not the number but what the number counts. An open
+ * interim is the line being spoken right now, one per capture channel, and it
+ * must not be charged against the history budget: three people talking at once
+ * on a phone set to three lines would otherwise push the entire transcript off
+ * the screen to make room for three half-captions. `trimRows` gets this right
+ * by selecting `.row:not(.interim)`, and the desktop's copy says so in a
+ * comment; on this page it was only ever behaviour.
+ *
+ * It also must not be removed BY the budget. An interim that vanished
+ * underneath a live utterance would take the blinking cursor with it and the
+ * finished line would then arrive with nothing to replace.
+ */
+describe("how many lines the page keeps", () => {
+  const finals = (): number => document.querySelectorAll("#lines .row:not(.interim)").length;
+  const interims = (): number => document.querySelectorAll("#lines .row.interim").length;
+
+  const speak = (from: number, to: number): void => {
+    for (let id = from; id <= to; id += 1) {
+      push({ type: "subtitle", id, source: `line ${id}`, final: true, channel: 0 });
+    }
+  };
+
+  beforeEach(() => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+  });
+
+  it("keeps the last few and drops the rest", () => {
+    speak(1, 20);
+    expect(finals(), "the history is not being trimmed at all").toBeLessThan(20);
+    expect(lineTexts().at(-1), "the newest line was trimmed instead of the oldest").toBe("line 20");
+    expect(lineTexts().includes("line 1"), "the oldest line survived twenty newer ones").toBe(false);
+  });
+
+  it("does not charge an open interim against that budget", () => {
+    // the number the page is set to, read off the panel rather than restated
+    const kept = Number($("linesVal").textContent);
+    expect(kept, "the page does not say how many lines it keeps").toBeGreaterThan(2);
+
+    // two other channels start talking and neither finishes, THEN the history
+    // fills up - so every trim runs with those interims on the page
+    push({ type: "partial", id: 101, source: "half a", channel: 1 });
+    push({ type: "partial", id: 102, source: "half b", channel: 2 });
+    speak(1, 20);
+
+    expect(interims(), "the two open interims are not on the page").toBe(2);
+    expect(
+      finals(),
+      "two people starting to speak cost the reader finished lines, which is the whole reason " +
+        "trimRows selects .row:not(.interim)",
+    ).toBe(kept);
+  });
+
+  it("does not let the budget remove an interim either", () => {
+    push({ type: "partial", id: 101, source: "half a", channel: 1 });
+    speak(1, 20);
+
+    expect(
+      interims(),
+      "the line being spoken was trimmed away as history, so the cursor goes with it and the " +
+        "final that follows has nothing to replace",
+    ).toBe(1);
+  });
+});

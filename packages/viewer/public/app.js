@@ -381,13 +381,26 @@
     el.appendChild(t);
   }
 
+  /**
+   * The history budget, and only the history: the selector excludes the open
+   * interims deliberately. One per capture channel is the line being spoken
+   * right now, and charging three of those against a page set to three lines
+   * would push the whole transcript off the screen to make room for three half
+   * captions.
+   *
+   * Nothing here needs to clean up `interims`, and a line that tried to used to
+   * sit in this loop. It could never run: an element enters `interims` with the
+   * `interim` class and nothing ever takes that class off again - a finished
+   * line is a NEW element, built after the interim it replaces has been removed
+   * - so no element this loop can reach is ever in that map. Removing it leaves
+   * the desktop's copy of this function and this one saying the same thing.
+   */
   function trimRows() {
     const finals = [...linesEl.querySelectorAll(".row:not(.interim)")];
     while (finals.length > style.lines) {
       const el = finals.shift();
       if (!el) break;
       for (const [id, r] of rows) if (r === el) rows.delete(id);
-      for (const [ch, r] of interims) if (r === el) interims.delete(ch);
       el.remove();
     }
   }
