@@ -1026,7 +1026,7 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     state.viewerToken = generateToken();
     saveState(dataDir, state);
     // the old link dies with the old token
-    for (const [token, ws] of [...viewers.entries()]) {
+    for (const token of [...viewers.keys()]) {
       if (token !== state.viewerToken) {
         kickViewer(token, "link was rotated");
       }

@@ -831,7 +831,9 @@ describe("a download that survives the connection dropping", () => {
     const payload = Buffer.alloc(180_000, 0);
     for (let i = 0; i < payload.length; i += 1) payload[i] = i % 251;
     let dropped = false;
-    server = http.createServer((req, res) => {
+    server = http.createServer((_req, res) => {
+      // ignoring the request is the point: this origin answers 200 with the
+      // whole file however you ask it
       res.writeHead(200, { "Content-Length": String(payload.length) });
       if (!dropped) {
         dropped = true;

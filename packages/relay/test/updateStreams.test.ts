@@ -43,7 +43,6 @@ afterEach(async () => {
 });
 
 const url = (): string => `http://127.0.0.1:${relay.port}/updates/${NAME}`;
-const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** start a download, read one chunk, then walk away */
 async function abortPartway(headers?: Record<string, string>): Promise<void> {

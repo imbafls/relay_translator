@@ -161,7 +161,9 @@ const CLOSE_REPLACED = 4409;
 export class Room {
   constructor(
     private readonly ctx: DurableObjectState,
-    private readonly env: unknown,
+    // the runtime passes the bindings positionally; this room reaches for
+    // nothing in them, and holding a field nobody reads only invites one
+    _env: unknown,
   ) {}
 
   // ---------------------------------------------------------------- lifecycle

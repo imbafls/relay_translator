@@ -39,7 +39,7 @@ import {
   maskViewerLink,
   redactLog,
 } from "@callout-relay/shared";
-import type { ChangelogEntry, Transcript, TranscriptSummary } from "@callout-relay/shared";
+import type { Transcript, TranscriptSummary } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
 declare global {
