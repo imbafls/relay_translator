@@ -5,6 +5,8 @@
  * All state lives here; the main process owns config, the local relay and the uplink.
  */
 import { BrowserAudioCapture, captureErrorText, RelayPublisherClient, rmsLevel } from "@callout-relay/companion";
+import { $, inp, sel } from "./dom";
+import { log, logSubtitle, wordless } from "./log";
 import {
   AppConfig,
   AudioDeviceInfo,
@@ -43,10 +45,6 @@ declare global {
     cr: RendererBridge;
   }
 }
-
-const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
-const inp = (id: string): HTMLInputElement => $(id);
-const sel = (id: string): HTMLSelectElement => $(id);
 
 const cr = window.cr;
 const capture = new BrowserAudioCapture();
@@ -280,58 +278,6 @@ function debounce<T extends (...a: never[]) => void>(fn: T, ms: number): T {
     if (t) clearTimeout(t);
     t = setTimeout(() => fn(...args), ms);
   }) as T;
-}
-
-// ---------------------------------------------------------------------------
-// log (LOG view)
-// ---------------------------------------------------------------------------
-
-let logLines = 0;
-function log(message: string, cls: "" | "err" | "ok" = ""): void {
-  const el = document.createElement("div");
-  if (cls) el.className = cls;
-  el.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-  appendLog(el);
-}
-/**
- * A final the engine sent to say that utterance came to nothing.
- *
- * Deepgram emits one every couple of seconds on a silent channel, and does so
- * deliberately - dispatchDeepgramMessage (packages/relay/src/deepgram.ts)
- * stopped swallowing them precisely because the session reserves a segment id
- * for a channel's interim and only releases it on a final. They are a control
- * message, not a caption, and every other consumer already says so: onPartial
- * below, the viewer page, the translator (packages/relay/src/session.ts) and
- * the saved-transcript writer (../src/transcripts.ts) all check before acting.
- * One measured 94-minute session carried 3,105 of these against 657 real lines.
- */
-function wordless(seg: { source: string; target?: string }): boolean {
-  return !seg.source.trim() && !seg.target?.trim();
-}
-
-function logSubtitle(seg: { source: string; target?: string; speaker?: string; latency?: { stt?: number; translate?: number } }): void {
-  // nothing was said, so there is nothing to log - and the box holds 400 lines,
-  // so logging them anyway costs the real ones their place
-  if (wordless(seg)) return;
-  const t = new Date().toLocaleTimeString();
-  const en = document.createElement("div");
-  en.className = "sub-en";
-  en.textContent = `[${t}] ▸ ${seg.speaker ? `${seg.speaker}: ` : ""}${seg.source}${seg.latency?.stt != null ? `  [stt ${seg.latency.stt}ms]` : ""}`;
-  appendLog(en);
-  if (seg.target != null) {
-    const vi = document.createElement("div");
-    vi.className = "sub-vi";
-    vi.textContent = `    ${seg.target}${seg.latency?.translate != null ? `  [+${seg.latency.translate}ms]` : ""}`;
-    appendLog(vi);
-  }
-}
-function appendLog(el: HTMLElement): void {
-  const box = $("log");
-  box.appendChild(el);
-  logLines += 1;
-  while (box.children.length > 400) box.firstChild?.remove();
-  box.scrollTop = box.scrollHeight;
-  $("logCount").textContent = `${box.children.length} LINES`;
 }
 
 // ---------------------------------------------------------------------------

@@ -2641,3 +2641,81 @@ describe("a long session on the caption stage", () => {
     ).toBeLessThan(5);
   });
 });
+
+/**
+ * The LOG view's own contract, characterised before it is moved out of app.ts.
+ *
+ * Several tests already read `#log` to check that something was written to it,
+ * but nothing asserted what the box itself promises: that it holds at 400 lines
+ * however long a session runs, that it drops the oldest rather than the newest,
+ * and that the counter beside it says how many it is holding. That is the
+ * behaviour a reader relies on when they open LOG to find out what went wrong,
+ * and it was the untested part of the seam this move relocates.
+ */
+describe("the LOG box while a session fills it", () => {
+  type Seg = { id: number; source: string; target?: string; channel?: number; speaker?: string };
+  let hooks: { onSubtitle?: (seg: Seg) => void; onPartial?: (seg: Seg) => void };
+
+  /** appendLog's cap */
+  const CAP = 400;
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: typeof hooks & { onState?: (s: string) => void };
+    }) {
+      hooks = this.hooks;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+
+  const box = (): HTMLElement => document.getElementById("log") as HTMLElement;
+  const counter = (): string => (document.getElementById("logCount") as HTMLElement).textContent ?? "";
+
+  /** one finished line and its translation: three log lines between them */
+  const say = (id: number, what: string): void => {
+    hooks.onSubtitle!({ id, source: what, channel: 0 });
+    hooks.onSubtitle!({ id, source: what, target: `vi ${id}`, channel: 0 });
+  };
+
+  it("holds at four hundred lines and drops the oldest, not the newest", async () => {
+    await goLive();
+    say(1, "the first thing anyone said");
+    for (let id = 2; id <= 400; id++) say(id, `line ${id}`);
+
+    expect(box().children.length, "the box grew past the cap it promises").toBe(CAP);
+    expect(box().textContent, "the oldest line survived while newer ones were dropped").not.toContain(
+      "the first thing anyone said",
+    );
+    expect(box().textContent, "the newest line is not in the box").toContain("line 400");
+  });
+
+  it("says how many lines it is holding", async () => {
+    await goLive();
+    say(1, "one");
+
+    expect(counter(), "the counter does not report what the box holds").toBe(
+      `${box().children.length} LINES`,
+    );
+
+    for (let id = 2; id <= 400; id++) say(id, `line ${id}`);
+    expect(counter(), "the counter kept climbing past the cap the box holds at").toBe(`${CAP} LINES`);
+  });
+});
