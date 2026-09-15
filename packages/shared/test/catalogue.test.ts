@@ -134,6 +134,15 @@ describe("archive models", () => {
       expect(m.archive!.size).toBeGreaterThan(0);
     },
   );
+
+  it.each(archived.map((m) => [m.id, m] as const))(
+    "%s pins the compressed archive by SHA-256",
+    (_id, m) => {
+      // Reflect keeps this runtime guard red before sha256 becomes a required
+      // catalogue field, rather than turning the watched failure into a type error.
+      expect(Reflect.get(m.archive!, "sha256"), `${m.id} has no pinned archive digest`).toMatch(/^[0-9a-f]{64}$/);
+    },
+  );
 });
 
 describe("defaults resolve", () => {

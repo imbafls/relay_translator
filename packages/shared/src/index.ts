@@ -560,6 +560,14 @@ export interface SttModelArchive {
   url: string;
   /** compressed bytes, for progress */
   size: number;
+  /**
+   * SHA-256 of the compressed archive. Pinned from the release's own
+   * checksum.txt, or the asset digest GitHub reports for uploads that
+   * postdate it. Hashed while the bytes stream through the decoder, so an
+   * archive altered in transit fails the download instead of unpacking into
+   * a model.
+   */
+  sha256: string;
   pick: Record<string, string>;
 }
 
@@ -681,6 +689,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2`,
       size: 107600538,
+      sha256: "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2",
       pick: {
         "preprocess.onnx": "preprocess.onnx",
         "encode.int8.onnx": "encode.int8.onnx",
@@ -712,6 +721,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-whisper-tiny.en.tar.bz2`,
       size: 118071777,
+      sha256: "2bd6cf965c8bb3e068ef9fa2191387ee63a9dfa2a4e37582a8109641c20005dd",
       pick: {
         "encoder.int8.onnx": "tiny.en-encoder.int8.onnx",
         "decoder.int8.onnx": "tiny.en-decoder.int8.onnx",
@@ -739,6 +749,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2`,
       size: 310414022,
+      sha256: "639e25b578e9e997131402199419c13a941f8e4e198e2da1ce57dbf5cf401282",
       pick: {
         "encoder.int8.onnx": "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
         "decoder.int8.onnx": "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
@@ -768,6 +779,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-moonshine-base-en-int8.tar.bz2`,
       size: 250807309,
+      sha256: "21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e",
       pick: {
         "preprocess.onnx": "preprocess.onnx",
         "encode.int8.onnx": "encode.int8.onnx",
@@ -799,6 +811,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2`,
       size: 482468385,
+      sha256: "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
       pick: {
         "encoder.int8.onnx": "encoder.int8.onnx",
         "decoder.int8.onnx": "decoder.int8.onnx",
@@ -828,6 +841,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2`,
       size: 475271763,
+      sha256: "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a",
       pick: {
         "encoder.int8.onnx": "encoder.int8.onnx",
         "decoder.int8.onnx": "decoder.int8.onnx",
@@ -858,6 +872,7 @@ export const STT_MODELS: SttModelInfo[] = [
     archive: {
       url: `${GH_MODELS}/sherpa-onnx-whisper-turbo.tar.bz2`,
       size: 563790207,
+      sha256: "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22",
       pick: {
         "encoder.int8.onnx": "turbo-encoder.int8.onnx",
         "decoder.int8.onnx": "turbo-decoder.int8.onnx",

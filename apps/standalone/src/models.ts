@@ -7,6 +7,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "crypto";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import * as tar from "tar";
@@ -20,6 +21,17 @@ import { localModelReady } from "@callout-relay/relay";
  * mean the operation was wrong, only that it was early.
  */
 const LOCKED = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]);
+
+/**
+ * Fresh attempts an archive download gets before it is called failed.
+ *
+ * Bytes can be mangled in transit, and a bz2 stream that fails to decode is
+ * not the only shape of corruption: the pinned SHA-256 catches the rest.
+ * Retrying is only safe because every attempt gets a staging folder of its
+ * own - on Windows a scanner can hold a failed attempt's files, and its
+ * folder then cannot be removed, so reusing it would fail the retry too.
+ */
+const ARCHIVE_ATTEMPTS = 3;
 
 /**
  * Remove a folder, waiting out the same locks a publish waits out.
@@ -249,6 +261,8 @@ export class ModelStore {
     private readonly catalogue: SttModelInfo[] = STT_MODELS,
     /** free space at a path, or -1 when it cannot be determined */
     private readonly freeBytes: (dir: string) => number = defaultFreeBytes,
+    /** narrow test seam for the Windows scanner-lock result of archive cleanup */
+    private readonly removeArchiveDir: (dir: string) => void = rmDir,
   ) {}
 
   /** same rule the relay applies before it starts a local session */
@@ -386,7 +400,7 @@ export class ModelStore {
       if (unpacked) stale.push(path.join(this.dir, id));
       for (const folder of stale) {
         try {
-          rmDir(folder);
+          this.removeArchiveDir(folder);
         } catch (rmErr) {
           this.log("warn", `could not clean up ${folder}: ${String((rmErr as Error).message || rmErr)}`);
         }
@@ -402,19 +416,67 @@ export class ModelStore {
    * each to the plain name the worker looks for. The archive itself never
    * touches disk.
    *
-   * Everything lands in `<dir>/<id>.part/` first. `localModelReady()` decides
+   * Everything lands in a staging folder first. `localModelReady()` decides
    * by filename alone, so extracting straight into `<dir>/<id>/` would report
    * the model ready the moment tar opened the last file - before its bytes
    * were written - and a crash mid-extract would leave that half-written file
    * looking installed for good. The staging folder is published with a single
    * directory rename once every entry is present and non-empty.
+   *
+   * A failed attempt is retried in a staging folder of its own, never the one
+   * it failed in: on Windows a scanner holding the failed attempt's files
+   * keeps that folder from being removed, and a leftover held by an earlier
+   * run must not stop the download before it starts.
    */
   private async fetchArchive(info: SttModelInfo, signal: AbortSignal, tick: (chunk: Buffer) => void): Promise<void> {
+    const folder = path.join(this.dir, info.id);
+    let lastErr: unknown = new Error(`the archive for ${info.id} could not be fetched`);
+    // folders are numbered rather than reused: `.part` first, `.part-2` next
+    let named = 0;
+    for (let attempt = 1; attempt <= ARCHIVE_ATTEMPTS; attempt++) {
+      let staging: string | undefined;
+      while (!staging) {
+        named += 1;
+        if (named > ARCHIVE_ATTEMPTS + 2) throw lastErr;
+        const candidate = named === 1 ? `${folder}.part` : `${folder}.part-${named}`;
+        try {
+          this.removeArchiveDir(candidate);
+          staging = candidate;
+        } catch (err) {
+          lastErr = err;
+          this.log("warn", `could not clean up ${candidate}: ${String((err as Error).message || err)}`);
+        }
+      }
+      try {
+        await this.fetchArchiveOnce(info, staging, signal, tick);
+        return;
+      } catch (err) {
+        lastErr = err;
+        try {
+          this.removeArchiveDir(staging);
+        } catch (rmErr) {
+          this.log("warn", `could not clean up ${staging}: ${String((rmErr as Error).message || rmErr)}`);
+        }
+        if (signal.aborted || !(err as { retryArchive?: boolean }).retryArchive || attempt === ARCHIVE_ATTEMPTS) {
+          throw err;
+        }
+        this.log(
+          "warn",
+          `model download: ${info.id} archive attempt ${attempt} failed (${String((err as Error).message || err)}) - trying a fresh copy`,
+        );
+      }
+    }
+  }
+
+  /** one fresh download, unpack and publish of the archive into `staging` */
+  private async fetchArchiveOnce(
+    info: SttModelInfo,
+    staging: string,
+    signal: AbortSignal,
+    tick: (chunk: Buffer) => void,
+  ): Promise<void> {
     const archive = info.archive!;
     const folder = path.join(this.dir, info.id);
-    const staging = `${folder}.part`;
-    // a staging folder left by an earlier crash or cancel is never resumable
-    rmDir(staging);
     fs.mkdirSync(staging, { recursive: true });
     this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB)`);
 
@@ -442,6 +504,9 @@ export class ModelStore {
     const declared = archive.size || 0;
     let received = 0;
     let sourceEnded = false;
+    // the digest covers the COMPRESSED bytes, exactly as the body delivered
+    // them, and is the one check a stream that decodes cannot talk its way past
+    const checksum = createHash("sha256");
     const body = resumableBody(archive.url, {
       signal,
       onRetry: (at, detail) => {
@@ -451,6 +516,7 @@ export class ModelStore {
     });
     body.on("data", (chunk: Buffer) => {
       received += chunk.length;
+      checksum.update(chunk);
       tick(chunk);
     });
     body.on("end", () => {
@@ -499,7 +565,25 @@ export class ModelStore {
           `the download stopped early: ${received} of ${declared} bytes (${pct}%) - ${detail}`,
         );
       }
-      throw new Error(`the archive would not unpack (${received} bytes read) - ${detail}`);
+      // a fresh attempt can still be the pinned archive; the digest decides,
+      // but only after the stream finishes, so this one is worth retrying
+      throw Object.assign(new Error(`the archive would not unpack (${received} bytes read) - ${detail}`), {
+        retryArchive: true,
+      });
+    }
+
+    // The pinned digest is checked before anything the attempt unpacked is
+    // believed: a bz2 stream can decode and still be the wrong bytes, and those
+    // bytes must never reach the entry checks or the publish. A mismatch is
+    // retryable - the download, not the catalogue, is what a fresh attempt
+    // changes - while an entry that is missing after a matched digest is the
+    // catalogue's fault and is not.
+    const actual = checksum.digest("hex");
+    if (actual !== archive.sha256) {
+      throw Object.assign(
+        new Error(`archive checksum mismatch: expected SHA-256 ${archive.sha256}, got ${actual}`),
+        { retryArchive: true },
+      );
     }
 
     // the catalog carries the exact unpacked size of every entry. A short file
@@ -520,7 +604,7 @@ export class ModelStore {
     // only now may the model be seen: one rename, after every file is whole.
     // Windows hands out EPERM/EBUSY when a scanner is still holding a new file,
     // so the publish gets the same few retries the removals get.
-    rmDir(folder);
+    this.removeArchiveDir(folder);
     await publishRetry(() => fs.renameSync(staging, folder));
   }
 

@@ -45,6 +45,7 @@ function model(over: Partial<SttModelInfo> = {}): SttModelInfo {
     archive: {
       url: ARCHIVE_URL,
       size: FIXTURE.length,
+      sha256: "e36e73e6d61ffddbcff19f68a58d03c386c5325068850fff5f8ab5d26e63a69f",
       pick: { "encoder.onnx": "src-encoder.onnx", "tokens.txt": "src-tokens.txt" },
     },
     ...over,
@@ -99,18 +100,25 @@ function serve(body: Buffer, opts: { status?: number; declared?: number; chunk?:
   }) as typeof fetch;
 }
 
-function store(info: SttModelInfo = model(), freeBytes?: (dir: string) => number): ModelStore {
+function store(
+  info: SttModelInfo = model(),
+  freeBytes?: (dir: string) => number,
+  removeArchiveDir?: (dir: string) => void,
+): ModelStore {
   return new ModelStore(
     dir,
     () => {},
     (level, message) => logs.push({ level, message }),
     [info],
     freeBytes,
+    removeArchiveDir,
   );
 }
 
 const failure = (): string => logs.find((l) => l.level === "error")?.message ?? "";
 const modelDir = (): string => path.join(dir, "test-archive-model");
+const stagingDirs = (): string[] =>
+  fs.readdirSync(dir).filter((name) => name === "test-archive-model.part" || name.startsWith("test-archive-model.part-"));
 
 describe("unpacking an archive model", () => {
   it("extracts the declared entries under the names the worker looks for", async () => {
@@ -131,7 +139,83 @@ describe("unpacking an archive model", () => {
   it("publishes with one rename, leaving no staging folder", async () => {
     serve(FIXTURE);
     await store().download("test-archive-model");
-    expect(fs.existsSync(`${modelDir()}.part`)).toBe(false);
+    expect(stagingDirs()).toEqual([]);
+  });
+});
+
+describe("fresh archive attempts", () => {
+  const eperm = (): NodeJS.ErrnoException => {
+    const err = new Error("EPERM: operation not permitted, lstat") as NodeJS.ErrnoException;
+    err.code = "EPERM";
+    return err;
+  };
+  const remove = (target: string): void => {
+    fs.rmSync(target, { recursive: true, force: true, maxRetries: 12, retryDelay: 1 });
+  };
+
+  it("starts even when a locked staging folder survived the previous download", async () => {
+    const legacy = `${modelDir()}.part`;
+    fs.mkdirSync(legacy);
+    fs.writeFileSync(path.join(legacy, "held-by-scanner"), "x");
+    serve(FIXTURE);
+    const fetchImpl = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      requests += 1;
+      return fetchImpl(...args);
+    }) as typeof fetch;
+
+    await store(model(), undefined, (target) => {
+      if (target === legacy) throw eperm();
+      remove(target);
+    }).download("test-archive-model");
+
+    expect(requests, "the locked leftover stopped the new request from starting").toBe(1);
+    expect(failure()).toBe("");
+    expect(fs.existsSync(path.join(modelDir(), "encoder.onnx"))).toBe(true);
+    expect(fs.existsSync(legacy), "the test did not keep the scanner-held folder locked").toBe(true);
+  });
+
+  it("retries in another staging folder when corrupt bytes and a cleanup lock coincide", async () => {
+    const corrupt = Buffer.alloc(FIXTURE.length, 0x41);
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      const body = requests === 1 ? corrupt : FIXTURE;
+      return new Response(body, { status: 200, headers: { "content-length": String(body.length) } });
+    }) as typeof fetch;
+    let locked: string | undefined;
+
+    await store(model(), undefined, (target) => {
+      if (!locked && target.includes(".part") && fs.existsSync(target)) {
+        locked = target;
+        throw eperm();
+      }
+      remove(target);
+    }).download("test-archive-model");
+
+    expect(requests, "the corrupt first response was never fetched again from byte zero").toBe(2);
+    expect(failure()).toBe("");
+    expect(fs.existsSync(path.join(modelDir(), "encoder.onnx"))).toBe(true);
+    expect(locked, "the failed attempt never met the synthetic scanner lock").toBeTruthy();
+    expect(fs.existsSync(locked!), "the implementation reused or removed the locked staging folder").toBe(true);
+  });
+
+  it("rejects a valid archive whose pinned SHA-256 does not match", async () => {
+    const expected = "0".repeat(64);
+    const info = model({ archive: { ...model().archive!, sha256: expected } });
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return new Response(FIXTURE, { status: 200, headers: { "content-length": String(FIXTURE.length) } });
+    }) as typeof fetch;
+
+    await store(info).download("test-archive-model");
+
+    expect(requests, "a checksum failure did not receive two fresh retries").toBe(3);
+    expect(failure()).toMatch(/checksum|SHA-256/i);
+    expect(fs.existsSync(modelDir())).toBe(false);
+    expect(stagingDirs()).toEqual([]);
   });
 });
 
@@ -189,7 +273,7 @@ describe("a download that stops early", () => {
     await store().download("test-archive-model");
 
     expect(fs.existsSync(modelDir())).toBe(false);
-    expect(fs.existsSync(`${modelDir()}.part`)).toBe(false);
+    expect(stagingDirs()).toEqual([]);
   });
 
   it("blames the archive when the bytes were fine and the archive was not", async () => {
@@ -267,6 +351,7 @@ describe("an archive that does not hold what the catalogue promised", () => {
       archive: {
         url: ARCHIVE_URL,
         size: FIXTURE.length,
+        sha256: "e36e73e6d61ffddbcff19f68a58d03c386c5325068850fff5f8ab5d26e63a69f",
         pick: { "encoder.onnx": "src-encoder.onnx", "missing.onnx": "src-missing.onnx" },
       },
     });
@@ -297,7 +382,7 @@ describe("an archive that does not hold what the catalogue promised", () => {
 
     expect(failure()).toMatch(/HTTP 500/);
     expect(fs.existsSync(modelDir())).toBe(false);
-    expect(fs.existsSync(`${modelDir()}.part`)).toBe(false);
+    expect(stagingDirs()).toEqual([]);
   });
 });
 
@@ -326,7 +411,7 @@ describe("two models that need the same shared file", () => {
 
   /** an offline model, so its plan also pulls the shared VAD */
   const offline = (id: string): SttModelInfo =>
-    model({ id, kind: "offline", engine: "whisper", archive: { url: ARCHIVE_URL, size: FIXTURE.length, pick: { "encoder.onnx": "src-encoder.onnx", "tokens.txt": "src-tokens.txt" } } });
+    model({ id, kind: "offline", engine: "whisper", archive: { url: ARCHIVE_URL, size: FIXTURE.length, sha256: "e36e73e6d61ffddbcff19f68a58d03c386c5325068850fff5f8ab5d26e63a69f", pick: { "encoder.onnx": "src-encoder.onnx", "tokens.txt": "src-tokens.txt" } } });
 
   /** counts hits per URL and answers the VAD slowly enough for a second click */
   function serveShared(opts: { vadDelayMs?: number; failVad?: boolean } = {}): { hits: Map<string, number> } {
