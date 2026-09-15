@@ -17,26 +17,52 @@
  * Exits non-zero on a finding; run by the test suite and safe to run locally.
  */
 import { createRequire } from "node:module";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
 /**
- * Source projects only. Test files are left out deliberately: a floating
- * promise in a test usually shows up as the test failing or going flaky, and
- * including them roughly doubles the work for the weaker signal.
+ * Every project in the repo, found rather than listed.
+ *
+ * This was a hardcoded array of five, and it went stale two iterations after it
+ * was written: `packages/viewer` gained a tsconfig, and its `app.js` - the page
+ * a phone actually loads - was never opened, while the run still printed "no
+ * floating promises". A list of what to check is one more thing that can
+ * disagree with reality, and this repo keeps finding those.
+ *
+ * Two are excluded on purpose. `tsconfig.base.json` is settings, not a project.
+ * `tsconfig.test.json` is the tests, and a floating promise in a test usually
+ * shows up as that test failing or going flaky - a weaker signal for roughly
+ * double the work.
  */
-const DEFAULT_PROJECTS = [
-  "packages/shared/tsconfig.json",
-  "packages/relay/tsconfig.json",
-  "packages/companion/tsconfig.json",
-  "apps/hosted-relay/tsconfig.json",
-  // main, preload and renderer/app.ts - the app's own tsconfig omits the renderer
-  "apps/standalone/tsconfig.typecheck.json",
-];
+const NOT_A_PROJECT = new Set(["tsconfig.base.json", "tsconfig.test.json"]);
 
-const projects = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_PROJECTS;
+function discoverProjects() {
+  const dirs = ["."];
+  for (const group of ["packages", "apps"]) {
+    if (!fs.existsSync(group)) continue;
+    for (const e of fs.readdirSync(group, { withFileTypes: true })) {
+      if (e.isDirectory()) dirs.push(path.join(group, e.name));
+    }
+  }
+  return dirs
+    .flatMap((dir) =>
+      fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isFile() && /^tsconfig\..*\.json$|^tsconfig\.json$/.test(e.name))
+        .filter((e) => !NOT_A_PROJECT.has(e.name))
+        .map((e) => path.join(dir, e.name).split(path.sep).join("/")),
+    )
+    .sort();
+}
+
+const args = process.argv.slice(2);
+/** print every file that was scanned, so coverage can be asserted rather than assumed */
+const listOnly = args.includes("--list");
+const given = args.filter((a) => !a.startsWith("--"));
+const projects = given.length ? given : discoverProjects();
 
 function parse(configPath) {
   const abs = path.resolve(configPath);
@@ -122,6 +148,11 @@ for (const proj of projects) {
     };
     visit(sf);
   }
+}
+
+if (listOnly) {
+  for (const f of [...seen].sort()) console.log(f);
+  process.exit(0);
 }
 
 // A checker that examined nothing must not report success. check-renderer-ids
