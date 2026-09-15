@@ -859,7 +859,13 @@
         return;
       }
       setHud("warn", "RECONNECTING");
-      retryTimer = setTimeout(connect, 2000);
+      // 4408 is the relay letting go of a socket it stopped hearing a heartbeat
+      // on. Unlike every other close here it arrives as a real frame, which
+      // means the path was alive to carry it - so the 2 s backoff, which exists
+      // to stop hammering a relay that cannot be reached, is not what this
+      // needs. Come straight back. The reconnected socket has never beaten, and
+      // a socket that has never beaten is never reaped, so this cannot loop.
+      retryTimer = setTimeout(connect, ev && ev.code === 4408 ? 0 : 2000);
     };
     sock.onerror = () => {};
   }

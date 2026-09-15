@@ -177,10 +177,32 @@ The sweep runs from an alarm set when the room is claimed, under
 
 ## Still open
 
-- **An unexplained viewer socket, seen once.** The first room the desktop app
+- **An unexplained viewer socket, seen once** — **a cause now fits it, and the
+  room no longer holds one either way.** The first room the desktop app
   attached to reported one viewer with nothing watching; a room claimed after
   the subdomain change reported zero from the same app, so it was that object
-  rather than the service. Left here because it was never explained.
+  rather than the service.
+
+  The fitting explanation is a viewer socket that died without a FIN. The count
+  is `getWebSockets("viewer").length`, and hibernation means this object holds
+  no timer of its own — so a socket whose phone walked into a tunnel was held
+  until something else closed it, and nothing else ever did. A room never
+  opened reads zero; the first one, opened once to check it worked, reads one
+  for ever. That matches every detail of the sighting, including why a fresh
+  room was clean.
+
+  It is a fit, not a proof — the original room is gone and nothing was captured
+  from it at the time. What would confirm it is a room whose count stays above
+  what `getWebSockets` reports after a reader force-quits a browser on mobile
+  data.
+
+  Either way the count is now self-correcting. Viewers send a heartbeat, the
+  runtime records when each socket last auto-answered, and `liveViewers()`
+  drops one that has been silent for 70 s — read on a wake-up that was going to
+  happen anyway, so it needs no alarm and costs nothing. A socket that has
+  **never** beaten is always left alone: that is a page served before the
+  heartbeat shipped, and closing it would put a healthy reader in a reconnect
+  loop.
 
   Original note: The room the desktop app is attached to
   reports one viewer with nothing watching. It is not the app (which holds a

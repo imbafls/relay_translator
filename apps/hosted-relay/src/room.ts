@@ -157,6 +157,24 @@ const TAG_VIEWER = "viewer";
 /** close codes the desktop client already understands (uplinkClient.ts) */
 const CLOSE_UNAUTHORISED = 4401;
 const CLOSE_REPLACED = 4409;
+/**
+ * Let go of a viewer that stopped beating. Deliberately NOT 4401 or 4410: the
+ * viewer page treats those two as facts about the link and shows THIS LINK HAS
+ * ENDED, and this is a network condition it should simply reconnect from.
+ */
+const CLOSE_SILENT = 4408;
+
+/**
+ * How long a viewer may go silent before its socket is treated as gone.
+ *
+ * Three of the viewer's 20 s rounds, so a reader on a slow connection is never
+ * dropped for being slow - and it is deliberately longer than the viewer's own
+ * patience. The page gives up after two unanswered rounds and reconnects, so
+ * in every case where both ends are running, the READER acts first and this
+ * never fires. What it is for is the case the page cannot cover: a phone that
+ * went away without saying so and is never coming back.
+ */
+const VIEWER_SILENT_MS = 70_000;
 
 /**
  * The heartbeat, answered by the runtime rather than by this object.
@@ -520,8 +538,42 @@ export class Room {
     return this.ctx.getWebSockets(tag);
   }
 
+  /**
+   * The viewers actually there, letting go of any that are not.
+   *
+   * `apps/hosted-relay/README.md` records one viewer reported with nothing
+   * watching, never explained. A socket whose phone vanished without a FIN
+   * accounts for it exactly: this object holds no timer, so nothing here ever
+   * closed it, and the count it inflated could never come down.
+   *
+   * Reading the auto-response timestamp costs nothing and needs no alarm - it
+   * happens on a wake-up that was going to happen anyway, because the count is
+   * only ever recomputed when a viewer arrives or leaves.
+   */
+  private liveViewers(): WebSocket[] {
+    const now = Date.now();
+    const live: WebSocket[] = [];
+    for (const ws of this.sockets(TAG_VIEWER)) {
+      const last = this.ctx.getWebSocketAutoResponseTimestamp(ws);
+      // null is "has never beaten", which is a viewer page served before the
+      // heartbeat shipped - not evidence of anything. Reaping on it would
+      // close a healthy reader, who would reconnect into a room that closes
+      // them again. Silence only counts against a socket that has spoken.
+      if (!last || now - last.getTime() < VIEWER_SILENT_MS) {
+        live.push(ws);
+        continue;
+      }
+      try {
+        ws.close(CLOSE_SILENT, "no heartbeat");
+      } catch {
+        /* already gone, which is the outcome either way */
+      }
+    }
+    return live;
+  }
+
   private viewerCount(): number {
-    return this.sockets(TAG_VIEWER).length;
+    return this.liveViewers().length;
   }
 
   private broadcast(tag: string, msg: unknown): void {

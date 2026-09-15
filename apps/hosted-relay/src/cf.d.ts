@@ -45,6 +45,13 @@ interface DurableObjectState {
    * the constructor; it survives eviction with the sockets.
    */
   setWebSocketAutoResponse(pair: WebSocketRequestResponsePair): void;
+  /**
+   * When the runtime last auto-answered for this socket, or null if it never
+   * has. This is the only liveness signal available to a hibernating object:
+   * it is recorded without waking anything, so it can be read on a wake-up
+   * that was going to happen anyway.
+   */
+  getWebSocketAutoResponseTimestamp(ws: WebSocket): Date | null;
   /** defers delivery of every other event until the callback settles */
   blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
 }
