@@ -372,8 +372,8 @@ fix — read the numbered section there before starting.
 All three were confirmed against the source by independent verification and
 are **pre-existing** - none is a regression from the eight commits in v0.8.1.
 They were recorded rather than fixed because each needs a guard test of its own,
-and a release commit is the wrong place to write one. One is now fixed; the
-other two are still open.
+and a release commit is the wrong place to write one. **All three are now
+fixed**, the last two on 2026-09-15.
 
 - ~~**The desktop's own caption stage renders empty finals.**~~ Fixed
   2026-09-15. `onSubtitle` in `apps/standalone/renderer/app.ts` was the third
@@ -400,23 +400,30 @@ other two are still open.
   only changed the blank row's translation column from an invented callout to a
   permanent `...`.
 
-- **File-based local models have no integrity check at all.** The SHA-256 pin
-  `516247f` added covers only the seven `archive` models. The file-based ones
-  (`local-zipformer-en-20m`, `local-parakeet-tdt-0.6b-v3`, `local-sense-voice`)
-  download loose files with no digest and no post-download size check, and
-  `localModelReady()` decides they are installed by filename alone - so a
-  truncated file is published and reported ready. The cheap half is one line:
-  the catalogue already carries each file's exact `size`, so comparing it
-  against `fs.statSync(part).size` before the rename closes truncation without
-  any new catalogue data. A `sha256` per file would close substitution too.
+- ~~**File-based local models have no integrity check at all.**~~ Fixed in two
+  steps. `2329673` took the cheap half this entry described - the catalogue
+  already carried each file's exact `size`, compared against the downloaded
+  part before the rename - which closes truncation but accepts any file of the
+  right length. `2ca6207` closed substitution: **every catalogue file that
+  crosses the network now carries a pinned `sha256`, hashed as it arrives and
+  verified before the rename**, which is what the archive path has done since
+  `516247f`.
+  Worth keeping, because it is why the digest was refused the first time: the
+  files were fetched from `resolve/main`, and pinning content to a pointer that
+  is allowed to move is meaningless. `90b27e5` pinned the revision, which
+  removed the reason. Seven of the digests came from Hugging Face's tree API,
+  where `lfs.oid` IS the sha256, so the 652 MB encoder never had to be
+  downloaded to learn what it should be.
+  `packages/shared/test/catalogue.test.ts` fails if a file with a `url` has no
+  64-hex digest, and it turned up an eleventh file the change had not set out to
+  cover - the shared VAD, which is the file audit finding 25 damaged.
 
-- **Every silent final forces a Durable Object storage write.** The uplink
-  forwards wordless finals verbatim and each carries a higher segment id, so
-  `apps/hosted-relay/src/room.ts` persists room state on every silent tick -
-  roughly a 5x write amplification that comes entirely from silence. The
-  broadcast itself must not change: remote viewers need the empty final to
-  retire their interim row. Keep the id in memory and persist only when the
-  line carries words.
+- ~~**Every silent final forces a Durable Object storage write.**~~ Fixed
+  2026-09-15 in `5fbb61f`, the way this entry asked: `room.ts` advances
+  `lastSegId` only when the line carries words, so a silent tick no longer
+  reaches storage. The broadcast is unchanged - remote viewers still get the
+  empty final that retires their interim row - and the room now writes only
+  when the record it would write differs from the one already there.
 
 ### Found while fixing the above, not in the audit
 
