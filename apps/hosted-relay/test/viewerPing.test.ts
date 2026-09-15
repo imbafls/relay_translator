@@ -1,0 +1,96 @@
+import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { Room } from "../src/room";
+
+/**
+ * The viewer's heartbeat, across the two sides that have to agree on it byte
+ * for byte.
+ *
+ * A viewer on a phone asks the relay whether it is still there, because a
+ * socket whose peer vanished without a FIN stays OPEN on that side
+ * indefinitely. Answering it in `webSocketMessage` would be correct and would
+ * wake this object once per beat per viewer - roughly 180 requests an hour
+ * each, billed, and enough to end the property the hosted design was measured
+ * on: an idle room costs nothing. `setWebSocketAutoResponse` hands the whole
+ * exchange to the runtime, which answers without waking anything.
+ *
+ * The runtime matches on the EXACT bytes. `packages/viewer/public/app.js` is
+ * served as-is with no build step, so it can import nothing and the frame is a
+ * literal at both ends - the same shape as the close codes in
+ * `closeCodes.test.ts` and the viewer messages in `4bc5966`, both of which
+ * were found to disagree. A single space added to either literal would not
+ * fail a typecheck, would not fail a viewer test, and would silently return
+ * every beat to billing this object.
+ */
+
+const root = path.resolve(__dirname, "..", "..", "..");
+const viewerJs = fs.readFileSync(path.join(root, "packages", "viewer", "public", "app.js"), "utf8");
+
+interface Pair {
+  request: string;
+  response: string;
+}
+
+/** construct the real Room against a fake state handle and catch what it set */
+function autoResponse(): Pair {
+  const set: Pair[] = [];
+  class FakePair {
+    constructor(
+      readonly request: string,
+      readonly response: string,
+    ) {}
+  }
+  const g = globalThis as unknown as { WebSocketRequestResponsePair?: unknown };
+  const had = g.WebSocketRequestResponsePair;
+  g.WebSocketRequestResponsePair = FakePair;
+  try {
+    const ctx = {
+      storage: {},
+      setWebSocketAutoResponse: (pair: Pair) => set.push(pair),
+    };
+    new Room(ctx as unknown as ConstructorParameters<typeof Room>[0], {});
+  } finally {
+    g.WebSocketRequestResponsePair = had;
+  }
+  expect(
+    set,
+    "the room set no auto-response, so every viewer heartbeat wakes this object and is billed - an idle " +
+      "room with one reader parked on it stops being free",
+  ).toHaveLength(1);
+  return set[0] as Pair;
+}
+
+describe("a viewer's heartbeat on the hosted relay", () => {
+  it("is answered by the runtime, on exactly the bytes the viewer sends", () => {
+    const pair = autoResponse();
+
+    expect(
+      viewerJs,
+      "the viewer page no longer builds a ping frame, so nothing sends the message this answers",
+    ).toMatch(/JSON\.stringify\(\{\s*type:\s*"ping"\s*\}\)/);
+
+    expect(
+      pair.request,
+      "the auto-response no longer matches what the viewer sends. The runtime compares the exact bytes, so " +
+        "this does not fail loudly: the page keeps beating, this object wakes for every beat again, and the " +
+        "only visible symptom is the bill.",
+    ).toBe(JSON.stringify({ type: "ping" }));
+  });
+
+  it("answers with the message the viewer actually acts on", () => {
+    const pair = autoResponse();
+
+    expect(
+      () => JSON.parse(pair.response),
+      "the auto-response body is not JSON, so the viewer drops it in its parse guard and counts the round unanswered",
+    ).not.toThrow();
+    expect((JSON.parse(pair.response) as { type?: string }).type).toBe("pong");
+
+    expect(
+      viewerJs,
+      "the viewer has no pong branch any more, so every answered round still counts as unanswered and it " +
+        "drops a relay that is working",
+    ).toMatch(/case "pong":/);
+  });
+});

@@ -1191,3 +1191,73 @@ describe("which language a line is in", () => {
     expect(tgts[tgts.length - 1]?.getAttribute("lang")).toBe("es");
   });
 });
+
+/**
+ * A relay that stopped answering.
+ *
+ * `6fcfaaf` gave the uplink client a heartbeat timeout, and `4706a54` wrote
+ * down that the publisher client does not need one because it only ever
+ * reaches 127.0.0.1. This is the third socket, and it is the one that actually
+ * lives on a phone: mobile data, carrier NAT, a screen that locks. `server.ts`
+ * says why that matters, on its own side of the same problem - a TCP
+ * connection whose peer vanished without a FIN stays OPEN on this side
+ * indefinitely.
+ *
+ * What made it invisible here is that both recovery paths are spelled in terms
+ * of a socket that knows it is shut. The 2 s retry is armed by `onclose`,
+ * which never fires for a half-open socket, and the `visibilitychange` handler
+ * reconnects only when `readyState > OPEN` - so unlocking the phone skipped it
+ * too. The reader is left on the last caption that arrived, under a HUD saying
+ * nothing is wrong, for as long as the OS keeps the socket.
+ *
+ * `ViewerToServer` has been `ping | sync` all along and both relays answer a
+ * ping. The page simply never asked.
+ */
+describe("a relay that stops answering", () => {
+  const PING = JSON.stringify({ type: "ping" });
+  const pingsOn = (s: (typeof opened)[number]): number => s.sent.filter((m) => m === PING).length;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    boot();
+    vi.advanceTimersByTime(1);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("asks the relay whether it is still there", () => {
+    const s = opened[0];
+    vi.advanceTimersByTime(25_000);
+
+    expect(
+      pingsOn(s),
+      "the page never asks the relay anything, so a relay that died and a relay with nothing to say are the same thing to it",
+    ).toBeGreaterThan(0);
+  });
+
+  it("gives up on one that answers nothing, so the reconnect it already has can run", () => {
+    const s = opened[0];
+    vi.advanceTimersByTime(120_000);
+
+    expect(
+      s.readyState,
+      "the socket is still open after two minutes of a relay saying nothing back. The retry is armed by onclose " +
+        "and a half-open socket never fires it, so the phone keeps showing the last caption it got - and the " +
+        "wake-up path checks readyState > OPEN, so unlocking it does not help either.",
+    ).toBe(3);
+  });
+
+  it("leaves one that answers alone, through ten rounds", () => {
+    const s = opened[0];
+    for (let i = 0; i < 10; i += 1) {
+      vi.advanceTimersByTime(25_000);
+      s.onmessage?.({ data: JSON.stringify({ type: "pong" }) });
+    }
+
+    expect(pingsOn(s), "no heartbeat went out at all, so this says nothing about a relay that works").toBeGreaterThan(5);
+    expect(s.readyState, "a relay answering every single round was dropped anyway").toBe(1);
+    expect(opened.length, "it reconnected underneath a relay that was working perfectly").toBe(1);
+  });
+});

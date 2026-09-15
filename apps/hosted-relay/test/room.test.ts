@@ -90,7 +90,21 @@ function stand() {
     getWebSockets: (tag?: string) => (tag ? sockets.filter((s) => s.tags.includes(tag)) : sockets),
     getTags: (ws: Sock) => ws.tags,
     blockConcurrencyWhile: <T>(fn: () => Promise<T>) => fn(),
+    // the room hands the runtime a heartbeat to answer on its behalf; what it
+    // registers is asserted in viewerPing.test.ts, and here it only has to not
+    // be missing from the state handle the real object is given
+    setWebSocketAutoResponse: () => undefined,
   };
+
+  // the runtime global the constructor reaches for, declared in cf.d.ts. Not
+  // restored afterwards on purpose: every Room in this file needs it.
+  (globalThis as unknown as { WebSocketRequestResponsePair: unknown }).WebSocketRequestResponsePair =
+    class {
+      constructor(
+        readonly request: string,
+        readonly response: string,
+      ) {}
+    };
 
   const room = new Room(ctx as unknown as DurableObjectState, {});
 

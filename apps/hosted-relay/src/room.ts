@@ -158,13 +158,35 @@ const TAG_VIEWER = "viewer";
 const CLOSE_UNAUTHORISED = 4401;
 const CLOSE_REPLACED = 4409;
 
+/**
+ * The heartbeat, answered by the runtime rather than by this object.
+ *
+ * Viewers ask whether the relay is still there, because a socket whose peer
+ * vanished without a FIN stays OPEN on a phone indefinitely. Answering that in
+ * `webSocketMessage` would work and would bill a request per beat per viewer -
+ * about 180 an hour each - and would end the property this design was measured
+ * on: an idle room costs nothing. `setWebSocketAutoResponse` hands the runtime
+ * the whole exchange, so a beat wakes nothing and costs nothing.
+ *
+ * The match is on the EXACT bytes, so these two literals are a contract with
+ * `packages/viewer/public/app.js`, which is served with no build step and can
+ * therefore import nothing. `viewerPing.test.ts` is what holds them together.
+ */
+const PING_FRAME = '{"type":"ping"}';
+const PONG_FRAME = '{"type":"pong"}';
+
 export class Room {
   constructor(
     private readonly ctx: DurableObjectState,
     // the runtime passes the bindings positionally; this room reaches for
     // nothing in them, and holding a field nobody reads only invites one
     _env: unknown,
-  ) {}
+  ) {
+    // in the constructor, not at accept time: it is set per object, it outlives
+    // eviction along with the sockets, and a room woken by a viewer's first
+    // beat must already have it
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME));
+  }
 
   // ---------------------------------------------------------------- lifecycle
 

@@ -39,8 +39,18 @@ interface DurableObjectState {
   acceptWebSocket(ws: WebSocket, tags?: string[]): void;
   getWebSockets(tag?: string): WebSocket[];
   getTags(ws: WebSocket): string[];
+  /**
+   * hibernation: the runtime answers this exact message itself, WITHOUT waking
+   * the object, so a heartbeat costs no request and no duration. Set once in
+   * the constructor; it survives eviction with the sockets.
+   */
+  setWebSocketAutoResponse(pair: WebSocketRequestResponsePair): void;
   /** defers delivery of every other event until the callback settles */
   blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
+}
+
+declare class WebSocketRequestResponsePair {
+  constructor(request: string, response: string);
 }
 
 declare class WebSocketPair {

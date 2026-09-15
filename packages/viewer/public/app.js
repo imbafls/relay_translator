@@ -566,6 +566,23 @@
   let retryTimer = null;
 
   /**
+   * The heartbeat. `ViewerToServer` is `ping | sync` and both relays answer a
+   * ping; this page never asked, so a relay that vanished without a FIN - a
+   * locked phone, a carrier NAT timeout, a train tunnel - left the socket OPEN
+   * on this side with nothing able to tell. Both recovery paths are written in
+   * terms of a socket that knows it is shut: the retry below is armed by
+   * `onclose`, and the `visibilitychange` handler wants `readyState > OPEN`.
+   *
+   * Two unanswered rounds rather than the one `server.ts` allows itself, and
+   * for the same reason `6fcfaaf` gave the uplink two: the relay is dropping a
+   * socket it can rebuild for nothing, this is a reader losing their captions,
+   * and one dropped answer on mobile data is not evidence of a dead relay.
+   */
+  const PING = JSON.stringify({ type: "ping" });
+  const PING_MS = 20000;
+  const PING_MISSES = 2;
+
+  /**
    * The language codes the relay last reported, so a caption can say which
    * language it is in. The page is `lang="en"`; without marking the parts, a
    * screen reader announces Vietnamese or Japanese with an English voice.
@@ -701,8 +718,56 @@
     ws = sock;
     /** an event from a socket this page has already replaced means nothing */
     const current = () => sock === ws;
+
+    /**
+     * Owned by THIS connection, not by the page. A module-level timer would
+     * let a socket that has already been replaced clear the beat belonging to
+     * the one that replaced it - the same class of bug as the `ws.close()`
+     * that cc824dd fixed, where a stale handler acted on a healthy socket.
+     * Checking `current()` inside the beat is what keeps an orphan from
+     * outliving its socket by more than one round.
+     */
+    let pingTimer = null;
+    let unanswered = 0;
+    const stopPing = () => {
+      if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = null;
+      }
+    };
+    const beat = () => {
+      if (!current()) {
+        stopPing();
+        return;
+      }
+      if (unanswered >= PING_MISSES) {
+        // open on our side only. Closing is the whole fix: onclose below arms
+        // the same 2 s retry that a disconnection this page CAN see already
+        // gets, and the wake-up path starts working again too, because
+        // readyState finally moves past OPEN.
+        stopPing();
+        try {
+          sock.close();
+        } catch {
+          /* already gone */
+        }
+        return;
+      }
+      unanswered += 1;
+      try {
+        sock.send(PING);
+      } catch {
+        /* a socket refusing sends is about to close; onclose handles it */
+      }
+    };
+
     sock.onopen = () => {
-      if (current()) setHud("off", "OFF AIR");
+      if (!current()) return;
+      setHud("off", "OFF AIR");
+      // ask straight away, then on the period: a socket that opened onto a
+      // relay already gone resolves in one round rather than two
+      beat();
+      pingTimer = setInterval(beat, PING_MS);
     };
     sock.onmessage = (ev) => {
       if (!current()) return;
@@ -745,6 +810,10 @@
           applyLive(msg.live, msg.since, msg.elapsedMs);
           if (!msg.live) clearInterims();
           break;
+        case "pong":
+          // the only thing that distinguishes a quiet relay from a dead one
+          unanswered = 0;
+          break;
         case "partial":
           showPartial(msg);
           break;
@@ -766,6 +835,9 @@
       }
     };
     sock.onclose = (ev) => {
+      // this connection's own beat, so stopping it unconditionally is safe and
+      // a socket closed by any route stops asking
+      stopPing();
       if (!current() || closedByKick) return;
       // 4401 is the relay saying it does not know this token - a fact, not a
       // network condition, and retrying cannot change it. It used to arrive as
