@@ -37,13 +37,39 @@ afterEach(() => {
   }
 });
 
-/** write every file the catalogue says this model needs, so localModelReady passes */
+/**
+ * Write every file the catalogue says this model needs, so localModelReady passes.
+ *
+ * A LOOSE-FILE model is written at its declared length, not as a 4-byte stub.
+ * Readiness checks the size for those, so a stub would be a fixture asserting
+ * that a model is installed while describing one that is damaged - the same
+ * mistake `stageVad` below already avoids for the one shared file.
+ * `fs.truncateSync` sets the end of the file without writing its bytes: measured
+ * here at 0.4 ms for the 43 MB model, 0.5 ms for the 239 MB one and 1.7 ms for
+ * the largest in the catalogue. It does ALLOCATE the space, so the cost is real
+ * disk in the temp dir `afterEach` removes - about 240 MB at the worst moment,
+ * one directory at a time.
+ *
+ * ARCHIVE models stay stubs, deliberately, and that is load-bearing twice over.
+ * Their declared per-file size is the UNPACKED size and the extractor treats it
+ * as a lower bound, so readiness does not hold them to it - leaving them at four
+ * bytes is what proves the check is scoped. It is also what keeps this
+ * affordable: `local-whisper-turbo` alone declares 1,036 MB.
+ */
 function stageModel(modelsDir: string, id: string, opts: { vad?: boolean } = {}): void {
   const info = sttModel(id);
   if (!info?.files) throw new Error(`no catalogue entry with files for ${id}`);
   const dir = path.join(modelsDir, id);
   fs.mkdirSync(dir, { recursive: true });
-  for (const f of info.files) fs.writeFileSync(path.join(dir, f.name), "stub");
+  for (const f of info.files) {
+    const at = path.join(dir, f.name);
+    if (info.archive) {
+      fs.writeFileSync(at, "stub");
+      continue;
+    }
+    fs.writeFileSync(at, "");
+    fs.truncateSync(at, f.size);
+  }
   if (opts.vad) stageVad(modelsDir);
 }
 
@@ -136,6 +162,94 @@ describe("localModelReady", () => {
     const models = tmp();
     stageVad(models);
     expect(localVadReady(models)).toBe(true);
+  });
+});
+
+/**
+ * The other half of the lock 516247f and 2329673 put on the download path.
+ *
+ * Those two closed the write side: an archive is refused unless its SHA-256
+ * matches and every unpacked entry is at least the declared length, and a loose
+ * file is refused unless it arrived at exactly the declared length. Nothing
+ * guarded the read side. `localModelReady` asked only whether each file existed,
+ * so a model damaged by anything other than its own download - a full disk, an
+ * interrupted copy, a file published by a build from before that check - was
+ * reported installed for ever, and the failure surfaced at load time far from
+ * its cause.
+ *
+ * `localVadReady` twenty lines above already made this argument for the one
+ * shared file: "Existence alone was not enough... This check accepted that for
+ * ever... the only way out was finding the file by hand." The shape was fixed
+ * there and left open for every other model file.
+ *
+ * SCOPED TO FILE-BASED MODELS, and the archive test below is what says so. An
+ * archive model's declared per-file size is the UNPACKED size, and
+ * `fetchArchiveOnce` treats it as a lower bound - it throws only when an entry
+ * is SHORT and otherwise merely warns - so a legitimately installed archive
+ * model may sit on a file whose size differs from the catalogue. Holding those
+ * to equality here would flip a working install to not-ready.
+ */
+describe("a model file that is not the size the catalogue declares", () => {
+  /** the smallest file-based model in the catalogue: four files, 43.6 MB */
+  const SMALL = "local-zipformer-en-20m";
+
+  const resize = (models: string, id: string, name: string, size: number): void =>
+    fs.truncateSync(path.join(models, id, name), size);
+
+  const firstFile = (id: string): { name: string; size: number } => {
+    const f = sttModel(id)?.files?.[0];
+    if (!f) throw new Error(`no catalogue files for ${id}`);
+    return { name: f.name, size: f.size };
+  };
+
+  it("is not ready when a file arrived short", () => {
+    const models = tmp();
+    stageModel(models, SMALL);
+    const f = firstFile(SMALL);
+    resize(models, SMALL, f.name, f.size - 1024);
+
+    expect(
+      localModelReady(models, SMALL),
+      "a model missing a kilobyte of its largest file was reported installed",
+    ).toBe(false);
+  });
+
+  it("is not ready when a file is longer than the catalogue declares", () => {
+    const models = tmp();
+    stageModel(models, SMALL);
+    const f = firstFile(SMALL);
+    resize(models, SMALL, f.name, f.size + 1024);
+
+    expect(
+      localModelReady(models, SMALL),
+      "a file the catalogue does not describe was reported installed",
+    ).toBe(false);
+  });
+
+  it("is still ready when every file is exactly the declared length", () => {
+    const models = tmp();
+    stageModel(models, SMALL);
+
+    expect(localModelReady(models, SMALL), "a correctly installed model stopped reading as ready").toBe(
+      true,
+    );
+  });
+
+  /**
+   * Green before this change and after it, and it is the one that has to stay
+   * that way: the archive path's sizes are a lower bound, so an archive model
+   * staged at four bytes a file must go on reading as installed. Holding every
+   * model to equality turns this red, which is exactly the regression it exists
+   * to catch.
+   */
+  it("leaves an archive model alone, where the declared size is only a lower bound", () => {
+    const models = tmp();
+    stageModel(models, "local-whisper-tiny-en", { vad: true });
+
+    expect(
+      localModelReady(models, "local-whisper-tiny-en"),
+      "an installed archive model was refused for a size its own extractor only warns about",
+    ).toBe(true);
   });
 });
 

@@ -19,12 +19,39 @@ export interface LocalSttConfig {
   channels: number;
 }
 
-/** true when every file of the model (and the VAD it needs) is on disk */
+/**
+ * True when every file of the model (and the VAD it needs) is on disk, and - for
+ * a model fetched as loose files - is the length the catalogue declares.
+ *
+ * The second lock, for the same reason `localVadReady` below is one. The
+ * download path refuses a file that did not arrive whole, but nothing guarded
+ * what happens to it afterwards: a full disk, an interrupted copy, or a file
+ * published by a build from before that check left a damaged model reporting
+ * itself installed for ever, and the failure then surfaced at load time a long
+ * way from its cause.
+ *
+ * ARCHIVE MODELS ARE DELIBERATELY NOT HELD TO THIS. Their declared per-file size
+ * is the UNPACKED size, and the extractor treats it as a lower bound - it throws
+ * only when an entry is short and otherwise merely warns - so a legitimately
+ * installed archive model may sit on a file whose size differs from the
+ * catalogue. Requiring equality here would flip a working install to not-ready,
+ * which is a worse failure than the one this closes. A loose file's declared
+ * size is exact, and the download path now enforces exactly that, so those can
+ * be held to it.
+ */
 export function localModelReady(modelsDir: string, id: string): boolean {
   const info = sttModel(id);
   if (!info || info.provider !== "local" || !info.files) return false;
   const dir = path.join(modelsDir, id);
-  const all = info.files.every((f) => fs.existsSync(path.join(dir, f.name)));
+  const all = info.files.every((f) => {
+    const at = path.join(dir, f.name);
+    try {
+      return info.archive ? fs.existsSync(at) : fs.statSync(at).size === f.size;
+    } catch {
+      // statSync throws where existsSync would have answered false
+      return false;
+    }
+  });
   if (!all) return false;
   if (info.kind === "offline") return localVadReady(modelsDir);
   return true;
