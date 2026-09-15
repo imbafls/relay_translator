@@ -264,8 +264,10 @@ of these bugs.
 
 ### Lessons carried forward from `ITERATION_LOG.md`
 
-Four, learned the hard way over 41 turns. They are at the end of that file and
-worth re-reading:
+Four, learned the hard way over 41 turns. They are under **Where this run ended
+up** in that file - which was its end when this sentence was written and is now
+about a third of the way in, because fifty turns were appended after them. Worth
+re-reading:
 
 1. **A test that goes green first time, when you expected red, has probably not
    run.** It happened four times in that run — a debounce that outlasted the

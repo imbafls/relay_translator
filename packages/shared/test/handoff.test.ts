@@ -329,3 +329,78 @@ describe("the claims CLAUDE.md makes about the tree", () => {
     ).toBe(false);
   });
 });
+
+/**
+ * CLAUDE.md sends a session to the lessons in ITERATION_LOG.md and says they
+ * are "at the end of that file". They were, once. Fifty turns were appended
+ * after them, and they now sit a third of the way in, so following that
+ * sentence lands a reader in the middle of a turn about staging folders.
+ *
+ * A position in a growing file is a pointer that decays on its own. A heading
+ * does not, so the doc names one and this asserts the heading is really there
+ * and really holds the number of lessons CLAUDE.md promises.
+ */
+describe("the pointer from CLAUDE.md into the iteration log", () => {
+  const claude = (): string => fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8");
+  const log = (): string => fs.readFileSync(path.join(root, "ITERATION_LOG.md"), "utf8");
+
+  /** the lessons are numbered list items in bold, under their own heading */
+  function lessonSection(): { heading: string; lessons: string[] } | null {
+    const lines = log().split(/\r?\n/);
+    const at = lines.findIndex((l) => /^\s*1\.\s+\*\*A test that goes green first time/.test(l));
+    if (at < 0) return null;
+    let heading = "";
+    for (let i = at; i >= 0; i -= 1) {
+      const m = /^#{1,6}\s+(.*)$/.exec(lines[i] ?? "");
+      if (m) {
+        heading = (m[1] ?? "").trim();
+        break;
+      }
+    }
+    const lessons: string[] = [];
+    for (let i = at; i < lines.length; i += 1) {
+      const line = lines[i] ?? "";
+      if (/^#{1,6}\s/.test(line) && i > at) break;
+      if (/^\s*\d+\.\s+\*\*/.test(line)) lessons.push(line);
+    }
+    return { heading, lessons };
+  }
+
+  it("does not call them the end of the file while they sit a third of the way in", () => {
+    const lines = log().split(/\r?\n/);
+    const at = lines.findIndex((l) => /^\s*1\.\s+\*\*A test that goes green first time/.test(l));
+    expect(at, "the first lesson is no longer in ITERATION_LOG.md at all").toBeGreaterThan(-1);
+
+    const nearTheEnd = at > lines.length * 0.8;
+    const claimsTheEnd = /lessons[\s\S]{0,400}?at the end of that file/i.test(claude());
+    expect(
+      claimsTheEnd && !nearTheEnd,
+      `CLAUDE.md says the lessons are at the end of ITERATION_LOG.md; they are at line ${at + 1} of ${lines.length}`,
+    ).toBe(false);
+  });
+
+  it("names a heading that exists, holding the number of lessons it promises", () => {
+    const section = lessonSection();
+    expect(section, "the lessons are not in ITERATION_LOG.md under any heading").not.toBeNull();
+
+    const heading = section?.heading ?? "";
+    expect(heading.length, "the lessons sit under no heading at all").toBeGreaterThan(0);
+    // whitespace-normalised: markdown wraps, and a guard that breaks when a
+    // paragraph is re-flowed is a guard somebody deletes
+    const flat = (t: string): string => t.replace(/\s+/g, " ");
+    expect(
+      flat(claude()).includes(flat(heading)),
+      `CLAUDE.md should point at the heading the lessons live under - "${heading}" - rather than at a position that moves`,
+    ).toBe(true);
+
+    // "Four, learned the hard way" - the word has to match what is there
+    const words: Record<string, number> = { One: 1, Two: 2, Three: 3, Four: 4, Five: 5, Six: 6 };
+    const quoted = /\*\*Lessons carried forward[\s\S]{0,200}?\n\n(\w+), learned the hard way/.exec(claude())
+      ?? /### Lessons carried forward[\s\S]{0,200}?\n\n(\w+), learned the hard way/.exec(claude());
+    const said = words[quoted?.[1] ?? ""];
+    expect(said, `CLAUDE.md no longer says how many lessons there are`).toBeDefined();
+    expect(said, `CLAUDE.md says ${quoted?.[1]} and the log holds ${section?.lessons.length}`).toBe(
+      section?.lessons.length,
+    );
+  });
+});
