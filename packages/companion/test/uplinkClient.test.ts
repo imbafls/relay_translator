@@ -459,3 +459,56 @@ describe("the hello a publisher client sends", () => {
     }
   });
 });
+
+/**
+ * A remote relay that stops answering without closing the socket.
+ *
+ * `server.ts` fixed exactly this on its own side - audit finding 11c - and
+ * says why in place: "a TCP connection whose peer vanished without a FIN - a
+ * laptop lid, dropped wifi, a NAT timeout - stays OPEN on this side
+ * indefinitely". Its heartbeat terminates a socket that misses one round.
+ *
+ * Nothing protected the other end. This client pinged every 20 seconds and
+ * never looked at whether a pong came back, so a remote relay that went away
+ * without a FIN left the app "connected" for as long as the OS kept the socket:
+ * subtitles written into a dead pipe, the uplink chip green, and internet
+ * viewers receiving nothing. It is the one socket in this product that crosses
+ * the internet, which is where a half-open peer actually happens.
+ */
+describe("a remote relay that goes quiet without closing", () => {
+  it("is given up on, so the reconnect that already exists can run", async () => {
+    const states: string[] = [];
+    // a fast heartbeat so this is a test and not a wait; the shipped period is
+    // 20s and the rule is the same either way - two rounds with no answer
+    const c = new UplinkClient(`ws://127.0.0.1:${port}`, { onState: (s2) => states.push(s2), pingMs: 60 });
+    clients.push(c);
+    c.connect(HELLO);
+    await until(() => accepted.length === 1, "the first socket was never accepted");
+    await until(() => c.state === "connected", "the client never reported connected");
+
+    // the server never answers a ping - the harness records frames and replies
+    // to nothing, which is precisely a peer that has stopped listening
+    await until(() => accepted.length === 2, "it never gave up on a relay that stopped answering", 4000);
+    expect(states, "it never left the connected state").toContain("disconnected");
+  });
+
+  it("stays put while the relay is answering", async () => {
+    const c = new UplinkClient(`ws://127.0.0.1:${port}`, { pingMs: 60 });
+    clients.push(c);
+    // answer every ping, the way a live relay does
+    wss.on("connection", (ws) => {
+      ws.on("message", (data) => {
+        try {
+          if (JSON.parse(String(data)).type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+        } catch {
+          /* not our frame */
+        }
+      });
+    });
+    c.connect(HELLO);
+    await until(() => c.state === "connected", "the client never reported connected");
+
+    await settle(600); // ten heartbeat rounds
+    expect(accepted.length, "it tore down a connection that was answering").toBe(1);
+  });
+});

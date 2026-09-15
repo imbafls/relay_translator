@@ -27,6 +27,8 @@ export class UplinkClient {
     translates: true,
   };
   private pingSentAt = 0;
+  /** pings sent since the last pong; two rounds unanswered means the peer is gone */
+  private unanswered = 0;
 
   state: "idle" | "connecting" | "connected" | "disconnected" | "error" = "idle";
   /** last ping round-trip to the remote relay (ms), undefined until measured */
@@ -53,6 +55,12 @@ export class UplinkClient {
        * hardcoded `true`, so an owner that never wires this up is unaffected.
        */
       live?: () => boolean | undefined;
+      /**
+       * Heartbeat period. Twenty seconds shipped; a test drives it faster.
+       * Exposed because the alternative is a test that waits forty seconds to
+       * learn one thing.
+       */
+      pingMs?: number;
     } = {},
   ) {}
 
@@ -141,6 +149,7 @@ export class UplinkClient {
       }
       if (msg.type === "error") this.setState("error", msg.message);
       else if (msg.type === "pong") {
+        this.unanswered = 0;
         if (this.pingSentAt) this.rttMs = Math.max(0, Date.now() - this.pingSentAt);
         this.hooks.onStats?.({ remoteViewers: this.remoteViewers, rttMs: this.rttMs });
       } else if (msg.type === "viewers") {
@@ -190,14 +199,40 @@ export class UplinkClient {
     this.retryTimer = setTimeout(() => this.open(), delay);
   }
 
+  /**
+   * Ping, and give up on a peer that stops answering.
+   *
+   * `server.ts` does this on its own side already, and says why in place: a TCP
+   * connection whose peer vanished without a FIN - a laptop lid, dropped wifi,
+   * a NAT timeout - stays OPEN indefinitely. Without the same check here, a
+   * remote relay that went away silently left this client "connected", writing
+   * subtitles into a dead pipe while internet viewers got nothing.
+   *
+   * TWO rounds, where the server allows one. The server is dropping a socket it
+   * can rebuild for free; this is tearing down a live stream's uplink, and one
+   * dropped pong on a mobile link is not evidence of a dead relay. Closing is
+   * enough - `onclose` already runs the backoff and reconnect that exist.
+   */
   private startPing(): void {
     this.stopPing();
+    this.unanswered = 0;
+    const period = this.hooks.pingMs ?? 20000;
     const ping = (): void => {
+      if (this.unanswered >= 2) {
+        this.stopPing();
+        try {
+          this.ws?.close();
+        } catch {
+          /* already gone */
+        }
+        return;
+      }
+      this.unanswered += 1;
       this.pingSentAt = Date.now();
       this.send({ type: "ping" });
     };
     ping();
-    this.pingTimer = setInterval(ping, 20000);
+    this.pingTimer = setInterval(ping, period);
   }
 
   private stopPing(): void {
