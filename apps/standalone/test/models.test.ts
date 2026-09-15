@@ -217,6 +217,26 @@ describe("fresh archive attempts", () => {
     expect(fs.existsSync(modelDir())).toBe(false);
     expect(stagingDirs()).toEqual([]);
   });
+
+  /**
+   * The numbered staging folders arrived with the retry, but both cleanup
+   * sites still named `<id>.part` alone - the one folder a download had
+   * before there were ever two. So a numbered folder that outlived its own
+   * attempt's cleanup, which is the exact Windows lock the numbering exists
+   * for, had nothing left that would ever remove it: not the failure sweep,
+   * and not the person pressing REMOVE on the model it belonged to.
+   */
+  it("removes the numbered staging folders too, not just the first", () => {
+    fs.mkdirSync(modelDir(), { recursive: true });
+    for (const name of ["test-archive-model.part", "test-archive-model.part-2", "test-archive-model.part-3"]) {
+      fs.mkdirSync(path.join(dir, name), { recursive: true });
+      fs.writeFileSync(path.join(dir, name, "held-by-scanner"), "x");
+    }
+
+    store().remove("test-archive-model");
+
+    expect(stagingDirs(), "a numbered staging folder outlived the model it belonged to").toEqual([]);
+  });
 });
 
 describe("checking there is room before starting", () => {

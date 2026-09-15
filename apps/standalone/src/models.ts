@@ -292,6 +292,27 @@ export class ModelStore {
    */
   private fetching = new Map<string, Promise<void>>();
 
+  /**
+   * Every staging folder an archive download may have left behind for `id`.
+   *
+   * Attempts are numbered rather than reused, so naming `<id>.part` alone
+   * finds only the first: a folder still held when its own attempt tried to
+   * clean it up - the exact Windows lock the numbering exists for - is only
+   * ever found by looking for the prefix.
+   */
+  private stagingFor(id: string): string[] {
+    const prefix = `${id}.part`;
+    try {
+      return fs
+        .readdirSync(this.dir)
+        .filter((name) => name === prefix || name.startsWith(`${prefix}-`))
+        .map((name) => path.join(this.dir, name));
+    } catch {
+      // the model dir need not exist yet; there is then nothing to sweep
+      return [];
+    }
+  }
+
   async download(id: string): Promise<void> {
     const info = this.catalogue.find((m) => m.id === id);
     if (!info || info.provider !== "local" || !info.files) throw new Error(`unknown local model ${id}`);
@@ -396,7 +417,7 @@ export class ModelStore {
       this.errors.set(id, message);
       this.log("error", `model download failed: ${id} - ${message}`);
       // a half-unpacked archive must never look like a model on the next launch
-      const stale = info.archive ? [`${path.join(this.dir, id)}.part`] : [];
+      const stale = info.archive ? this.stagingFor(id) : [];
       if (unpacked) stale.push(path.join(this.dir, id));
       for (const folder of stale) {
         try {
@@ -626,10 +647,12 @@ export class ModelStore {
       this.log("warn", `model remove failed: ${id} - ${String(err)}`);
     }
     // leftover staging is its own problem: it must never block the removal above
-    try {
-      fs.rmSync(`${path.join(this.dir, id)}.part`, { recursive: true, force: true, maxRetries: 3 });
-    } catch (err) {
-      this.log("warn", `could not remove staging for ${id} - ${String(err)}`);
+    for (const staging of this.stagingFor(id)) {
+      try {
+        fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3 });
+      } catch (err) {
+        this.log("warn", `could not remove staging for ${id} - ${String(err)}`);
+      }
     }
     this.onChange();
   }
