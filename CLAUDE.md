@@ -117,7 +117,7 @@ All verified against `package.json` at v0.8.0.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | vitest, the whole suite. **69 files, 1190 tests**. ~40 s. The file count is guarded - `handoff.test.ts` fails if this line and the tree disagree - so if you add a test file, this number moves with it. |
+| `pnpm test` | vitest, the whole suite. **69 files**, ~40 s. The count is guarded: `handoff.test.ts` fails if this line and the tree disagree. It used to quote a test total too, and that drifted twice in two days - once inside the very commit that corrected it - because no cheap check can hold it. A number nothing can verify is worse than no number. |
 | `pnpm test:watch` | vitest in watch mode. |
 | `pnpm typecheck:test` | `tsc -p tsconfig.test.json --noEmit`. **Separate on purpose** — see gotchas. |
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |

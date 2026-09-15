@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   DEFAULT_CONFIG,
   FALLBACK_STT,
@@ -310,5 +312,48 @@ describe("channel clamping", () => {
 
   it("caps at what the capture worklet can actually interleave", () => {
     expect(clampChannels(MAX_CAPTURE_CHANNELS)).toBe(MAX_CAPTURE_CHANNELS);
+  });
+});
+
+/**
+ * README.md carries a table of the local models with a download size against
+ * each one, and ends it by saying this file "is the catalogue of record - the
+ * table above will drift before that does". It was right. Seven of the ten
+ * sizes had drifted, one of them by a factor of four and a half.
+ *
+ * That number is not decoration. It is what somebody picking a model decides
+ * on - "streaming English, larger" reads very differently at 68 MB than at
+ * 310 MB - and it is the one claim on that page a test can settle outright.
+ */
+describe("the model table in README.md", () => {
+  const readme = fs.readFileSync(path.resolve(__dirname, "..", "..", "..", "README.md"), "utf8");
+
+  /** `| \`local-x\` | what it is | 44 MB |` -> { id, mb } */
+  const rows = [...readme.matchAll(/^\|\s*`(local-[a-z0-9.-]+)`\s*\|[^|]*\|\s*(\d+)\s*MB\s*\|/gim)].map((m) => ({
+    id: m[1]!,
+    mb: Number(m[2]),
+  }));
+
+  it("found the table, so the assertions below are reading something", () => {
+    expect(rows.length).toBeGreaterThan(5);
+  });
+
+  it("names models that exist", () => {
+    const known = new Set(STT_MODELS.map((m) => m.id));
+    expect(rows.filter((r) => !known.has(r.id)).map((r) => r.id)).toEqual([]);
+  });
+
+  it("quotes the size the catalogue holds", () => {
+    const byId = new Map(STT_MODELS.map((m) => [m.id, m]));
+    const wrong = rows
+      .filter((r) => byId.get(r.id)?.sizeMb !== r.mb)
+      .map((r) => `${r.id}: README says ${r.mb} MB, the catalogue says ${byId.get(r.id)?.sizeMb} MB`);
+    expect(wrong, `the download size is what somebody picks a model on:\n${wrong.join("\n")}`).toEqual([]);
+  });
+
+  it("lists every local model, so a new one cannot be quietly left out", () => {
+    const listed = new Set(rows.map((r) => r.id));
+    const missing = STT_MODELS.filter((m) => m.id.startsWith("local-") && !listed.has(m.id)).map((m) => m.id);
+    expect(missing, "these are installable and the README does not mention them").toEqual([]);
   });
 });

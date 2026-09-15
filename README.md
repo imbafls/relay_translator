@@ -364,19 +364,22 @@ Hugging Face mirrors, downloaded file by file by the app):
 | id | what | size |
 | --- | --- | --- |
 | `local-zipformer-en-20m` | streaming English, word-by-word partials, lowest latency | 44 MB |
-| `local-zipformer-en` | streaming English, larger | 68 MB |
-| `local-nemotron-streaming` | Nemotron streaming 0.6B - live words, heavy | 651 MB |
-| `local-moonshine-tiny` | English utterances, very small | 118 MB |
-| `local-moonshine-base` | English utterances, more accurate | 274 MB |
-| `local-whisper-tiny-en` | Whisper Tiny, English | 99 MB |
-| `local-whisper-turbo` | Whisper Turbo - ~100 languages, slowest | 989 MB |
+| `local-zipformer-en` | streaming English, larger | 310 MB |
+| `local-nemotron-streaming` | Nemotron streaming 0.6B - live words, heavy | 475 MB |
+| `local-moonshine-tiny` | English utterances, very small | 108 MB |
+| `local-moonshine-base` | English utterances, more accurate | 251 MB |
+| `local-whisper-tiny-en` | Whisper Tiny, English | 118 MB |
+| `local-whisper-turbo` | Whisper Turbo - every language, slowest | 564 MB |
 | `local-sense-voice` | SenseVoice Small - zh / en / ja / ko / yue | 240 MB |
 | `local-parakeet-tdt-0.6b-v3` | NVIDIA Parakeet TDT 0.6B v3 - best accuracy, English + 24 European languages | 670 MB |
-| `local-parakeet-tdt-0.6b-v2` | the previous Parakeet | 631 MB |
+| `local-parakeet-tdt-0.6b-v2` | the previous Parakeet | 482 MB |
 
 The app groups these into LIGHT / MEDIUM / HEAVY and recommends a tier from the
 machine it is running on. `packages/shared/src/index.ts` is the catalogue of
-record - the table above will drift before that does.
+record. The table above drifted from it once - seven of the ten sizes were
+wrong, one by a factor of four and a half - so
+`packages/shared/test/catalogue.test.ts` now fails when the two disagree, and
+when a local model exists that this table does not list.
 
 Streaming models decode as you speak; the others segment speech with silero
 VAD (1 MB, fetched alongside) and decode each utterance, re-decoding the open
