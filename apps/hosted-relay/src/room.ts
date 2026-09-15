@@ -550,9 +550,10 @@ export class Room {
    * happens on a wake-up that was going to happen anyway, because the count is
    * only ever recomputed when a viewer arrives or leaves.
    */
-  private liveViewers(): WebSocket[] {
+  private liveViewers(): { live: WebSocket[]; dropped: number } {
     const now = Date.now();
     const live: WebSocket[] = [];
+    let dropped = 0;
     for (const ws of this.sockets(TAG_VIEWER)) {
       const last = this.ctx.getWebSocketAutoResponseTimestamp(ws);
       // null is "has never beaten", which is a viewer page served before the
@@ -568,16 +569,32 @@ export class Room {
       } catch {
         /* already gone, which is the outcome either way */
       }
+      dropped += 1;
     }
-    return live;
+    return { live, dropped };
   }
 
   private viewerCount(): number {
-    return this.liveViewers().length;
+    return this.liveViewers().live.length;
   }
 
   private broadcast(tag: string, msg: unknown): void {
-    for (const ws of this.sockets(tag)) send(ws, msg);
+    if (tag !== TAG_VIEWER) {
+      for (const ws of this.sockets(tag)) send(ws, msg);
+      return;
+    }
+    // The sweep belongs here as well as in `viewerCount()`, because the count
+    // is only recomputed when a viewer arrives or leaves: a room with one held
+    // socket and nobody else joining reported it for the whole stream, which is
+    // precisely when the streamer is looking at the readout. Captions are
+    // already happening and this object is already awake to fan them out, so
+    // this costs a timestamp read per viewer and no wake-up at all.
+    const { live, dropped } = this.liveViewers();
+    for (const ws of live) send(ws, msg);
+    // Only when it actually changed. A dense stream is a caption every 2.5 s,
+    // and re-announcing an unchanged number on each one would be a message per
+    // caption to the uplink that says nothing.
+    if (dropped > 0) this.broadcastViewerCount();
   }
 
   private broadcastViewerCount(): void {

@@ -94,6 +94,11 @@ function stand() {
     // registers is asserted in viewerPing.test.ts, and here it only has to not
     // be missing from the state handle the real object is given
     setWebSocketAutoResponse: () => undefined,
+    // null is "this socket has never sent a heartbeat", which is the one state
+    // that is never treated as dead - so nothing in this file is reaped, and
+    // these tests stay about what they were about. viewerReap.test.ts is where
+    // the timestamps mean something.
+    getWebSocketAutoResponseTimestamp: () => null,
   };
 
   // the runtime global the constructor reaches for, declared in cf.d.ts. Not
