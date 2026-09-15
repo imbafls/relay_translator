@@ -2407,3 +2407,129 @@ describe("a relay with no Deepgram key", () => {
     withMock.stop();
   });
 });
+
+/**
+ * The keepalive that stops the idle-billing gate flapping the pipeline.
+ *
+ * Two comments in the tree state the bound this rests on. `deepgram.ts`: "a
+ * live Deepgram socket that receives neither audio nor a KeepAlive closes on
+ * its own in roughly ten seconds". `session.ts`, at length: without the
+ * keepalive the socket idle-closes, `onClose` fires with `sttDegraded` still
+ * false, the session narrates "stt closed unexpectedly", flashes "speech
+ * pipeline lost" at every viewer, reopens ~300ms later - and repeats for as
+ * long as the gate stays shut, which for the default bound is the rest of the
+ * stream. The suppression of repeat narration never arms, because every one of
+ * those reopens succeeds.
+ *
+ * `DEEPGRAM_KEEPALIVE_MS` is what stands between that and the user, and
+ * nothing held it. A number whose only protection is a sentence about somebody
+ * else's timeout is the same shape as the reap window and the heartbeat
+ * interval, one system further out.
+ *
+ * Checked as behaviour rather than as a number, so that dropping the call and
+ * raising the interval both fail: with the gate shut and audio still arriving,
+ * the longest silence between keepalives has to leave room for one of them to
+ * be lost and still beat the ten seconds.
+ */
+describe("holding the speech socket open while the gate is shut", () => {
+  const SR = 16000;
+  const silent = (): Buffer => Buffer.alloc(SR * 2 * 0.1, 0);
+
+  /** Deepgram's own idle close, as both comments in the tree state it */
+  const DEEPGRAM_IDLE_CLOSE_MS = 10_000;
+
+  function gated() {
+    const sent: Buffer[] = [];
+    const beats: number[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        makeStt: (events: SttEvents): SttStream => {
+          setImmediate(() => events.onOpen?.());
+          return {
+            sendAudio: (chunk: Buffer) => {
+              sent.push(chunk);
+              return true;
+            },
+            keepAlive: () => beats.push(Date.now()),
+            close() {},
+          };
+        },
+        idleBillingStopMinutes: 1,
+        sttStats: { seconds: 0, localSeconds: 0 },
+        toViewers: () => {},
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+    return { session, sent, beats };
+  }
+
+  it("sends one often enough that a lost beat still beats the idle close", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 2_000_000;
+    vi.setSystemTime(t0);
+    const g = gated();
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    g.session.audio(silent()); // seeds the clock
+    vi.setSystemTime(t0 + 65_000); // past the one-minute bound: the gate shuts
+    g.session.audio(silent());
+    const forwarded = g.sent.length;
+
+    // thirty seconds of a quiet game, with the publisher still sending
+    for (let ms = 66_000; ms <= 96_000; ms += 100) {
+      vi.setSystemTime(t0 + ms);
+      g.session.audio(silent());
+    }
+
+    expect(g.sent.length, "the gate is not actually shut, so this proves nothing about keepalives").toBe(
+      forwarded,
+    );
+    expect(g.beats.length, "no keepalive went out at all while the gate was shut").toBeGreaterThan(3);
+
+    const gaps = g.beats.slice(1).map((t, i) => t - g.beats[i]!);
+    const longest = Math.max(...gaps);
+    expect(
+      longest * 2,
+      `the longest gap between keepalives was ${longest}ms, and Deepgram closes an idle socket in about ` +
+        `${DEEPGRAM_IDLE_CLOSE_MS}ms. One lost frame then takes the socket down, and the gate flaps the ` +
+        "pipeline open and closed for the rest of the stream",
+    ).toBeLessThanOrEqual(DEEPGRAM_IDLE_CLOSE_MS);
+
+    g.session.stop();
+    vi.useRealTimers();
+  });
+
+  it("sends none while the gate is open, because the audio is holding it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = 3_000_000;
+    vi.setSystemTime(t0);
+    const g = gated();
+    g.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let ms = 0; ms <= 20_000; ms += 100) {
+      vi.setSystemTime(t0 + ms);
+      g.session.audio(silent());
+    }
+
+    expect(
+      g.beats.length,
+      "a keepalive went out while audio was still being forwarded, which is a frame Deepgram has to read " +
+        "for nothing on every session that is working",
+    ).toBe(0);
+
+    g.session.stop();
+    vi.useRealTimers();
+  });
+});
