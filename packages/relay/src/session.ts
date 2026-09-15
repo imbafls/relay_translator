@@ -571,7 +571,7 @@ export class PublisherSession {
           ...tag,
         });
         this.deps.toPublisher?.({ type: "subtitle", id, source: text, latency, ...tag });
-        if (!this.translator) return;
+        if (!this.translator || !text.trim()) return;
         this.inflight += 1;
         this.translator
           .translate(text)

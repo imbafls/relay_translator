@@ -101,6 +101,56 @@ describe("source text and translation ordering", () => {
   });
 });
 
+describe("an empty final from the recogniser", () => {
+  /**
+   * Deepgram ends an utterance that produced no words with an empty final, and
+   * on a silent channel it does that every few seconds. v0.8.0 lets those
+   * through onFinal so the reserved interim id is released - but onFinal then
+   * handed the empty string to the translator. Gemini answered with an
+   * invented callout, the cache kept it, and every later empty final served
+   * the same invented line to viewers in under a millisecond.
+   */
+  it("retires the interim without ever reaching the translator", async () => {
+    const seen: string[] = [];
+    const viewers: ServerToViewer[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: true,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        mockStt: [""],
+        translator: {
+          async translate(text: string): Promise<string> {
+            seen.push(text);
+            return `[vi] ${text}`;
+          },
+        },
+        toViewers: (msg) => viewers.push(msg),
+        setLive: () => {},
+        log: () => {},
+      },
+    );
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    await tick(60);
+    session.stop();
+
+    const finals = viewers.filter(
+      (m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle",
+    );
+    expect(finals, "the empty final must still reach viewers to retire the interim").toHaveLength(1);
+    expect(finals[0].source).toBe("");
+    expect(seen, "the empty final was sent to the translator").toEqual([]);
+  });
+});
+
 describe("stopping while a translation is still running", () => {
   it("stop() returns without waiting for the translation", async () => {
     const translator = slowTranslator(200);
