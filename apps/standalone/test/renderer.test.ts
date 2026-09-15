@@ -540,6 +540,58 @@ describe("saved transcripts", () => {
    * writer appending to a path that has gone, and main refuses it anyway - so
    * the button does not offer what would be refused.
    */
+  /**
+   * DELETE arms to SURE? before it does anything, and the arming has to belong to
+   * the session it was pressed on. Picking a different row while it is armed, or
+   * leaving the view and coming back, must both put it back - otherwise a press
+   * meant for one recording lands on another, and what it destroys is the only
+   * copy of what somebody said.
+   *
+   * The arm-then-confirm path is covered above. These are the two ways out of it,
+   * and neither was.
+   */
+  it("forgets an armed DELETE when a different session is opened", async () => {
+    fakeSaved = [summary(NEWER), summary(OLDER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER), [OLDER]: body(OLDER) };
+    await enterSaved();
+
+    await click("savedDelete");
+    expect(document.getElementById("savedDelete")!.textContent, "the first press did not arm it").toBe(
+      "SURE?",
+    );
+
+    // the other session in the list
+    const rows = [...document.querySelectorAll<HTMLElement>("#savedList .saved-item")];
+    const other = rows.find((r) => !r.classList.contains("open")) ?? rows[1];
+    other.click();
+    await settle(40);
+
+    expect(
+      document.getElementById("savedDelete")!.textContent,
+      "DELETE stayed armed after moving to another session - the next press would delete the wrong one",
+    ).not.toBe("SURE?");
+    expect(calls.deleted, "nothing should have been deleted yet").toEqual([]);
+  });
+
+  it("forgets an armed DELETE when the view is left", async () => {
+    fakeSaved = [summary(NEWER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER) };
+    await enterSaved();
+
+    await click("savedDelete");
+    expect(document.getElementById("savedDelete")!.textContent).toBe("SURE?");
+
+    await click("savedBack");
+    await click("savedBtn");
+    await settle(40);
+
+    expect(
+      document.getElementById("savedDelete")!.textContent,
+      "DELETE was still armed on the way back in, so one press would destroy a transcript",
+    ).not.toBe("SURE?");
+    expect(calls.deleted).toEqual([]);
+  });
+
   it("will not offer to delete the session still being recorded", async () => {
     fakeSaved = [summary(NEWER)];
     fakeSavedBodies = { [NEWER]: body(NEWER) };
