@@ -51,6 +51,11 @@ function run(cwd: string): { code: number; out: string } {
 const OK = {
   "apps/standalone/renderer/index.html": `<div id="alpha"></div>`,
   "apps/standalone/renderer/app.ts": `$("alpha");`,
+  // the renderer is several modules, and every one of them is read
+  "apps/standalone/renderer/dom.ts": `export const noop = 0;`,
+  "apps/standalone/renderer/log.ts": `export const noop = 0;`,
+  "apps/standalone/renderer/meter.ts": `export const noop = 0;`,
+  "apps/standalone/renderer/whatsNew.ts": `export const noop = 0;`,
   "packages/viewer/public/index.html": `<div id="beta"></div>`,
   "packages/viewer/public/app.js": `$("beta");`,
   // the home page is its own script source - the markup carries an inline script
@@ -158,5 +163,29 @@ describe("the id checker", () => {
     const res = run(tree(missing));
     expect(res.code).toBe(1);
     expect(res.out).toContain("is missing");
+  });
+
+  /**
+   * The coverage half. The list of scripts was written down, and the renderer
+   * stopped being one file: `log.ts`, `meter.ts` and `whatsNew.ts` looked up
+   * six ids between them that nothing here read. A new module is the same
+   * situation arriving again, so an unassigned one is refused rather than
+   * swept in - `packages/viewer/public/` holds two pages, and a script guessed
+   * into the wrong one reports the other page's ids as dangling.
+   */
+  it("refuses a script beside a page that no pair reads", () => {
+    const res = run(tree({ ...OK, "apps/standalone/renderer/newPanel.ts": `$("alpha");` }));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("newPanel.ts");
+  });
+
+  it("says so when a script it is told to read has gone, rather than throwing", () => {
+    // an unhandled ENOENT exits non-zero too, and says nothing a reader can use
+    const missing = { ...OK } as Record<string, string>;
+    delete missing["apps/standalone/renderer/whatsNew.ts"];
+    const res = run(tree(missing));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("whatsNew.ts");
+    expect(res.out, "it threw instead of reporting").not.toContain("ENOENT");
   });
 });

@@ -5,13 +5,21 @@
  *
  * Exits non-zero on a mismatch; run by CI and safe to run locally.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const PAIRS = [
   {
     name: "desktop renderer",
     html: "apps/standalone/renderer/index.html",
-    scripts: ["apps/standalone/renderer/app.ts"],
+    // every module the renderer bundle pulls in, not just the entry: they are
+    // all loaded by the one page, and any of them may look an element up
+    scripts: [
+      "apps/standalone/renderer/app.ts",
+      "apps/standalone/renderer/dom.ts",
+      "apps/standalone/renderer/log.ts",
+      "apps/standalone/renderer/meter.ts",
+      "apps/standalone/renderer/whatsNew.ts",
+    ],
   },
   {
     name: "phone/OBS viewer",
@@ -34,6 +42,53 @@ const DYNAMIC = new Set();
 
 let failures = 0;
 
+/**
+ * Every script beside a page has to be assigned to one of the pairs above.
+ *
+ * The list was written down, and the renderer is no longer one file: `dom.ts`,
+ * `log.ts`, `meter.ts` and `whatsNew.ts` sit next to `app.ts` and none of them
+ * was being read. None looks up an id today, so nothing was wrong - but the
+ * first one that does would go unchecked in exactly the silence this script
+ * exists to break, and nothing would say so.
+ *
+ * Refusing an unassigned file rather than globbing them all in, deliberately:
+ * `packages/viewer/public/` holds two pages, and a script swept into the wrong
+ * one reports the other page's ids as dangling. That trap already cost an
+ * iteration on the stylesheet half. A human says which page a new module
+ * belongs to; this only insists that somebody does.
+ *
+ * This is the second habit from the fifth lesson - a coverage list should be
+ * discovered rather than written down - applied to the last checker here still
+ * carrying one. `check-floating-promises.mjs` reads the tree for projects,
+ * `tsconfigCorrectness.test.ts` for configs, `reducedMotion.test.ts` for
+ * stylesheets.
+ */
+const SCRIPT_DIRS = [
+  { dir: "apps/standalone/renderer", ext: [".ts"] },
+  { dir: "packages/viewer/public", ext: [".js"] },
+];
+
+const assigned = new Set(PAIRS.flatMap((p) => p.scripts));
+for (const { dir, ext } of SCRIPT_DIRS) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    failures += 1;
+    console.error(`\n${dir} is missing, so its scripts were not checked`);
+    continue;
+  }
+  const beside = entries
+    .filter((name) => ext.some((e) => name.endsWith(e)))
+    .map((name) => `${dir}/${name}`)
+    .filter((rel) => !assigned.has(rel));
+  if (beside.length) {
+    failures += beside.length;
+    console.error(`\n${dir}: ${beside.length} script(s) beside a page that no pair reads`);
+    for (const rel of beside) console.error(`  - ${rel}  (add it to the pair for its page)`);
+  }
+}
+
 for (const pair of PAIRS) {
   let html;
   try {
@@ -50,7 +105,17 @@ for (const pair of PAIRS) {
 
   const referenced = new Map();
   for (const file of pair.scripts) {
-    const src = readFileSync(file, "utf8");
+    let src;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
+      // a script this pair names but that is not there: a move or a deletion
+      // the list did not follow. Same rule as a missing page - it is reported,
+      // not skipped, and not left to throw an unhandled ENOENT either
+      failures += 1;
+      console.error(`\n${pair.name}: ${file} is listed but missing, so its ids were not checked`);
+      continue;
+    }
     const patterns = [
       // $("id") / inp("id") / sel("id") / getElementById("id")
       /(?:\$|inp|sel|getElementById)\(\s*["']([A-Za-z][\w-]*)["']\s*\)/g,
@@ -138,7 +203,7 @@ for (const sheet of SHEETS) {
 }
 
 if (failures) {
-  console.error(`\n${failures} unresolved element id(s)`);
+  console.error(`\n${failures} problem(s) above`);
   process.exit(1);
 }
 console.log("\nall renderer element ids resolve");
