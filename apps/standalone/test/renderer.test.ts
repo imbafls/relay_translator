@@ -2487,3 +2487,157 @@ describe("sending a feedback report", () => {
     );
   });
 });
+
+/**
+ * What a long session costs the caption stage.
+ *
+ * A session runs for hours and every finished line touches the DOM, a capped row
+ * buffer, a capped log buffer and the latency badge. Nothing measured any of it,
+ * so any change made here would have been a guess - which is the whole reason
+ * this repo's own rule says a performance change needs a number before and
+ * after.
+ *
+ * So this is the number. It drives finals and partials through the same wiring
+ * point the relay client uses, in batches, and prints the per-line cost as it
+ * goes; `npx vitest run apps/standalone/test/renderer.test.ts -t "a long session"`
+ * re-runs it whenever somebody wants to compare.
+ *
+ * WHAT IS ASSERTED is not the timing. Wall clock under happy-dom on a shared CI
+ * runner is exactly the kind of observable that goes green when it should be red,
+ * and a threshold tight enough to catch a real regression would fail on a noisy
+ * afternoon. What is asserted is what must stay true however long the session
+ * runs: the stage and the log stay at their caps, and the cost per line does not
+ * climb - the shape that would say something is being re-walked on every caption
+ * rather than handled once. The multiplier there is deliberately loose, because
+ * it is there to catch a change from O(1) to O(n), not a slow afternoon.
+ */
+describe("a long session on the caption stage", () => {
+  type Seg = { id: number; source: string; target?: string; channel?: number; speaker?: string };
+  let hooks: { onSubtitle?: (seg: Seg) => void; onPartial?: (seg: Seg) => void };
+
+  /** MAX_ROWS in the renderer; not exported, so pinned here */
+  const MAX_ROWS = 12;
+  /** appendLog's cap on the LOG box */
+  const MAX_LOG = 400;
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: typeof hooks & { onState?: (s: string) => void };
+    }) {
+      hooks = this.hooks;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+
+  const finals = (): number => document.querySelectorAll("#lines .row:not(.interim)").length;
+  const logLines = (): number => (document.getElementById("log") as HTMLElement).children.length;
+
+  /**
+   * One utterance as the relay actually delivers it: a partial while it is being
+   * said, then the final, then the same id again carrying the translation.
+   */
+  function utterance(id: number): void {
+    hooks.onPartial!({ id, source: "rush", channel: 0 });
+    hooks.onSubtitle!({ id, source: `rush B on ${id}`, channel: 0, speaker: "YOU" });
+    hooks.onSubtitle!({ id, source: `rush B on ${id}`, target: `đẩy B ${id}`, channel: 0, speaker: "YOU" });
+  }
+
+  /** mean milliseconds per utterance over `count`, driven from `from` */
+  function batch(from: number, count: number): number {
+    const started = performance.now();
+    for (let i = 0; i < count; i++) utterance(from + i);
+    return (performance.now() - started) / count;
+  }
+
+  /**
+   * Check the caps after sixty lines, before anything expensive runs.
+   *
+   * Both tests below drive thousands of utterances in a synchronous loop, and
+   * vitest's `testTimeout` cannot interrupt one of those - it only fires between
+   * awaits. So a broken cap does not fail these tests, it HANGS them: raising
+   * MAX_ROWS and rerunning turned a 2.6-second test into one still going ten
+   * minutes later, because every caption was re-walking a DOM that never stopped
+   * growing. A guard that hangs is a guard nobody can read, so the cheap check
+   * goes first and a regression is red in under a second.
+   */
+  function probeCaps(): void {
+    for (let i = 1; i <= 60; i++) utterance(900_000 + i);
+    expect(finals(), "the stage is not holding at MAX_ROWS - stopping before the long run").toBeLessThanOrEqual(
+      MAX_ROWS,
+    );
+    expect(logLines(), "the LOG box is not holding at its cap - stopping before the long run").toBeLessThanOrEqual(
+      MAX_LOG,
+    );
+  }
+
+  it("holds the stage and the log at their caps however long it runs", async () => {
+    await goLive();
+    probeCaps();
+    const BATCH = 500;
+    const BATCHES = 6;
+
+    const means: number[] = [];
+    for (let b = 0; b < BATCHES; b++) means.push(batch(1 + b * BATCH, BATCH));
+
+    const lines = BATCH * BATCHES;
+    // process.stdout, NOT console: this file runs under happy-dom, so `console`
+    // is the virtual window's and writes nowhere a terminal can see it. The
+    // first version of this printed the whole baseline into a void and the test
+    // still passed, which is this repo's first lesson wearing a different hat.
+    process.stdout.write(
+      `\ncaption path: ${lines} utterances (partial + final + translation each)\n` +
+        means.map((m, i) => `  batch ${i + 1}: ${m.toFixed(4)} ms/utterance`).join("\n") +
+        `\n  stage rows: ${finals()}/${MAX_ROWS}   log lines: ${logLines()}/${MAX_LOG}\n`,
+    );
+
+    expect(finals(), `the stage grew past MAX_ROWS after ${lines} utterances`).toBeLessThanOrEqual(
+      MAX_ROWS,
+    );
+    expect(logLines(), `the LOG box grew past its cap after ${lines} utterances`).toBeLessThanOrEqual(
+      MAX_LOG,
+    );
+    // one open interim per channel, and this session has one channel
+    expect(
+      document.querySelectorAll("#lines .row.interim").length,
+      "interim rows accumulated instead of being reused per channel",
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("does not get slower the longer it runs", async () => {
+    await goLive();
+    probeCaps();
+    const BATCH = 500;
+
+    const first = batch(1, BATCH);
+    for (let b = 1; b < 5; b++) batch(1 + b * BATCH, BATCH);
+    const last = batch(1 + 5 * BATCH, BATCH);
+
+    // A floor, because the first batch also pays for JIT warm-up and can measure
+    // near zero - without it the ratio is noise divided by noise. Five times is
+    // loose on purpose: it is here to catch O(1) becoming O(n) over 3,000
+    // utterances, which would be orders of magnitude, not a busy CI runner.
+    const floor = 0.05;
+    expect(
+      last / Math.max(first, floor),
+      `the last 500 utterances cost ${last.toFixed(4)} ms each against ${first.toFixed(4)} at the start - something is being re-walked per caption`,
+    ).toBeLessThan(5);
+  });
+});
