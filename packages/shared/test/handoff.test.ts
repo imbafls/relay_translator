@@ -255,3 +255,77 @@ describe("a documented launch of the packaged app cannot update itself", () => {
     expect(problems).toEqual([]);
   });
 });
+
+/**
+ * The header above says a document cannot be asserted true, only checked for a
+ * pointer that still resolves. That is right about most of a document and
+ * wrong about a claim the tree can be asked about directly - and CLAUDE.md
+ * makes three of those. All three had drifted, two of them because this repo's
+ * own improvement loop changed the thing being described and left the sentence
+ * behind.
+ */
+describe("the claims CLAUDE.md makes about the tree", () => {
+  const claude = (): string => fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8");
+
+  /** what vitest's own include globs would collect */
+  function testFiles(): string[] {
+    const found: string[] = [];
+    for (const group of ["packages", "apps"]) {
+      const base = path.join(root, group);
+      if (!fs.existsSync(base)) continue;
+      for (const pkg of fs.readdirSync(base)) {
+        const dir = path.join(base, pkg, "test");
+        if (!fs.existsSync(dir)) continue;
+        const walk = (d: string): void => {
+          for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const full = path.join(d, e.name);
+            if (e.isDirectory()) walk(full);
+            else if (e.name.endsWith(".test.ts")) found.push(full);
+          }
+        };
+        walk(dir);
+      }
+    }
+    return found;
+  }
+
+  it("quotes the number of test files the repo actually has", () => {
+    const real = testFiles().length;
+    expect(real).toBeGreaterThan(10);
+
+    // every "N files" / "N test files" in the doc has to be that number. It is
+    // quoted twice, and the drift that prompted this updated neither.
+    const quoted = [...claude().matchAll(/(\d+)\s+(?:test\s+)?files\b/g)].map((m) => Number(m[1]));
+    expect(quoted.length, "CLAUDE.md no longer quotes a file count anywhere").toBeGreaterThan(0);
+    expect(
+      quoted.filter((n) => n !== real),
+      `the suite has ${real} test files and CLAUDE.md says ${quoted.join(" and ")}`,
+    ).toEqual([]);
+  });
+
+  it("is right that nothing mocks a module", () => {
+    // the claim is about `vi.mock`, module mocking - not `vi.mocked`, which is
+    // a type helper over a spy and does appear once, nor the two comments that
+    // say the words while promising not to do it
+    const offenders = testFiles().filter((f) => /vi\.mock\(/.test(fs.readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(root, f)), "CLAUDE.md says zero, and means it").toEqual([]);
+  });
+
+  it("does not call the viewer's typecheck a no-op while it runs tsc", () => {
+    const script = (
+      JSON.parse(fs.readFileSync(path.join(root, "packages", "viewer", "package.json"), "utf8")) as {
+        scripts?: Record<string, string>;
+      }
+    ).scripts?.typecheck;
+    if (!script?.includes("tsc")) return;
+
+    const row = claude()
+      .split(/\r?\n/)
+      .find((l) => l.includes("| `packages/viewer` |"));
+    expect(row, "the package table no longer has a packages/viewer row").toBeDefined();
+    expect(
+      /typecheck[^|]*node -e/.test(row ?? ""),
+      `packages/viewer typecheck is ${JSON.stringify(script)}, but CLAUDE.md still calls it a no-op`,
+    ).toBe(false);
+  });
+});

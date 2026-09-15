@@ -107,7 +107,7 @@ is visible from outside the code:
 | `packages/shared` | The contract: `AppConfig` + `DEFAULT_CONFIG` and the edge validators every hand-editable key goes through (`validRelayPort`, `validIdleBillingStopMinutes`, `validTranscriptDir`), the STT model catalogue, the wire types for every hop including the saved-transcript shapes, `isAllowedUpdateFeed()` and `redactLog()`. `src/index.ts`, plus `src/changelog.ts` - one source for the what's-new panel and the release notes. The loopback control API this row once described was deleted in 0.5.11. Every other package typechecks against its emitted `.d.ts`, so **it must be built first on a clean checkout**. |
 | `packages/relay` | The relay server itself: HTTP + WebSocket (`server.ts`), publisher session and broadcast (`session.ts`), Deepgram STT (`deepgram.ts`), Gemini translation (`gemini.ts`), local sherpa-onnx STT and its worker (`localStt.ts`, `localSttWorker.ts`), token/state/dotenv handling (`config.ts`), and the `cli.ts` entry that becomes the SEA binary for anyone hosting their own relay. `onBroadcast` is the viewers' copy of each line; `onTranscript` is the publisher's, as heard. |
 | `packages/companion` | Shared client side: audio capture and the downsampling worklet (`capture/`), the relay client (`relayClient.ts`), the uplink client (`uplinkClient.ts`), config store and merge (`config.ts`), and claiming a room on the hosted relay (`hostedRoom.ts`). |
-| `packages/viewer` | The phone/OBS subtitle page (`public/`) that the relay serves. Plain JS, no build step (`build` and `typecheck` are `node -e "1"`). |
+| `packages/viewer` | The phone/OBS subtitle page (`public/`) that the relay serves. Plain JS with no build step, so `build` is `node -e "1"` - but `typecheck` is real: `tsconfig.json` runs `checkJs` over `public/app.js`, because a page nothing checks is a page whose typo ships. `noImplicitAny` is the one thing off, and that config says why. |
 | `apps/standalone` | The Electron desktop app, **Windows-only**. `src/main.ts` (embedded relay, uplink, tray, IPC), `src/transcripts.ts` (saved transcripts: writer, reader, export - no Electron import, so it tests under plain Node), `src/models.ts` (local model download/extract), `src/updater.ts` (electron-updater), `renderer/` (the UI). This is the app users install. |
 | `apps/hosted-relay` | The Cloudflare Worker behind `textrelay.cc` and `relay.supr.systems`: one Durable Object per streamer, rooms claimed with `POST /claim`, the landing page, and `POST /feedback` into R2. Fan-out only - no STT, no translation, no copy kept. `pnpm deploy:hosted` publishes it; `apps/hosted-relay/README.md` has the verify scripts. |
 
@@ -117,7 +117,7 @@ All verified against `package.json` at v0.8.0.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | vitest, the whole suite. **60 files, 1051 tests** at v0.8.1. ~40 s. |
+| `pnpm test` | vitest, the whole suite. **69 files, 1190 tests**. ~40 s. The file count is guarded - `handoff.test.ts` fails if this line and the tree disagree - so if you add a test file, this number moves with it. |
 | `pnpm test:watch` | vitest in watch mode. |
 | `pnpm typecheck:test` | `tsc -p tsconfig.test.json --noEmit`. **Separate on purpose** — see gotchas. |
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
@@ -217,8 +217,16 @@ else if `updateFeedUrl` is set.
   describing a merged branch as unmerged and a retired VPS as the release
   target. `packages/shared/test/handoff.test.ts` guards it, this file,
   `docs/OPEN-WORK.md` and `README.md`: every `pnpm <script>`, file and document
-  they name has to exist. A guard test cannot catch a stale claim, though, only
-  a dangling pointer - which is exactly how both files drifted.
+  they name has to exist. A guard test cannot catch an arbitrary stale claim,
+  only a dangling pointer - which is exactly how both files drifted.
+  **It can catch a claim that contradicts something the tree can be asked
+  about,** though, and that turns out to cover most of the ones that matter.
+  Three live here: the test-file count on this page, the `vi.mock` claim below,
+  and the row above about the viewer's typecheck. `reap.test.ts` does the same
+  for the hosted README's reaping window, and `openWorkCurrent.test.ts` for two
+  entries in the backlog that described work already finished. The pattern is
+  always the same - assert the code's state, then assert the sentence does not
+  deny it - and each of these was written after the document had already lied.
 - **`pnpm dev:app` needs Electron's binary, which pnpm's postinstall may never
   have fetched.** `node_modules/.pnpm/electron@<v>/node_modules/electron/` ships
   only `index.js` until `install.js` downloads `dist/` (~190 MB) and writes
@@ -248,7 +256,7 @@ documentation and config — `versions.test.ts`, `workflows.test.ts`,
 guard non-source facts.
 
 **No mocking of the core relay or the translation state machine.** Verified:
-`vi.mock` appears in **zero** of the 59 test files. The relay tests stand up a
+`vi.mock` appears in **zero** of the 69 test files. The relay tests stand up a
 real `startRelay` on an ephemeral port and talk to it over real WebSockets; the
 renderer and viewer tests run under happy-dom against the real markup. Keep it
 that way — mocking the thing under test is what the audit found hiding several
