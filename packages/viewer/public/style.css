@@ -44,6 +44,14 @@ body.light {
   --rule: rgba(19, 19, 19, 0.16);
   --rule-2: rgba(19, 19, 19, 0.09);
   --rule-3: rgba(19, 19, 19, 0.3);
+  /* The second speaker's tag, which this block used to leave on the dark
+     theme's blues: 1.89:1 and 3.16:1 on this background, both under WCAG AA,
+     and the wrong way round - the history tag had MORE contrast than the newest
+     line's, so the eye was pulled to the older one. Darkened to the ratios the
+     same two tokens hold on the dark theme (8.49 and 5.07), which keeps them
+     readable and keeps them apart. */
+  --chat: #314654;
+  --chat-2: #47697d;
 }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 [hidden] { display: none !important; }

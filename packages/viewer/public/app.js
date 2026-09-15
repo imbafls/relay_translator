@@ -34,7 +34,17 @@
   const DARK = { fg: "#efeae0", accent: "#e0a43a", bg: "#131313", shadow: false };
   const THEMES = {
     dark: DARK,
-    light: { fg: "#131313", accent: "#b8801f", bg: "#f0eee9", shadow: false },
+    // The accent colours the tag saying who is speaking NOW, at 10.5px. On this
+    // background the old #b8801f measured 2.95:1 - under WCAG AA's 4.5 for
+    // normal text, and under even the 3:1 large-text floor - so on the theme
+    // most likely to be chosen for reading in daylight, the one label that says
+    // who is talking was the least legible thing on the page.
+    //
+    // Darkened to the ratio the same token holds on the dark theme (8.44:1)
+    // rather than to the first value that passes. Stopping at the threshold
+    // would have left the newest speaker's tag fainter than ordinary history
+    // text, inverting the emphasis the design is built on.
+    light: { fg: "#131313", accent: "#574016", bg: "#f0eee9", shadow: false },
     "obs-black": { fg: "#ffffff", accent: "#e0a43a", bg: "#000000", shadow: true },
     "obs-clear": { fg: "#ffffff", accent: "#e0a43a", bg: "#000000", shadow: true },
   };
@@ -74,6 +84,14 @@
         ? Math.min(120, Math.max(0, hold))
         : DEFAULT_STYLE.holdSeconds;
       if (!FONT_STACKS[merged.font]) merged.font = "relay";
+      // A reader who picked Light before the accent was corrected has the old
+      // #b8801f saved on their device, and nothing would ever replace it - the
+      // fix would reach new readers only, and they are not the ones already
+      // squinting at it. Lift exactly that value on exactly that theme, so a
+      // colour they chose themselves is left alone.
+      if (merged.theme === "light" && String(merged.accent).toLowerCase() === "#b8801f") {
+        merged.accent = THEMES.light.accent;
+      }
       return merged;
     } catch {
       return { ...DEFAULT_STYLE };

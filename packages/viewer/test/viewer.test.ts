@@ -1074,3 +1074,49 @@ describe("a stream that restarts while somebody is watching", () => {
     expect(lineTexts(), "stopping the stream wiped what had been said").toEqual(["rush B"]);
   });
 });
+
+/**
+ * The Light theme's accent used to be `#b8801f`, which measures 2.95:1 on that
+ * theme's background - under WCAG AA, and under even the large-text floor. It
+ * colours the tag saying who is speaking now, at 10.5px, on the theme most
+ * likely to be picked for reading in daylight.
+ *
+ * Correcting the preset only helps people who have not chosen Light yet. The
+ * reader already squinting at it has the old value saved on their own device
+ * and nothing would ever replace it, so `loadStyle` lifts exactly that value on
+ * exactly that theme - and leaves a colour they picked themselves alone.
+ */
+describe("a reader who chose the Light theme before its accent was legible", () => {
+  const saved = (style: Record<string, unknown>): void => {
+    localStorage.setItem("relay-style-v2", JSON.stringify(style));
+  };
+  const accent = (): string =>
+    document.documentElement.style.getPropertyValue("--accent").trim().toLowerCase();
+
+  afterEach(() => localStorage.clear());
+
+  it("is moved off the accent that could not be read", () => {
+    saved({ theme: "light", fg: "#131313", accent: "#b8801f", bg: "#f0eee9" });
+    boot();
+
+    expect(accent(), "the unreadable accent was left on a device that already had it").not.toBe(
+      "#b8801f",
+    );
+  });
+
+  it("keeps an accent they chose for themselves", () => {
+    saved({ theme: "light", fg: "#131313", accent: "#2f6f3f", bg: "#f0eee9" });
+    boot();
+
+    expect(accent(), "a colour the reader picked was overwritten").toBe("#2f6f3f");
+  });
+
+  it("leaves the dark theme's accent alone", () => {
+    saved({ theme: "dark", fg: "#efeae0", accent: "#e0a43a", bg: "#131313" });
+    boot();
+
+    expect(accent(), "the dark theme's accent was changed by a light-theme migration").toBe(
+      "#e0a43a",
+    );
+  });
+});
