@@ -162,7 +162,10 @@ button:disabled { cursor: default; }
    transcript: what was said stays, dimmed, behind the reason it stopped. */
 /* The link is masked until clicked - it is the whole auth model, and it sat
    in full on screen for the entire session. Signal that it is a control. */
-.link-url { cursor: pointer; }
+/* a <button>, not a <span>: clicking it is how the link is revealed, and a span
+   with an onclick is a control only a mouse can operate. The button reset at the
+   top of this file strips the chrome, so only the centring has to be undone. */
+.link-url { cursor: pointer; text-align: left; }
 .link-url.masked:hover { color: var(--ink); }
 
 .idle.over-lines {
@@ -497,6 +500,22 @@ select option { background: var(--bg); color: var(--ink); }
 }
 .mselect:hover { color: var(--ink); }
 .mselect:disabled { color: var(--dim); cursor: default; opacity: 1; }
+
+/* The three selects above each set `outline: none`, which left a keyboard user
+   with nothing to follow through the signal-chain strip - the console's main
+   controls, on a surface driven while a game is running, so a hand is often on
+   the keyboard rather than the mouse. `.uinput` had a focus treatment of its
+   own; these had none.
+   `:focus-visible` rather than `:focus`, so a mouse click still draws nothing -
+   that is what removing the outline was reaching for. Ink rather than amber:
+   DESIGN.md keeps amber for live and for things needing attention, and focus is
+   neither. Square, like everything else. */
+.uselect:focus-visible,
+.vselect:focus-visible,
+.mselect:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
 .toggle-wrap { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--dim); }
 .toggle-wrap.on { color: var(--ink); }
 .sq-toggle { width: 22px; height: 12px; border: 1px solid currentColor; position: relative; display: inline-block; }
