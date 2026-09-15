@@ -410,6 +410,37 @@ describe("the pointer from CLAUDE.md into the iteration log", () => {
     );
   });
 
+  /**
+   * A count of commits is a position dressed up as a fact: it is true on the
+   * day it is written and wrong on every day after, in a file that is appended
+   * to. This is the same decay the test above is about - CLAUDE.md calling the
+   * lessons "the end of that file" while fifty turns piled up behind them - and
+   * the same fix applies, which is to say what the section covers and anchor it
+   * to something that does not move.
+   *
+   * It is enforced on headings only. A count inside the prose, next to the
+   * commit it was true at, is a dated statement rather than a decaying one.
+   */
+  it("heads its sections without a commit count, which only decays", () => {
+    const NUMBER =
+      "\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|" +
+      "sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred";
+    const counting = new RegExp(`\\b(?:${NUMBER})(?:[- ](?:${NUMBER}))?\\s+commits\\b`, "i");
+
+    const headings = log()
+      .split(/\r?\n/)
+      .filter((l) => /^#{1,6}\s/.test(l));
+    expect(headings.length, "ITERATION_LOG.md has no headings at all, so this checks nothing").toBeGreaterThan(10);
+
+    const decaying = headings.filter((h) => counting.test(h));
+    expect(
+      decaying,
+      "a heading counts commits, and the run it counts keeps growing:\n" +
+        decaying.join("\n") +
+        "\nSay what the section covers and anchor it to a commit, the way the lessons pointer was fixed.",
+    ).toEqual([]);
+  });
+
   it("quotes no lesson the log does not carry", () => {
     // the log is where a lesson is EARNED - CLAUDE.md is the summary. One that
     // exists only in the summary has no evidence behind it, and the evidence is

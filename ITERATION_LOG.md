@@ -3405,12 +3405,22 @@ tree mid-release will report the release's own unfinished state as a bug.
 
 ---
 
-### The improvement loop - twenty-nine commits, and the lesson they kept teaching
+### The improvement loop, and the lessons it kept teaching
 
 A second autonomous run, this one working from a kanban board rather than a turn
 list. The board lives outside the repo, at
 `~/.claude/project-tracking/relay/board.js`, and is deliberately not committed -
 so this section is the only account of the run that ships with the code.
+
+**This heading used to count the commits.** It said twenty-nine, which was true
+at `3d4fb6e` and wrong by twenty-three the next time anything was appended to
+the section - including, embarrassingly, the second lesson below, added by the
+same run without touching the number above it. A count of commits in a file
+that is appended to is a position wearing the clothes of a fact: the lessons
+pointer had already taught that once, and it was not recognised the second time
+because it did not look like a pointer. The run continued well past that
+commit; `git log 9145853..` is the only count that cannot go stale, since
+`9145853` is where the rules it runs under landed.
 
 The rules it ran under are in `docs/RALPH-IMPROVEMENT-LOOP.md`: one card per
 iteration, a guard test watched failing before every fix, the full six-step gate
