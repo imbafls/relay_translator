@@ -403,3 +403,86 @@ describe("a stream that says what it is called", () => {
     viewer.ws.close();
   });
 });
+
+/**
+ * The half of `bbd654b` and `695e36a` that was only ever tested inside the
+ * session.
+ *
+ * Both fixes were watched failing against `PublisherSession` directly, which is
+ * where the fallbacks were. But `bbd654b` also changed `server.ts` - what the
+ * relay TELLS viewers it will do - and nothing covered that. This is the whole
+ * path, over real sockets: a relay started the way `sea/vps.env.example` starts
+ * one with the keys left blank, and a publisher that asks for both engines.
+ *
+ * Deliberately explicit `false` for the two mocks rather than leaving them
+ * unset: `startRelay` reads `RELAY_MOCK_STT` / `RELAY_MOCK_GEMINI` from the
+ * environment when the option is absent, and a test whose meaning depends on
+ * what is exported in the shell it runs in is not a test.
+ */
+describe("a relay started with no keys at all", () => {
+  let deaf: RelayHandle;
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-keyless-"));
+    deaf = await startRelay({ port: 0, dataDir: dir, mockStt: false, mockGemini: false });
+  });
+
+  afterAll(async () => {
+    await deaf?.close();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* disposable */
+    }
+  });
+
+  const hello = {
+    type: "hello",
+    stt: "deepgram-nova-3",
+    translation: "gemini-3.1-flash-lite",
+    languages: { source: "en", target: "vi" },
+    translationEnabled: true,
+  };
+
+  it("tells viewers it will not translate, however loudly it was asked to", async () => {
+    // connect(), not open() + waitFor(): the relay greets a socket synchronously
+    // inside the upgrade callback, so a listener attached after "open" has
+    // already missed it. server.ts says so where it sends that frame.
+    const viewer = await connect(`ws://127.0.0.1:${deaf.port}/ws/viewer?token=${deaf.state.viewerToken}`);
+    const pub = await open(`ws://127.0.0.1:${deaf.port}/ws/publisher?token=${deaf.state.publisherToken}`);
+    pub.send(JSON.stringify(hello));
+
+    // the greeting the relay sends once the session is built carries what that
+    // session will actually do; `live` is what distinguishes it from the one
+    // handed to the socket on accept
+    const built = await viewer.until((m) => m.type === "hello" && m.live === true, "a live hello");
+    expect(
+      built.translates,
+      "the relay has no Gemini key and told viewers to expect a translation, so every line gets a " +
+        "column that never fills",
+    ).toBe(false);
+
+    pub.close();
+    viewer.ws.close();
+  });
+
+  it("sends no captions it made up", async () => {
+    const viewer = await connect(`ws://127.0.0.1:${deaf.port}/ws/viewer?token=${deaf.state.viewerToken}`);
+    const pub = await open(`ws://127.0.0.1:${deaf.port}/ws/publisher?token=${deaf.state.publisherToken}`);
+    pub.send(JSON.stringify(hello));
+    await waitFor(pub, "ready");
+
+    // two seconds of audio, which is one utterance to the mock engine
+    pub.send(Buffer.alloc(16000 * 2 * 2, 1));
+    await new Promise((r) => setTimeout(r, 900));
+
+    expect(
+      viewer.seen.filter((m) => m.type === "subtitle" || m.type === "partial").map((m) => m.source),
+      "a relay with no Deepgram key put words in the streamer's mouth and broadcast them",
+    ).toEqual([]);
+
+    pub.close();
+    viewer.ws.close();
+  });
+});
