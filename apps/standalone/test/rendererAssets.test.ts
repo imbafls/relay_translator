@@ -55,15 +55,45 @@ describe("the renderer assets the guards read", () => {
     ).toBe(true);
   });
 
-  it("ships the same two files the guards name, and no third one they miss", () => {
-    // a new asset copied into dist/renderer is a new file nothing reads the
-    // source of; this is how the id checker came to miss four renderer modules
-    const copied = [...build.matchAll(/cpSync\(\s*["'`]renderer\/([\w.-]+)["'`]/g)].map((m) => m[1] ?? "");
-    expect(copied.length, "no renderer asset copies were found in build.mjs").toBeGreaterThan(0);
+  /**
+   * Everything that lands in `dist/renderer`, found by DESTINATION.
+   *
+   * The first version of this scanned for copies whose SOURCE was `renderer/`,
+   * and missed one the very next time anybody looked: the fonts are copied from
+   * the viewer's directory - `cpSync(path.join(viewerPublic, "fonts"),
+   * "dist/renderer/fonts")`, deliberately, so the two surfaces share one set -
+   * and never appear under `renderer/` at all. A check that asks "what do we
+   * copy out of this folder" cannot see a file arriving from somewhere else,
+   * and what ships is decided by where things land, not where they came from.
+   */
+  const ACCOUNTED: Record<string, string> = {
+    "index.html": "read by check-renderer-ids.mjs and designTokens.test.ts",
+    "style.css": "read by check-renderer-ids.mjs and designTokens.test.ts",
+    // shared with the viewer on purpose - a single set of self-hosted faces
+    fonts: "covered by license.test.ts (OFL notice) and designTokens.test.ts (families)",
+    /**
+     * Not a copy at all: the esbuild bundle of `renderer/app.ts` and the four
+     * modules beside it, which are exactly the five files the id checker reads
+     * since `aa504a1`.
+     *
+     * So the assumption here is different from the two above, and weaker in a
+     * way worth naming. It is not "identical bytes" - it is that bundling
+     * preserves STRING LITERALS, so `$("wnHeadline")` in the source is still
+     * `"wnHeadline"` in what ships. Checked once against the built file: all
+     * 158 ids the checker finds in source appear verbatim in `dist`. The build
+     * passes no `minify`, and no minifier rewrites the inside of a string in
+     * any case.
+     */
+    "app.js": "the bundle of the five modules check-renderer-ids.mjs reads; literals survive bundling",
+  };
+
+  it("ships nothing into dist/renderer that no guard accounts for", () => {
+    const landing = [...build.matchAll(/["'`]dist\/renderer\/([\w.-]+)["'`]/g)].map((m) => m[1] ?? "");
+    expect(landing.length, "no copies into dist/renderer were found in build.mjs at all").toBeGreaterThan(1);
     expect(
-      copied.filter((f) => !GUARDED.includes(f)),
-      "build.mjs ships a renderer asset that no guard reads the source of. Add it to GUARDED here and to " +
-        "whatever checks its contents, or say why it needs neither",
+      [...new Set(landing)].filter((f) => !(f in ACCOUNTED)),
+      "build.mjs ships this into dist/renderer and nothing here accounts for it. Say which guard reads its " +
+        "source, or why it needs none - the app loads what lands in this folder, whatever it was copied from",
     ).toEqual([]);
   });
 });
