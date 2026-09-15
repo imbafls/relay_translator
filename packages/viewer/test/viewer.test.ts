@@ -1411,6 +1411,43 @@ describe("the display settings a reader actually changes", () => {
     expect(on("no-ts")).toBe(true);
   });
 
+  /**
+   * The mirror of the rule above, and the one that was missing.
+   *
+   * `no-tgt` already refuses to reserve a column for a translation that is not
+   * coming. `no-src` did not: it hid the original whenever the reader had asked
+   * it to, whether or not anything was left to put in its place. Turn both off
+   * between them and every row on the page is empty - a live badge, a clock,
+   * and nothing under it.
+   *
+   * It is not a contrived setting either, because the display settings are
+   * saved per device. Watch a translated stream, turn the original off because
+   * it is not a language you read, come back next week to the same streamer not
+   * translating, and the page is blank with nothing saying why.
+   */
+  it("keeps the original when there is no translation to replace it with", () => {
+    tick("setShowSource", false);
+    expect(on("no-src"), "the original is hidden while a translation is on screen, which is the point").toBe(true);
+
+    push({ type: "hello", languages: { source: "en", target: "en" }, live: true, translates: false });
+    expect(on("no-tgt"), "a stream that is not translating still reserved the column").toBe(true);
+    expect(
+      on("no-src"),
+      "both columns are hidden at once, so every row renders empty and the reader gets a live badge " +
+        "over a blank page",
+    ).toBe(false);
+  });
+
+  it("keeps the original when the reader turns the translation off as well", () => {
+    tick("setShowTranslation", false);
+    tick("setShowSource", false);
+    expect(
+      on("no-src"),
+      "the reader turned off both columns and the page went blank rather than falling back to the " +
+        "one that has something in it",
+    ).toBe(false);
+  });
+
   it("centres the lines when asked, and only then", () => {
     expect(on("center")).toBe(false);
     choose("setAlign", "center");
@@ -1480,6 +1517,31 @@ describe("the overlay with the original turned off", () => {
     expect(
       live()?.classList.contains("interim"),
       "the live line is not the one being spoken, so the overlay is a sentence behind again",
+    ).toBe(true);
+  });
+
+  /**
+   * The question is whether the original is ON SCREEN, not whether the reader
+   * asked for it. Those came apart the moment `no-src` started standing down on
+   * a stream with no translation to put in the original's place: the setting
+   * still says hide, the page shows it anyway, and keying the promotion on the
+   * setting leaves this reader a sentence behind for no reason.
+   */
+  it("promotes it again when the original is shown despite the setting", () => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify({ showSource: false }));
+    boot("?obs=1");
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "en" }, live: true, translates: false });
+    push({ type: "subtitle", id: 1, source: "push B", final: true, channel: 0 });
+    push({ type: "partial", id: 2, source: "one on A", channel: 0 });
+
+    expect(document.body.classList.contains("no-src"), "the original is hidden and there is nothing else").toBe(
+      false,
+    );
+    expect(
+      live()?.classList.contains("interim"),
+      "the original is on screen and the overlay is still waiting for the sentence to finish",
     ).toBe(true);
   });
 });

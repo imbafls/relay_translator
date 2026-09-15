@@ -134,8 +134,18 @@
     root.setProperty("--shadow", style.shadow ? "0 2px 6px rgba(0,0,0,.7)" : "none");
     body.classList.toggle("light", style.theme === "light");
     body.classList.toggle("obs-black", obs && style.theme === "obs-black");
-    body.classList.toggle("no-src", !style.showSource);
-    body.classList.toggle("no-tgt", !serverTranslates || !style.showTranslation);
+    // A translation is on screen only when the stream is producing one AND the
+    // reader wants it; `no-tgt` has always refused to reserve a column for one
+    // that is not coming. `no-src` is the mirror of that and was missing it: it
+    // hid the original whenever the reader had asked, whether or not anything
+    // was left to take its place. Between them the two settings could hide
+    // every column and leave a live badge over a blank page - and the settings
+    // are saved per device, so watching a translated stream, turning the
+    // original off, and coming back to the same streamer not translating is
+    // enough to get there without touching anything.
+    const noTgt = !serverTranslates || !style.showTranslation;
+    body.classList.toggle("no-src", !style.showSource && !noTgt);
+    body.classList.toggle("no-tgt", noTgt);
     body.classList.toggle("no-ts", !style.timestamps);
     body.classList.toggle("center", style.align === "center");
     trimRows();
@@ -440,7 +450,14 @@
     // translation off the screen to do it, which is the opposite of what a
     // streamer captioning for an audience that does not read the original
     // asked for.
-    if (style.showSource) for (const el of interims.values()) target = el;
+    //
+    // The question is whether the original is ON SCREEN, not whether the reader
+    // asked for it, and the two come apart: `applyStyle` stands `no-src` down
+    // on a stream with no translation to put in the original's place. So this
+    // reads the class that decides it rather than the setting behind it.
+    if (!document.body.classList.contains("no-src")) {
+      for (const el of interims.values()) target = el;
+    }
     for (const el of linesEl.querySelectorAll(".row")) el.classList.toggle("obs-live", el === target);
     resetFade();
   }
