@@ -173,6 +173,46 @@ describe("the shipped stylesheets against DESIGN.md", () => {
         expect(bad, "DESIGN.md sets --radius: 0 and says square everything").toEqual([]);
       });
 
+      it("draws no shadow, the other half of the same sentence", () => {
+        const css = read(sheet.file);
+        // The sentence `--radius` is checked against says "No border-radius,
+        // shadows, gradients (except the hatch)". Only its first clause was
+        // ever enforced.
+        //
+        // One `box-shadow` is asked for by name, and it is a RULE rather than a
+        // shadow: DESIGN.md's saved-transcripts section says the open session
+        // row "carries a 2px amber inset rule", and an inset shadow with no
+        // blur is how a rule is drawn without taking layout. Blur is what makes
+        // a shadow, so blur is what this refuses.
+        //
+        // `text-shadow` is deliberately not covered: DESIGN.md gives the OBS
+        // overlay one and calls it intrinsic to the overlay rather than a user
+        // setting, because the text sits over somebody's video.
+        const bad = useSites(css)
+          .filter((d) => d.prop === "box-shadow")
+          .filter((d) => {
+            const v = d.value.trim();
+            if (!/^inset\b/.test(v)) return true;
+            const lengths = v.replace(/var\([^)]*\)/g, "").match(/-?[\d.]+(?:px|em|rem)?/g) ?? [];
+            return !(lengths.length >= 3 && Number.parseFloat(lengths[2]) === 0);
+          })
+          .map((d) => `${sheet.file}:${d.line} box-shadow: ${d.value}`);
+        expect(bad, 'DESIGN.md: "No border-radius, shadows, gradients"').toEqual([]);
+      });
+
+      it("spells out no gradient the hatch token already owns", () => {
+        const css = read(sheet.file);
+        // The exception in that sentence is singular - "except the hatch" - and
+        // the sheet declares it once, as `--hatch`. `useSites` skips custom
+        // property definitions, so that declaration is exempt by construction
+        // and every other gradient is a second copy of the one exception rather
+        // than a second exception. A copy is how the two drift apart.
+        const bad = useSites(css)
+          .filter((d) => /gradient\(/.test(d.value))
+          .map((d) => `${sheet.file}:${d.line} ${d.prop} writes a gradient out instead of using var(--hatch)`);
+        expect(bad, 'DESIGN.md allows one gradient, the hatch, and the sheet names it once').toEqual([]);
+      });
+
       it("names no font family beyond the two the spec ships", () => {
         const css = read(sheet.file);
         const bad = useSites(css)

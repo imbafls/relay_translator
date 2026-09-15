@@ -424,7 +424,7 @@ button:disabled { cursor: default; }
 .ob-right .preview-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
 .ob-right .preview-col { display: flex; flex-direction: column; position: relative; min-height: 0; }
 .ob-right .preview-col + .preview-col { border-left: 1px solid var(--rule); }
-.ob-right .preview-col.hatched::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(239, 234, 224, 0.03) 6px 7px); pointer-events: none; }
+.ob-right .preview-col.hatched::after { content: ""; position: absolute; inset: 0; background: var(--hatch); pointer-events: none; }
 .ob-right .preview-lines { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 20px 24px; gap: 18px; }
 .ob-right .pline { display: grid; grid-template-columns: 62px 1fr; gap: 12px; }
 .ob-right .pline .ts { font: 10.5px var(--mono); padding-top: 5px; }
