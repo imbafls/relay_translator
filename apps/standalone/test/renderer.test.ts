@@ -3022,3 +3022,49 @@ describe("the level meter in 01 SOURCE", () => {
     expect(await painted(), "the meter never reached the bottom after a long silence").toBe(0);
   });
 });
+
+/**
+ * Audit finding 21's message, and the one thing it exists to say.
+ *
+ * Unplug a headset mid-game and the app logs which source stopped captioning.
+ * The name comes from `sourceLabel(deviceId)`, which looks the id up in the
+ * first picker's options and, finding nothing, returns "Default microphone" -
+ * for any id at all. So the line can name a device that is still working, and
+ * naming the right one is the whole reason the line exists.
+ *
+ * The codebase already knows this. `dropDisconnectedSources` handles the same
+ * problem at boot and says so in a comment: "the label is unrecoverable once
+ * the device is gone, so say which slot". It names the slot and guesses
+ * nothing. The mid-session handler is the one that guesses.
+ *
+ * Checked by reading, because this handler cannot be reached from a test. It
+ * is assigned to the capture instance during wiring, as an own property on an
+ * object nothing exports, so a prototype accessor installed afterwards is
+ * shadowed and one installed before is thrown away by `vi.resetModules()`.
+ * `capture.test.ts` covers the watcher that calls it; this covers the sentence
+ * it produces.
+ */
+describe("what the app says when a source disconnects mid-session", () => {
+  const renderer = fs.readFileSync(path.resolve(__dirname, "..", "renderer", "app.ts"), "utf8");
+  const handler = ((): string => {
+    const at = renderer.indexOf("capture.onSourceLost = ");
+    expect(at, "the finding 21 handler is gone - this guard needs re-pointing").toBeGreaterThanOrEqual(0);
+    return renderer.slice(at, renderer.indexOf("\n  };", at));
+  })();
+
+  it("does not name a device it could not look up", () => {
+    expect(
+      /sourceLabel\(/.test(handler) && !/knownSourceLabel\(/.test(handler),
+      "the handler names the source with sourceLabel(), which answers \"Default microphone\" for any id it " +
+        "cannot find - so the line can name a device that is still working, which is the opposite of its job",
+    ).toBe(false);
+  });
+
+  it("falls back to the slot, the way the boot-time path already does", () => {
+    expect(
+      handler,
+      "nothing in the handler names the slot, so a lost source whose label cannot be recovered is reported " +
+        "as something else entirely",
+    ).toMatch(/index \+ 1/);
+  });
+});

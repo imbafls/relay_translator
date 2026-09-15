@@ -218,9 +218,22 @@ function stripUrl(url: string): string {
 function usd(n: number, digits = 3): string {
   return `$${n.toFixed(digits)}`;
 }
-function sourceLabel(id: string): string {
+/**
+ * The name a picker shows for a device, or nothing when no picker holds it.
+ *
+ * Separate from `sourceLabel` below because the two are wanted for opposite
+ * reasons. A chip that has to read as something falls back happily; a line
+ * that exists to say WHICH device went must not answer "Default microphone"
+ * for an id it never found, because that names a device that is still working.
+ * `dropDisconnectedSources` reached the same conclusion at boot and says so:
+ * the label is unrecoverable once the device is gone, so say which slot.
+ */
+function knownSourceLabel(id: string): string | undefined {
   const opt = sel("audioSource").querySelector<HTMLOptionElement>(`option[value="${CSS.escape(id)}"]`);
-  return opt?.textContent || (id === "system-loopback" ? "System audio" : "Default microphone");
+  return opt?.textContent || undefined;
+}
+function sourceLabel(id: string): string {
+  return knownSourceLabel(id) || (id === "system-loopback" ? "System audio" : "Default microphone");
 }
 /** devices from the last scan (kept here so labels never wait on the status round-trip) */
 let deviceList: AudioDeviceInfo[] = [];
@@ -2584,7 +2597,10 @@ function bind(): void {
    */
   capture.onSourceLost = ({ index, live, deviceId }) => {
     lostSlots.add(index);
-    const name = sourceLabel(deviceId);
+    // the slot, when the device is already out of every picker: naming it
+    // `sourceLabel` would answer "Default microphone" and blame a source that
+    // is still working
+    const name = knownSourceLabel(deviceId) || `source ${index + 1}`;
     if (live === 0) {
       log(`${name} disconnected - no audio sources left, stopping the session`, "err");
       void stopSession();
