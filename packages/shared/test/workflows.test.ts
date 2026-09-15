@@ -113,4 +113,17 @@ describe("the whole gate, as the orientation doc defines it", () => {
     const late = gateSteps().filter((step) => release.indexOf(`run: ${step}`) > builder);
     expect(late, `these run after the installer is already built: ${late.join(", ")}`).toEqual([]);
   });
+
+  /**
+   * The sentence says "what CI runs and what a release must pass", and until
+   * now only the second half was checked. Both matter, and they fail
+   * differently: a release workflow missing a step ships something unverified,
+   * while CI missing one lets master go green for weeks and hands the whole
+   * backlog of it to whoever cuts the next tag.
+   */
+  it("is what CI runs on the way to master, too", () => {
+    const ci = read("ci.yml");
+    const missing = gateSteps().filter((step) => !ci.includes(`run: ${step}`));
+    expect(missing, `the gate says these run and ci.yml does not: ${missing.join(", ")}`).toEqual([]);
+  });
 });
