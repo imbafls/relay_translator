@@ -117,7 +117,7 @@ All verified against `package.json` at v0.8.0.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | vitest, the whole suite. **59 files, 1030 tests** at v0.8.0. ~40 s. |
+| `pnpm test` | vitest, the whole suite. **60 files, 1051 tests** at v0.8.1. ~40 s. |
 | `pnpm test:watch` | vitest in watch mode. |
 | `pnpm typecheck:test` | `tsc -p tsconfig.test.json --noEmit`. **Separate on purpose** — see gotchas. |
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
@@ -180,9 +180,14 @@ and `HANDOFF.md` carries the exact commands:
    build shared first. A version written but never tagged on its own - 0.7.0 -
    has no release page, so its entry belongs in the next release's notes.
    Prose only: no tooling credit, no emoji.
-2. **The hosted relay.** `pnpm deploy:hosted`, then the two verify scripts in
-   `apps/hosted-relay/scripts/`. A deploy restarts every Durable Object, so
-   anyone watching reconnects once.
+2. **The hosted relay - only when it actually changed.** What decides it is
+   `git diff <previous tag>..<tag> -- apps/hosted-relay packages/viewer`: the
+   Worker serves the viewer page, so either one moving means deploying. If both
+   are untouched, skip it. A deploy restarts every Durable Object and everyone
+   watching reconnects once, which is a real cost to pay for republishing bytes
+   that did not change - v0.8.1 touched neither and was not deployed. When it
+   has changed: `pnpm deploy:hosted`, then the two verify scripts in
+   `apps/hosted-relay/scripts/`.
 
 There is no VPS to mirror any more; it was stopped on 2026-09-06. Auto-update
 reads `latest.yml` from the GitHub release, and an install only looks anywhere
