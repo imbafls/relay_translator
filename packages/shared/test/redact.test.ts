@@ -421,3 +421,74 @@ describe("ordinary lines survive unchanged", () => {
     expect(x1).not.toContain("bob");
   });
 });
+
+/**
+ * The other half of the property, which nothing asserted.
+ *
+ * Every test above checks that a secret is REMOVED. A redactor is only useful
+ * if it removes exactly the right things, and the cost of over-redacting is
+ * paid somewhere nobody looks: the log a user is asked to send.
+ *
+ * B6 is the whole reason this matters. `docs/OPEN-WORK.md` has it open and says
+ * plainly what will settle it - "the instrumented message comes back from a
+ * real 0.8.1 failure". That message travels through `redactLog` on its way into
+ * the feedback preview and then to the Worker. v0.8.1's contribution was
+ * pinning every archive to a SHA-256 so a wrong-bytes failure is a named one:
+ *
+ *   archive checksum mismatch: expected SHA-256 <64 hex>, got <64 hex>
+ *
+ * A SHA-256 is sixty-four hex characters and looks exactly like the things this
+ * file spends its time deleting - a Deepgram key is forty, a relay token is
+ * thirty-two. Widen one of those rules by length and the single most
+ * diagnostic line in the product arrives with both digests gone, the failure
+ * becomes "a mismatch, values unknown", and the wait for that report was for
+ * nothing. Nobody would notice, because every test above would still pass.
+ *
+ * So these assert what must SURVIVE - and, in the same breath, that the thing
+ * which genuinely is private still goes. A guard that only demanded "change
+ * nothing" would be an argument against redacting at all.
+ */
+describe("keeps what makes a failure report worth reading", () => {
+  const EXPECTED = "9f2b1c4e8a7d3f5061b2c3d4e5f60718293a4b5c6d7e8f9012a3b4c5d6e7f801";
+  const GOT = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
+
+  /**
+   * This one duplicates "leaves a 64-hex sha256 checksum untouched" above, on
+   * purpose. That test states the property in the abstract; this one names the
+   * product line that depends on it, so whoever weighs a change to the hex
+   * rules sees what it costs rather than a principle. Deleting it as redundant
+   * loses the link and nothing else - the generic guard still holds.
+   */
+  it("leaves both digests in an archive checksum mismatch", () => {
+    const line = `model download failed: local-whisper-turbo - archive checksum mismatch: expected SHA-256 ${EXPECTED}, got ${GOT}`;
+    const out = redactLog(line);
+    expect(out, "the expected digest was redacted; B6's named failure loses the value it names").toContain(EXPECTED);
+    expect(out, "the actual digest was redacted, so a mismatch cannot be told from a corrupt mirror").toContain(GOT);
+  });
+
+  it("leaves the model, the percentage and the byte offset on a dropped connection", () => {
+    const line =
+      "model download: local-nemotron-streaming lost the connection at 28% - resuming from byte 133169152 (ECONNRESET)";
+    const out = redactLog(line);
+    // 28% is the number in B6's title; a report that loses it is not about B6
+    for (const part of ["local-nemotron-streaming", "28%", "133169152", "ECONNRESET"]) {
+      expect(out, `${part} was redacted out of the one line that says where it failed`).toContain(part);
+    }
+  });
+
+  it("leaves the staging folder while still removing who owns it", () => {
+    const line = String.raw`could not clean up C:\Users\omert\AppData\Roaming\callout-relay\models\.part-2`;
+    const out = redactLog(line);
+    expect(out, "the numbered staging folder is the evidence for the leftover-abort hypothesis").toContain(
+      String.raw`\callout-relay\models\.part-2`,
+    );
+    expect(out, "the account name is the part that is nobody's business").not.toContain("omert");
+  });
+
+  it("leaves an archive entry's name and sizes", () => {
+    const out = redactLog("archive entry model.onnx is 0 B, expected 475000000");
+    for (const part of ["model.onnx", "0 B", "475000000"]) {
+      expect(out, `${part} was redacted`).toContain(part);
+    }
+  });
+});
