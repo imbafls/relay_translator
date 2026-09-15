@@ -71,3 +71,59 @@ describe("running every test there is", () => {
     expect(testFiles().length).toBeGreaterThan(50);
   });
 });
+
+/**
+ * That every test inside those files is actually run, too.
+ *
+ * The block above proves vitest COLLECTS every file. It says nothing about
+ * what happens once a file is open. `it.only` left behind after a debugging
+ * session silences every other test in its file; `it.skip` and `it.todo`
+ * silence one on purpose and then outlive the purpose. In all three cases the
+ * suite is green, the file count is unchanged - and the count of tests is not
+ * quoted anywhere, deliberately, because CLAUDE.md found that number drifted
+ * twice in two days and dropped it. So nothing at all would notice.
+ *
+ * Lesson 3 in this repo's own list opens with "a skip that passed".
+ *
+ * The patterns are assembled rather than written out, because a guard that
+ * greps for `.only(` and contains `.only(` reports itself and looks broken on
+ * the day it is needed.
+ */
+describe("tests that are present but not running", () => {
+  const MODIFIERS = ["only", "skip", "todo", "skipIf", "runIf", "fails", "concurrent"] as const;
+  /** the three that mean "this does not run as written" */
+  const SILENCING = ["only", "skip", "todo"] as const;
+
+  const offenders = (): { file: string; hits: string[] }[] =>
+    testFiles()
+      .map((rel) => {
+        const src = fs.readFileSync(path.join(root, rel), "utf8");
+        const hits: string[] = [];
+        for (const runner of ["it", "test", "describe"]) {
+          for (const mod of SILENCING) {
+            // built up so this file does not match itself
+            const needle = `${runner}.${mod}` + "(";
+            if (src.includes(needle)) hits.push(needle);
+          }
+        }
+        return { file: rel, hits };
+      })
+      .filter((f) => f.hits.length > 0);
+
+  it("reads the files, so an empty answer means something", () => {
+    const files = testFiles();
+    expect(files.length, "no test files were found at all, so the check below is vacuous").toBeGreaterThan(50);
+    // and the matcher must be able to find a modifier when one is there
+    const probe = `it.${MODIFIERS[0]}` + "(";
+    expect(`${probe} () => {}`.includes(probe), "the matcher cannot find a modifier it built itself").toBe(true);
+  });
+
+  it("has none focused, skipped or left as a todo", () => {
+    const found = offenders();
+    expect(
+      found.map((f) => `${f.file}: ${f.hits.join(", ")}`),
+      "these files carry tests that do not run as written. A focused test silences the rest of its file and " +
+        "leaves the suite green, and nothing here quotes a test count that would drop.",
+    ).toEqual([]);
+  });
+});
