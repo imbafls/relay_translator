@@ -340,6 +340,58 @@ describe("the claims CLAUDE.md makes about the tree", () => {
  * does not, so the doc names one and this asserts the heading is really there
  * and really holds the number of lessons CLAUDE.md promises.
  */
+/**
+ * CLAUDE.md quotes source code, and a quotation is a copy that can rot.
+ *
+ * The one that matters most sits under "The two relays - read this before
+ * debugging anything network-shaped", which the file itself calls the single
+ * biggest source of wasted time in this project. It shows the gate in
+ * `startUplink()` that silently turns the uplink off, and a reader trusts it
+ * enough not to go and look. If that gate gains a condition, the quotation
+ * keeps describing the old one and sends people to debug a branch that no
+ * longer exists.
+ *
+ * Matched on normalised whitespace, because markdown and TypeScript disagree
+ * about indentation and a guard that breaks on re-indentation is one somebody
+ * deletes rather than satisfies. The source list is read from the tree rather
+ * than written down here, for the reason lesson five gives.
+ */
+describe("the TypeScript CLAUDE.md quotes", () => {
+  const flat = (t: string): string => t.replace(/\s+/g, " ").trim();
+
+  /** every tracked .ts under apps/ and packages/, minus build output */
+  function sources(dir: string, out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "sea") continue;
+        sources(full, out);
+      } else if (entry.name.endsWith(".ts")) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  const blocks = [...read("CLAUDE.md").matchAll(/```ts\r?\n([\s\S]*?)```/g)].map((m) => m[1] ?? "");
+
+  it("quotes some, so this checks something", () => {
+    expect(blocks.length, "CLAUDE.md has no ```ts blocks left, so there is nothing to hold to the tree").toBeGreaterThan(0);
+  });
+
+  it("quotes only code the tree still contains", () => {
+    const files = [...sources(path.join(root, "apps")), ...sources(path.join(root, "packages"))];
+    expect(files.length, "no TypeScript was discovered to check against").toBeGreaterThan(20);
+    const haystacks = files.map((f) => flat(fs.readFileSync(f, "utf8")));
+
+    const missing = blocks.filter((b) => !haystacks.some((h) => h.includes(flat(b))));
+    expect(
+      missing,
+      `CLAUDE.md quotes TypeScript that is in no source file any more:\n${missing.join("\n---\n")}`,
+    ).toEqual([]);
+  });
+});
+
 describe("the pointer from CLAUDE.md into the iteration log", () => {
   const claude = (): string => fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8");
   const log = (): string => fs.readFileSync(path.join(root, "ITERATION_LOG.md"), "utf8");

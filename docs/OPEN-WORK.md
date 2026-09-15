@@ -535,6 +535,31 @@ fixed**, the last two on 2026-09-15.
   directory with no notice covering it.
 - ~~**Cosmetic:** the relay logs `data\relay-state.json` with a backslash on
   Linux.~~ Fixed 2026-09-10 in v0.8.0.
+- **CLAUDE.md's copy of the release workflow's tag guard is abridged in the one
+  place the paragraph under it depends on.** It shows
+
+      tag="$GITHUB_REF_NAME"
+
+  and `.github/workflows/release.yml` actually reads
+
+      tag="${{ github.event.inputs.tag || github.ref_name }}"
+
+  The middle and last lines match, and the logic it describes - a tag that is
+  not `v` + the app version fails the job before it builds - is correct. But the
+  dropped half is exactly what the next sentence relies on: *"To exercise the
+  workflow, use `workflow_dispatch` with an existing tag."* Under the quoted
+  version a `workflow_dispatch` run would compare a **branch name** against the
+  version and always fail, so the snippet and the advice beneath it contradict
+  each other. Anyone trusting the snippet would conclude the documented
+  workaround cannot work, or "fix" the workflow to match the page.
+
+  Left for the owner rather than corrected, because the release process in
+  `CLAUDE.md` is explicitly not the improvement loop's to edit
+  (`docs/RALPH-IMPROVEMENT-LOOP.md`, "Things that are not yours to decide"). It
+  is a one-line change to the quotation and needs no change to the workflow.
+  Found 2026-09-15 while guarding the file's *other* quoted block; that one, the
+  `startUplink()` gate, does match its source and `handoff.test.ts` now holds it
+  there.
 - **Nothing says what a second or third capture source costs until the money is
   already going out.** Deepgram bills every channel, so three sources is three
   times the per-minute spend: `packages/relay/src/session.ts` adds
