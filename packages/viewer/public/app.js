@@ -894,7 +894,14 @@
       // socket and says nothing.
       if (ev && (ev.code === 4401 || ev.code === 4410)) {
         closedByKick = true;
-        showEnded();
+        // 4410 IS the reason. The hosted relay closes with it and carries no
+        // `kicked` message, so without this the one case the page can name
+        // exactly got the sentence that names neither - "the session was
+        // stopped, or a new link was made" - when the code says which. 4401
+        // stays on that sentence, because there it is true: the relay does not
+        // know this token, and a rotation, a restart and a link that was never
+        // valid all arrive that way.
+        showEnded(ev.code === 4410 ? "link was rotated" : undefined);
         return;
       }
       setHud("warn", "RECONNECTING");

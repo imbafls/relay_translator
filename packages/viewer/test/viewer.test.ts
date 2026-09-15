@@ -1545,3 +1545,53 @@ describe("the overlay with the original turned off", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * A rotated link, said the same way whichever relay the reader is on.
+ *
+ * The embedded relay sends a `kicked` MESSAGE carrying a reason, and this page
+ * turns "link was rotated" into the panel that is actually useful: a new link
+ * was made, this one will not work again, ask for the current one, your display
+ * settings are kept. The hosted relay has no such message - it closes the
+ * socket with 4410 and says nothing, because `closeAll` carries a close reason
+ * that a browser does not hand to `onclose` in any useful form.
+ *
+ * So the page fell through to the generic sentence, "The session was stopped,
+ * or a new link was made", for the one case where it knows exactly which of
+ * those two happened. The code IS the reason; nothing has to be carried.
+ *
+ * Worth drawing because the ACTION differs, which is the argument `endedWords`
+ * already makes for the other branch: trying again cannot help here, and the
+ * reader needs to ask for a new link rather than wait.
+ */
+describe("a link rotated out from under an internet viewer", () => {
+  const panel = (): { label: string; title: string; text: string } => ({
+    label: (document.getElementById("endedLabel") as HTMLElement).textContent || "",
+    title: (document.getElementById("endedTitle") as HTMLElement).textContent || "",
+    text: (document.getElementById("endedText") as HTMLElement).textContent || "",
+  });
+
+  it("is told a new link was made, not that the session may have stopped", () => {
+    socket.readyState = 3;
+    socket.onclose?.({ code: 4410 });
+
+    expect((document.getElementById("ended") as HTMLElement).hidden, "the ENDED panel never opened").toBe(false);
+    expect(
+      panel().title,
+      "an internet viewer whose link was rotated is given the sentence for a session that may merely have " +
+        "stopped, when the relay closed them with the code that says exactly which it was",
+    ).toBe("A new link was made.");
+    expect(panel().text).toContain("Ask whoever sent it");
+  });
+
+  it("still says nothing it does not know when the reason really is unknown", () => {
+    socket.readyState = 3;
+    socket.onclose?.({ code: 4401 });
+
+    expect(
+      panel().title,
+      "4401 is the relay not knowing the token - which can be a rotation, a restart or a link that was " +
+        "never valid, and the page must not pick one",
+    ).toBe("The session was stopped, or a new link was made.");
+  });
+});

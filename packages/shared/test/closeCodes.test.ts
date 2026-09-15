@@ -87,3 +87,57 @@ describe("the close codes the relays and their clients share", () => {
     expect(union(RECEIVERS, handledBy).size, "no close codes were read out of any client").toBeGreaterThan(1);
   });
 });
+
+/**
+ * The same contract one layer up: the words a kick carries.
+ *
+ * A close code says a socket ended. The `kicked` message the embedded relay
+ * sends first says WHY, and the viewer page branches on it to pick which panel
+ * a reader gets - "someone else is reading", which trying again undoes, or "a
+ * new link was made", which it cannot. The branches are regexes over a string
+ * that is typed out in `server.ts` and matched in `app.js`, with nothing
+ * between them.
+ *
+ * Reword the relay's sentence - "a second device opened this link" is a
+ * perfectly reasonable edit - and the page falls through to the generic panel:
+ * "the session was stopped, or a new link was made". That sentence is false
+ * twice over for the case it happens most, which is exactly the regression the
+ * branch was written to remove. Every test stays green, because each one types
+ * the reason in by hand.
+ */
+describe("the words a kick carries, between the relay that writes them and the page that reads them", () => {
+  const relay = read("packages/relay/src/server.ts");
+  const page = read("packages/viewer/public/app.js");
+
+  /** every reason handed to kickViewer() */
+  const reasons = [...relay.matchAll(/kickViewer\([^,]+,\s*"([^"]+)"\)/g)].map((m) => m[1]!);
+  /** every `/.../i.test(reason` branch in endedWords() */
+  const matchers = [...page.matchAll(/\/([^/\n]+)\/i\.test\(reason/g)].map((m) => new RegExp(m[1]!, "i"));
+
+  it("found both sides, so the check below is not vacuous", () => {
+    expect(reasons.length, "server.ts no longer kicks a viewer with a reason").toBeGreaterThan(1);
+    expect(matchers.length, "app.js no longer branches on the reason it is given").toBeGreaterThan(1);
+  });
+
+  it("gives every reason the relay sends a branch that recognises it", () => {
+    const unread = reasons.filter((r) => !matchers.some((m) => m.test(r)));
+    expect(
+      unread,
+      `the relay kicks with ${unread.join(" / ")} and the viewer page has no branch that matches, so the ` +
+        "reader gets the sentence that names neither thing that happened",
+    ).toEqual([]);
+  });
+
+  it("has no branch waiting for words nothing sends", () => {
+    // the page also names a reason of its own for close code 4410, which the
+    // hosted relay sends with no message at all
+    const ownReasons = [...page.matchAll(/showEnded\(\s*(?:[^)]*\?\s*)?"([^"]+)"/g)].map((m) => m[1]!);
+    const known = [...reasons, ...ownReasons];
+    const idle = matchers.filter((m) => !known.some((r) => m.test(r)));
+    expect(
+      idle.map(String),
+      "a branch in endedWords() waits for words no relay sends and no close code produces, so the panel it " +
+        "builds is unreachable",
+    ).toEqual([]);
+  });
+});
