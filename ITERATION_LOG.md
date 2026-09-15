@@ -3474,6 +3474,39 @@ catalogue, and `handoff.test.ts` holds this page to the tree it describes. The
 pattern is always the same - assert the state of the code, then assert the
 sentence does not deny it.
 
+**A second lesson, learned twice over on the same two lines of a type.** The
+run's cross-component sweeps kept turning up message types that one side
+declares, the other side answers, and nothing ever sends. Iteration 52 looked
+straight at one of them, wrote it off as "declared surface with no consumer —
+harmless", and moved on. Four iterations later it turned out to be the reason a
+phone could not tell a dead relay from a quiet one: **a declared surface with
+no consumer is unfinished until you can say what it was for.**
+
+`ViewerToServer` is `{ type: "ping" } | { type: "sync" }`, and it always has
+been. Both relays answer both. The shipped viewer page sent neither. From the
+outside the two look identical — declared, answered, unused — and they are not
+the same thing at all:
+
+- **`sync` really is redundant.** Both relays push a fresh `hello` to every
+  viewer whenever the room changes, and a `status` on every liveness change, so
+  there is nothing for a viewer to go and fetch. A reconnecting viewer is
+  greeted on accept. Checked before concluding it, rather than assumed.
+- **`ping` was the missing half of a feature.** The viewer's socket is the one
+  that lives on a phone, on mobile data, behind carrier NAT, and it was the
+  only one of the product's three sockets with no way to notice a peer that
+  vanished without a FIN. Worse, both of the page's recovery paths were written
+  in terms of a socket that knows it is shut — the retry is armed by `onclose`,
+  the wake-up path wants `readyState > OPEN` — so neither could ever fire for
+  the case that actually happens. The relays had been ready to answer the whole
+  time.
+
+What separates them is not usage, which is identical, but **what the surface
+was for and what does that job now**. For `sync`, something else does it. For
+`ping`, nothing did. "Nothing calls it" is the question, not the answer — and
+the cost of treating it as an answer was four iterations and a class of failure
+that leaves a reader staring at a caption that will never update, under a HUD
+saying everything is fine.
+
 **What it did not do.** Four cards sat in To Do and In Progress the whole run
 and are still there: the textrelay DNS cutover, code signing, audit finding 17,
 and how far the renderer's structure should be taken. Every one is the owner's

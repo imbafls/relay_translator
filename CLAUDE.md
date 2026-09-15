@@ -264,7 +264,7 @@ of these bugs.
 
 ### Lessons carried forward from `ITERATION_LOG.md`
 
-Five, learned the hard way. The first four came over 41 turns and are under
+Six, learned the hard way. The first four came over 41 turns and are under
 **Where this run ended up** in that file - which was its end when this sentence was written and is now
 about a third of the way in, because fifty turns were appended after them. Worth
 re-reading:
@@ -299,6 +299,19 @@ re-reading:
    meant to read had gone missing. **Every checker needs an assertion that it
    examined something, and every coverage list should be discovered rather than
    written down.**
+6. **A declared surface with no consumer is unfinished until you can say what it
+   was for.** `ViewerToServer` has been `ping | sync` since the protocol was
+   written, and both relays answer both. The shipped viewer page sent neither.
+   One of those was harmless and the other was the reason a phone could not tell
+   a dead relay from a quiet one — and the difference is not visible from the
+   fact that nobody calls them. `sync` is genuinely redundant, because both
+   relays push `hello` and `status` unprompted whenever the room changes, so
+   there is nothing for a viewer to go and fetch. `ping` was the missing half of
+   a feature: the socket that most needed a heartbeat was the only one of the
+   three without one, and it stayed that way for four iterations after being
+   looked at directly and written off as harmless. **Ask what the surface was
+   for and what does that job now; "nothing calls it" is the question, not the
+   answer.**
 
 ## Known-open risks a session should not re-derive
 
