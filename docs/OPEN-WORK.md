@@ -535,3 +535,22 @@ fixed**, the last two on 2026-09-15.
   directory with no notice covering it.
 - ~~**Cosmetic:** the relay logs `data\relay-state.json` with a backslash on
   Linux.~~ Fixed 2026-09-10 in v0.8.0.
+- **Nothing says what a second or third capture source costs until the money is
+  already going out.** Deepgram bills every channel, so three sources is three
+  times the per-minute spend: `packages/relay/src/session.ts` adds
+  `seconds * channels` to the cloud counter and nothing at all to it for a
+  local model. The app does show the spend - `metaStt` under `02 TRANSCRIBE`
+  and the `EST` readout in `apps/standalone/renderer/app.ts` - but both only
+  once a session is running, which is after the decision. The pickers that
+  triple it are in `01 SOURCE`, three blocks earlier and minutes earlier, and
+  they say nothing.
+  What is wanted is a rate next to those pickers, shown only for a cloud model:
+  local STT is free, and a cost hint over a local model would be worse than no
+  hint at all. The exact wording is the owner's call, since it is the first
+  place in the product that would quote a price.
+  `packages/relay/test/billingPerChannel.test.ts` pins the multiplier this
+  entry quotes - three sources bill three times one, a local model bills the
+  cloud counter zero - so the number cannot rot between now and someone acting
+  on it. Written down here 2026-09-15: it had been the single open item on an
+  otherwise-finished multi-source feature, which is exactly how it stayed
+  invisible for nine days.
