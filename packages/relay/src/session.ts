@@ -761,7 +761,23 @@ export class PublisherSession {
         );
       }
     } else if (!this.deps.deepgramApiKey) {
-      this.stt = createMockSttStream(events, channels);
+      // A relay that cannot hear has to say so. This used to fall back to the
+      // mock, which emits canned gameplay callouts - so a relay with no key
+      // did not fail, it invented the speech, and the invention went out as
+      // captions, into the saved transcript, and through the translator,
+      // attributed to whoever was streaming. `sea/vps.env.example` ships
+      // `DEEPGRAM_API_KEY=` empty, and the app pointed at such a relay is
+      // publishing audio and waiting for captions.
+      //
+      // Same handling as the missing local model above, for the same reason:
+      // unrecoverable, so every reopen lands back here and the line is said
+      // once. The ladder and `sttLive` take it from there, and the app reads
+      // ON AIR · NO SPEECH instead of a transcript nobody said.
+      if (!this.sttDegraded) {
+        this.deps.log("error", "cloud speech requested but this relay has no Deepgram key");
+      }
+      setImmediate(() => events.onClose?.());
+      this.stt = { sendAudio: () => false, close() {} };
     } else {
       this.stt = createDeepgramStream(
         {

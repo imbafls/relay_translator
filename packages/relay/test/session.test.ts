@@ -2307,3 +2307,103 @@ describe("a relay with no Gemini key", () => {
     session.stop();
   });
 });
+
+/**
+ * The same shape as the mock translator above, one engine earlier, and worse.
+ *
+ * `openStt()` ended `else if (!this.deps.deepgramApiKey) createMockSttStream(...)`,
+ * so a relay with no Deepgram key asked for cloud speech did not fail - it
+ * invented the speech. The mock emits canned gameplay callouts, and they go out
+ * as captions, into the saved transcript, and (with a Gemini key) through the
+ * translator, attributed to whoever is streaming.
+ *
+ * Reachable the same way the translator was: `sea/vps.env.example` ships
+ * `DEEPGRAM_API_KEY=` empty, and a relay run from it has no key while the app
+ * pointed at it publishes audio and waits for captions.
+ *
+ * A relay that cannot hear has to say so. The local-model branch a few lines
+ * above already shows what that looks like - log once, close the stream, and
+ * install one that accepts nothing - so the reopen ladder and `sttLive` take it
+ * from there and the app reads `ON AIR · NO SPEECH` instead of a transcript
+ * nobody said.
+ */
+describe("a relay with no Deepgram key", () => {
+  function deaf() {
+    const viewers: ServerToViewer[] = [];
+    const logs: { level: "info" | "warn" | "error"; message: string }[] = [];
+    const session = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      {
+        toViewers: (msg: ServerToViewer) => viewers.push(msg),
+        setLive: () => {},
+        log: (level, message) => logs.push({ level, message }),
+      },
+    );
+    return { session, viewers, logs };
+  }
+
+  it("does not invent what was said", async () => {
+    const { session, viewers } = deaf();
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    await tick(150);
+
+    const said = viewers
+      .filter((m) => m.type === "subtitle" || m.type === "partial")
+      .map((m) => (m as { source?: string }).source);
+    expect(
+      said,
+      "a relay with no key made up gameplay callouts and sent them out as what the streamer said",
+    ).toEqual([]);
+    session.stop();
+  });
+
+  it("says it cannot hear, rather than saying nothing", async () => {
+    const { session, logs } = deaf();
+    session.start();
+    await tick(150);
+
+    expect(
+      logs.filter((l) => l.level === "error").length,
+      "nothing was logged, so a relay that can never transcribe looks exactly like a quiet one",
+    ).toBeGreaterThan(0);
+    session.stop();
+  });
+
+  it("still speaks when the mock is asked for by name", async () => {
+    const { session, viewers } = deaf();
+    // the fixture has to keep working: most of this file runs on it
+    const withMock = new PublisherSession(
+      {
+        stt: "deepgram-nova-3",
+        translation: "gemini-3.1-flash-lite",
+        languages: { source: "en", target: "vi" },
+        translationEnabled: false,
+        latencyVisible: true,
+        profanityFilter: false,
+        channels: 1,
+      },
+      { mockStt: true, toViewers: (msg: ServerToViewer) => viewers.push(msg), setLive: () => {}, log: () => {} },
+    );
+    session.stop();
+    withMock.start();
+    await tick();
+    withMock.audio(oneUtterance());
+    await tick(120);
+
+    expect(
+      viewers.filter((m) => m.type === "subtitle").length,
+      "mockStt no longer produces captions",
+    ).toBeGreaterThan(0);
+    withMock.stop();
+  });
+});
