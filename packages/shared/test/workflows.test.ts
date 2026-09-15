@@ -60,3 +60,57 @@ describe("a release cannot go out unverified", () => {
     expect(release.indexOf(gate)).toBeLessThan(release.indexOf("postject"));
   });
 });
+
+/**
+ * Every step of the gate, rather than the three that happened to be listed.
+ *
+ * CLAUDE.md calls those six commands "what CI runs and what a release must
+ * pass". The check above pins `pnpm test`, `pnpm typecheck:test` and
+ * `pnpm smoke`, which left three unwatched - including
+ * `node scripts/check-renderer-ids.mjs`, a checker this repo wrote on purpose,
+ * made a gate step, and guards the internals of in `checkRendererIds.test.ts`,
+ * while nothing asserted CI ever ran it. Drop that line from the workflow and a
+ * dangling element id ships in an installer, with the suite green and the page
+ * failing silently in a browser nobody is watching - which is the exact failure
+ * that checker exists to prevent.
+ *
+ * The list is read out of CLAUDE.md rather than written here. Four copies of it
+ * already exist - the doc, the release workflow, the CI workflow and the
+ * protocol the improvement loop follows - and a fifth that could disagree with
+ * the others is worth less than none. Adding a seventh step to the documented
+ * gate now requires the workflow to run it.
+ */
+describe("the whole gate, as the orientation doc defines it", () => {
+  const claude = fs.readFileSync(path.resolve(__dirname, "..", "..", "..", "CLAUDE.md"), "utf8");
+
+  /** the backticked commands in the "full gate" sentence */
+  function gateSteps(): string[] {
+    const sentence = /The full gate[^.]*?is:\s*([\s\S]*?)\.\s*\n/.exec(claude)?.[1] ?? "";
+    return [...sentence.matchAll(/`([^`]+)`/g)].map((m) => (m[1] ?? "").trim()).filter(Boolean);
+  }
+
+  it("is six steps, read from the doc rather than repeated here", () => {
+    // if the sentence is ever reworded past recognition this says so, instead
+    // of quietly checking an empty list against the workflow
+    expect(gateSteps()).toEqual([
+      "pnpm -r build",
+      "pnpm -r typecheck",
+      "pnpm typecheck:test",
+      "pnpm test",
+      "node scripts/check-renderer-ids.mjs",
+      "pnpm smoke",
+    ]);
+  });
+
+  it("is run in full before anything a user could install is produced", () => {
+    const release = read("release.yml");
+    const builder = release.indexOf("electron-builder");
+    expect(builder, "the release no longer builds an installer").toBeGreaterThan(-1);
+
+    const missing = gateSteps().filter((step) => !release.includes(`run: ${step}`));
+    expect(missing, `the gate says these run and release.yml does not: ${missing.join(", ")}`).toEqual([]);
+
+    const late = gateSteps().filter((step) => release.indexOf(`run: ${step}`) > builder);
+    expect(late, `these run after the installer is already built: ${late.join(", ")}`).toEqual([]);
+  });
+});
