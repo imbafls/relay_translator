@@ -6,6 +6,9 @@
   "useCodeCache": true,
   "assets": {
     "viewer/app.js": "../../viewer/public/app.js",
+    "viewer/apple-touch-icon.png": "../../viewer/public/apple-touch-icon.png",
+    "viewer/favicon.ico": "../../viewer/public/favicon.ico",
+    "viewer/favicon.svg": "../../viewer/public/favicon.svg",
     "viewer/fonts/archivo-latin-ext.woff2": "../../viewer/public/fonts/archivo-latin-ext.woff2",
     "viewer/fonts/archivo-latin.woff2": "../../viewer/public/fonts/archivo-latin.woff2",
     "viewer/fonts/archivo-vietnamese.woff2": "../../viewer/public/fonts/archivo-vietnamese.woff2",

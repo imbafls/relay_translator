@@ -678,9 +678,23 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       // the landing page loads these from the root, the viewer from /watch/
       rel = url.pathname.slice(1);
     } else {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("not found");
-      return;
+      /**
+       * Anything else the landing page asks for from the root.
+       *
+       * `/fonts/` above was this problem noticed once and fixed for one asset.
+       * `home.html` also asks for `/favicon.ico`, `/favicon.svg` and
+       * `/apple-touch-icon.png`, and those fell straight through to 404 - no
+       * icon in the tab, and a blank square if a reader adds the link to a
+       * phone's home screen.
+       *
+       * A rule rather than a list of three names, because a list is what left
+       * the icons out of the `/fonts/` case in the first place: try the bundle,
+       * and fall through to the 404 below when there is nothing there.
+       * `readViewerAsset` allowlists the path and rejects `..`, so this can
+       * reach nothing but the viewer bundle - and everything in that bundle is
+       * already public, since the page itself is served to anyone who asks.
+       */
+      rel = url.pathname.slice(1);
     }
 
     const asset = readViewerAsset(rel);
