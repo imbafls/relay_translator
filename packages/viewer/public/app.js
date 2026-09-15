@@ -772,7 +772,16 @@
       // a refused HTTP handshake (1006), indistinguishable from a train
       // tunnel, so a viewer opening an already-dead link sat on RECONNECTING
       // for ever with nothing to say the link was simply finished.
-      if (ev && ev.code === 4401) {
+      //
+      // 4410 is the same kind of fact: the hosted relay sends it when the owner
+      // rotates the viewer link, which kills every link handed out before that
+      // moment. Without it here the page fell through to RECONNECTING, retried
+      // two seconds later with a token that is now dead, and only then got the
+      // 4401 that says so - a flash of the wrong state on the way to the right
+      // one. The self-hosted relay never showed it, because it sends a `kicked`
+      // MESSAGE first and this page acts on that; the hosted one closes the
+      // socket and says nothing.
+      if (ev && (ev.code === 4401 || ev.code === 4410)) {
         closedByKick = true;
         showEnded();
         return;

@@ -469,6 +469,25 @@ describe("a link that is no longer valid", () => {
     expect(shown("ended"), "the viewer was left staring at RECONNECTING").toBe(true);
   });
 
+  /**
+   * The hosted relay closes viewers with 4410 when the owner rotates the link,
+   * which kills every link handed out before that moment. It sends no `kicked`
+   * message first - the self-hosted relay does, which is why this never showed
+   * up there - so without knowing the code the page fell through to
+   * RECONNECTING, retried two seconds later with a token that is now dead, and
+   * only then got the 4401 that says so. A flash of the wrong state on the way
+   * to the right one, on the two relays behaving differently for one action.
+   */
+  it("treats a rotated link as finished, not as a connection to retry", () => {
+    const a = opened[0];
+    a.readyState = 3;
+    a.onclose?.({ code: 4410 });
+    vi.advanceTimersByTime(10000);
+
+    expect(opened.length, "it retried a link the owner has deliberately rotated away").toBe(1);
+    expect(shown("ended"), "a rotated link left the viewer on RECONNECTING").toBe(true);
+  });
+
   it("still reconnects when the connection merely dropped", () => {
     const a = opened[0];
     a.readyState = 3;
