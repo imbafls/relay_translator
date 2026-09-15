@@ -34,48 +34,103 @@ const HOPS = [
   {
     file: "packages/relay/src/server.ts",
     hop: "the embedded relay re-emitting an uplinked caption to its own viewers",
+    frames: 1,
   },
   {
     file: "apps/standalone/src/main.ts",
     hop: "the desktop app forwarding a caption up to the hosted relay",
+    frames: 1,
   },
   {
     file: "apps/hosted-relay/src/room.ts",
     hop: "the hosted relay fanning a caption out to internet viewers",
+    frames: 1,
   },
 ];
 
-/** the object literal containing `type: "subtitle"`, from its `{` to its `}` */
-function subtitleLiteral(src: string): string {
-  const at = src.indexOf('type: "subtitle"');
-  if (at < 0) return "";
-  let open = at;
-  while (open >= 0 && src[open] !== "{") open -= 1;
-  let depth = 0;
-  for (let i = open; i < src.length; i += 1) {
-    if (src[i] === "{") depth += 1;
-    else if (src[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return src.slice(open, i + 1);
-    }
-  }
-  return "";
+/**
+ * A caption carries the recognised text, so `source` is what separates a frame
+ * a hop actually sends from a `{ type: "subtitle" }` that only narrows a union
+ * or declares a type. `docs/OPEN-WORK.md` names this as the criterion.
+ *
+ * A declaration that passes the filter is checked rather than skipped, which is
+ * the whole point: it no longer matters what a scan meets first.
+ */
+const CAPTION_FIELD = /\bsource\b\s*:/;
+
+/**
+ * Every caption frame in `src`, each with the tag fields it fails to name.
+ *
+ * Returned rather than asserted in place so that the hop tests and the fixture
+ * below can ask one function the same question. A guard whose logic is spelled
+ * out twice is two guards, and the second is the one nobody maintains.
+ */
+function captionGaps(src: string, file: string): { line: number; missing: string[] }[] {
+  const code = blankComments(src, file);
+  return frameLiterals(code, 'type: "subtitle"')
+    .filter(({ literal }) => CAPTION_FIELD.test(literal))
+    .map(({ at, literal }) => ({
+      line: code.slice(0, at).split("\n").length,
+      // a spread carries whatever the tag holds, now and later, so it passes
+      missing: /\.\.\./.test(literal)
+        ? []
+        : TAG_FIELDS.filter((f) => !new RegExp(`\\b${f}\\b\\s*:`).test(literal)),
+    }));
 }
 
 describe("a caption keeps its speaker tag at every hop", () => {
-  for (const { file, hop } of HOPS) {
+  for (const { file, hop, frames } of HOPS) {
     it(`carries the whole tag through ${hop}`, () => {
-      const src = fs.readFileSync(path.join(root, file), "utf8");
-      const literal = subtitleLiteral(src);
-      expect(literal, `no subtitle literal found in ${file}`).not.toBe("");
+      const gaps = captionGaps(fs.readFileSync(path.join(root, file), "utf8"), file);
 
-      // a spread carries whatever the tag holds, now and later, so it passes
-      if (/\.\.\./.test(literal)) return;
+      // guards the guard, the way the hello half at the end of this file does.
+      // Every assertion after this one runs inside a loop, so a scan that
+      // quietly stopped matching would execute none of them and report green.
+      expect(gaps.length, `captions built in ${file}`).toBe(frames);
 
-      const missing = TAG_FIELDS.filter((f) => !new RegExp(`\\b${f}\\b\\s*:`).test(literal));
-      expect(missing, `${file} enumerates the caption and omits: ${missing.join(", ")}`).toEqual([]);
+      for (const { line, missing } of gaps) {
+        expect(missing, `${file}:${line} enumerates a caption and omits: ${missing.join(", ")}`).toEqual([]);
+      }
     });
   }
+});
+
+/**
+ * The hop tests above can only be trusted as far as the scan under them, and
+ * that scan has already been blinded once. `docs/OPEN-WORK.md` records it: a
+ * type alias written above the relay's real uplink hop held the first
+ * `type: "subtitle"` in the file, so the guard checked the alias - which names
+ * every field, being the type - and never reached the hop. The alias was moved
+ * to `packages/shared` and the guard went back to checking the hop, but only by
+ * accident of ordering. Anything landing above a hop does it again, a comment
+ * included.
+ *
+ * So this asks the scan the question directly, on source held here rather than
+ * on a file somebody may reorder: given something complete followed by a
+ * caption that drops `color`, does it report the drop? Two entries, in file
+ * order. One entry means it stopped at the first thing it found, which is the
+ * defect - and it is a defect that reads as coverage, because the hop tests
+ * stay green the whole time.
+ */
+const DECOY_ABOVE_A_CAPTION = [
+  '/** the shape the uplink puts on the wire, named here for the code below */',
+  'type UplinkSubtitle = { type: "subtitle"; id: string; source: string; channel: string; speaker: string; color: string };',
+  "",
+  "toViewers({ type: \"subtitle\", id: msg.id, source: msg.source, final: msg.final, channel: msg.channel, speaker: msg.speaker });",
+  "",
+].join("\n");
+
+describe("the caption scan does not stop at the first thing it finds", () => {
+  it("reports a hop that drops color below something that does not", () => {
+    expect(
+      captionGaps(DECOY_ABOVE_A_CAPTION, "<fixture>"),
+      "the scan reported fewer caption frames than the fixture holds, so whatever came first is " +
+        "the only thing being checked and every hop below it is unguarded",
+    ).toEqual([
+      { line: 2, missing: [] },
+      { line: 4, missing: ["color"] },
+    ]);
+  });
 });
 
 /**
@@ -224,7 +279,7 @@ describe("the embedded relay hears the stream's brand at the renderer's own hell
  * `uplinkClient.ts` puts on the wire, and the two `main.ts` call sites that
  * hand it the value. Modelled on the brand call-site guard just above -
  * `literalFrom` and the "argument has to BE the literal" reasoning are
- * shared with it - rather than on the `HELLO_HOPS`/`helloLiterals` machinery,
+ * shared with it - rather than on the `HELLO_HOPS`/`frameLiterals` machinery,
  * because that machinery's whole point is "check this field on every hello
  * in these four files", which is exactly what must not happen here.
  */
@@ -404,7 +459,7 @@ describe("apps/standalone/src/main.ts's currentStatus() reports billingPaused", 
  * One more blind spot, in a file that IS on the list. `stamp()` in
  * `server.ts` branches on `msg.type === "hello"` and returns `{ ...msg, since,
  * elapsedMs }`, and every hello leaving through `toViewers` goes through it.
- * `helloLiterals` keys on the TEXT `type: "hello"`, which that literal does
+ * `frameLiterals` keys on the TEXT `type: "hello"`, which that literal does
  * not contain, so the rebuild is invisible here rather than green here. It
  * spreads, so it is correct; the comment at that branch says why it has to
  * stay that way, since this file cannot say it with a red test.
@@ -622,7 +677,10 @@ function blankComments(src: string, file: string): string {
 }
 
 /**
- * Every `type: "hello"` object literal, each with the offset of its own `{`.
+ * Every object literal whose text contains `needle`, each with the offset of
+ * its own `{`. `needle` is the frame's own type text - `type: "hello"`, or
+ * `type: "subtitle"` for the caption guard at the top of this file, which asks
+ * the same question of the same files and so reads them the same way.
  *
  * The offset is returned rather than recovered later with `indexOf`, which
  * finds the FIRST copy of a string and not the one that was actually found.
@@ -632,11 +690,11 @@ function blankComments(src: string, file: string): string {
  * the same text, and every question asked about the second would silently be
  * answered about the first.
  */
-function helloLiterals(src: string): { at: number; literal: string }[] {
+function frameLiterals(src: string, needle: string): { at: number; literal: string }[] {
   const found: { at: number; literal: string }[] = [];
   let from = -1;
   for (;;) {
-    const hit = src.indexOf('type: "hello"', from + 1);
+    const hit = src.indexOf(needle, from + 1);
     if (hit < 0) return found;
     from = hit;
     let open = hit;
@@ -670,7 +728,7 @@ describe("a hello keeps the brand at every hop", () => {
   for (const { file, hop, frames } of HELLO_HOPS) {
     it(`carries the brand through ${hop}`, () => {
       const code = blankComments(fs.readFileSync(path.join(root, file), "utf8"), file);
-      const built = helloLiterals(code).filter(({ at }) =>
+      const built = frameLiterals(code, 'type: "hello"').filter(({ at }) =>
         SEND_CALL.test(code.slice(Math.max(0, at - 160), at)),
       );
 

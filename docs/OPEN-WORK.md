@@ -69,13 +69,17 @@ Written 2026-09-10. One feature, and the health items still open after 0.7.0.
 Each fix above shipped with a test that goes red when the fix is reverted, and
 each revert was run.
 
-**Found while shipping it, and not fixed:** `packages/shared/test/speakerTag.test.ts`
-checks only the *first* `type: "subtitle"` text in each hop file. A type alias
+**Found while shipping it, and since fixed:** `packages/shared/test/speakerTag.test.ts`
+checked only the *first* `type: "subtitle"` text in each hop file. A type alias
 placed above the relay's real uplink hop made the guard check the alias and
-stop checking the hop; the alias now lives in `packages/shared` and the guard is
-back on the hop. But any earlier `type: "subtitle"` text - a comment included -
-would blind it the same way. Checking every such literal that carries a
-`source` field would close it.
+stop checking the hop; the alias was moved to `packages/shared` and the guard
+went back to the hop, but only by accident of ordering - any earlier
+`type: "subtitle"` text, a comment included, would have blinded it the same way.
+Closed as this entry proposed: the scan now blanks comments, reads **every**
+`type: "subtitle"` literal that carries a `source` field, and asserts the count
+per file so that adding one forces somebody to look at it. A fixture holds the
+scan to it - a complete literal above a hop that drops `color`, which reported
+nothing before.
 
 ---
 
