@@ -877,3 +877,103 @@ describe("a download that survives the connection dropping", () => {
     await expect(drain(stream)).rejects.toThrow();
   });
 });
+
+/**
+ * The loose-file download path, which had no integrity check of any kind.
+ *
+ * `resumableBody`'s own contract says where the hole is: "Only transport
+ * failures resume. A body that ends cleanly but short raises nothing to catch
+ * and is indistinguishable, at this layer, from a complete one; `fetchArchive`
+ * still reports that case from the byte count." fetchArchive does - it checks
+ * the archive's SHA-256 and every unpacked entry's size before publishing. The
+ * file path did neither: `await pipeline(body, out); fs.renameSync(part, dest)`
+ * published whatever arrived.
+ *
+ * So a host that answers 200 with a short body - a truncated mirror, a changed
+ * artifact, an error page served with the wrong status - published a damaged
+ * file under its final name. `localModelReady()` then decides the model is
+ * installed by filename alone, so nothing notices until the engine fails to
+ * decode, a long way from the cause.
+ *
+ * The catalogue already carries each file's exact size, and the code already
+ * trusts it: the skip-this-file check twenty lines above the rename is
+ * `fs.statSync(dest).size === file.size`. The same predicate that decides a
+ * file is already complete was simply never applied to the one just written.
+ */
+describe("a file-based model the host did not deliver in full", () => {
+  const MODEL_URL = "https://models.invalid/model.onnx";
+  const TOKENS_URL = "https://models.invalid/tokens.txt";
+  const DECLARED = 4096;
+  const TOKENS = 32;
+
+  /** a streaming model with no archive, so the plan is loose files and no VAD */
+  const fileModel = (): SttModelInfo =>
+    model({
+      id: "test-file-model",
+      archive: undefined,
+      files: [
+        { name: "model.onnx", url: MODEL_URL, size: DECLARED },
+        { name: "tokens.txt", url: TOKENS_URL, size: TOKENS },
+      ],
+    });
+
+  /**
+   * Answers each file with exactly `bytes` and announces that as the length, so
+   * the body ends cleanly. This is the case the resume logic explicitly cannot
+   * see: there is no transport error to catch, and nothing is retried.
+   */
+  function serveFiles(modelBytes: number, tokenBytes = TOKENS): void {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = Buffer.alloc(url === MODEL_URL ? modelBytes : tokenBytes, 9);
+      const stream = new ReadableStream({
+        start(c) {
+          for (let at = 0; at < body.length; at += 512) {
+            c.enqueue(new Uint8Array(body.subarray(at, Math.min(at + 512, body.length))));
+          }
+          c.close();
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "content-length": String(body.length) } });
+    }) as typeof fetch;
+  }
+
+  const fileStore = (): ModelStore =>
+    new ModelStore(dir, () => {}, (level, message) => logs.push({ level, message }), [fileModel()], () => 10e9);
+  const fileDir = (): string => path.join(dir, "test-file-model");
+  const published = (name: string): boolean => fs.existsSync(path.join(fileDir(), name));
+
+  /**
+   * The `.part` assertions live inside these two rather than in a test of their
+   * own. On their own they pass against the unfixed code - for the wrong
+   * reason, because there is no `.part` once the bytes have been renamed into
+   * place. An assertion that can only go red against a fix that already exists
+   * has to ride along with one that goes red now.
+   */
+  it("refuses a file the host cut short, naming the shortfall", async () => {
+    serveFiles(1024);
+    await fileStore().download("test-file-model");
+
+    expect(failure(), "a short file was published without complaint").toMatch(/1024 B.*4096|4096.*1024/);
+    expect(published("model.onnx"), "the truncated file was published under its final name").toBe(false);
+    expect(published("model.onnx.part"), "the refused bytes were left on disk").toBe(false);
+  });
+
+  it("refuses a file that arrived longer than the catalogue declares", async () => {
+    serveFiles(8192);
+    await fileStore().download("test-file-model");
+
+    expect(failure(), "a file of the wrong size was published without complaint").not.toBe("");
+    expect(published("model.onnx"), "a file the catalogue does not describe was published").toBe(false);
+    expect(published("model.onnx.part"), "the refused bytes were left on disk").toBe(false);
+  });
+
+  it("still publishes a file that arrived exactly as the catalogue declares", async () => {
+    serveFiles(DECLARED);
+    await fileStore().download("test-file-model");
+
+    expect(failure()).toBe("");
+    expect(fs.statSync(path.join(fileDir(), "model.onnx")).size).toBe(DECLARED);
+    expect(fs.statSync(path.join(fileDir(), "tokens.txt")).size).toBe(TOKENS);
+  });
+});

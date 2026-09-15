@@ -397,6 +397,29 @@ export class ModelStore {
           });
           body.on("data", tick);
           await pipeline(body, out);
+          // A body that ends cleanly but short raises nothing for resumableBody
+          // to catch - its own contract says so, and points at fetchArchive as
+          // the layer that reports the case from the byte count. This is the
+          // file path's equivalent, and until it existed there was none: a
+          // truncated mirror, a changed artifact or an error page served with a
+          // 200 was renamed into place and then reported installed, because
+          // localModelReady() decides by filename. The failure surfaced later,
+          // at decode time, a long way from the cause.
+          //
+          // The catalogue carries the exact size of a fixed released artifact,
+          // the way it does for the VAD, and the skip-this-file check above
+          // already trusts that number as the test for "complete". This applies
+          // the same test to what just arrived, before the rename makes it the
+          // published file.
+          const got = fs.statSync(part).size;
+          if (got !== file.size) {
+            // refuse fail-closed: the bytes go too, so a failed 652 MB fetch
+            // does not sit on the disk it just filled
+            fs.rmSync(part, { force: true });
+            throw new Error(
+              `${target.id}/${file.name} arrived as ${got} B, the catalogue declares ${file.size} B`,
+            );
+          }
           fs.renameSync(part, dest);
         })();
         this.fetching.set(dest, fetching);
