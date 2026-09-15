@@ -432,3 +432,60 @@ describe("the deploy config the router depends on", () => {
     expect(Object.keys(assetsTable()).length).toBeGreaterThan(1);
   });
 });
+
+/**
+ * The root files the landing page asks for, against the ones this router will
+ * serve.
+ *
+ * `run_worker_first = true`, so this Worker decides every path before
+ * Cloudflare's asset handling gets a look. A subresource the router does not
+ * recognise is a 404 on textrelay.cc, whatever is sitting in the asset
+ * directory - and `ROOT_ASSETS` is a hand-written Set, so adding an icon to
+ * `home.html` without touching it is a silent miss on the most public page this
+ * project has.
+ *
+ * Read off the page rather than listed here, for the reason the Set itself
+ * demonstrates: a second list would go stale the same way the first could.
+ *
+ * **The single-tenant relay deliberately does not do this**, and the difference
+ * is worth knowing before anyone makes them match. Its `/watch/<rest>` branch
+ * has always served any file in the bundle, so an allowlist at its root would
+ * be theatre while that stays open. This Worker starts closed and the
+ * allowlist is what keeps it closed - the comment on `ROOT_ASSETS` says so:
+ * "a rule like serve any file at the root publishes whatever lands in it next".
+ */
+describe("what the landing page asks for at the root", () => {
+  const publicDir = path.resolve(__dirname, "..", "..", "..", "packages", "viewer", "public");
+  const home = fs.readFileSync(path.join(publicDir, "home.html"), "utf8");
+
+  /** root-absolute subresources only: `<a href>` is a click, not a fetch */
+  const rootRefs = (): string[] => {
+    const out = new Set<string>();
+    for (const m of home.matchAll(/<(?:link|script|img)\b[^>]*?(?:href|src)="(\/[^"]+)"/g)) out.add(m[1] ?? "");
+    return [...out];
+  };
+
+  it("finds some, so the check below is not vacuous", () => {
+    expect(rootRefs().length, "home.html asks for nothing at the root any more").toBeGreaterThan(2);
+  });
+
+  it("routes every one of them to the asset handler", () => {
+    const unrouted = rootRefs().filter((ref) => resolveRoute(ref).kind !== "asset");
+    expect(
+      unrouted,
+      "home.html asks for these at the root and the router does not recognise them. run_worker_first means " +
+        "this Worker answers before the asset directory is consulted, so each is a 404 on textrelay.cc no " +
+        "matter what is sitting in that directory",
+    ).toEqual([]);
+  });
+
+  it("still refuses a root path the page does not ask for", () => {
+    // The allowlist is the point: it must not have quietly become a prefix
+    // rule. `/fonts/` is deliberately not in this list - it has a rule of its
+    // own, carrying the same comment as the relay's, because the landing page
+    // loads fonts from the root and the viewer loads them from /watch/.
+    for (const p of ["/style.css", "/app.js", "/index.html"]) {
+      expect(resolveRoute(p).kind, `${p} became servable at the root`).not.toBe("asset");
+    }
+  });
+});
