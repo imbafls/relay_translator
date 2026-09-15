@@ -106,6 +106,25 @@ describe("writing", () => {
   });
 
   /**
+   * Deepgram sends a finished empty utterance every few seconds on a silent
+   * channel. The relay still needs that final to retire its interim row, but a
+   * saved session does not: one real 94-minute session held 3,105 empty records
+   * and only 657 records with words.
+   */
+  it("does not save recogniser finals with no words", () => {
+    const w = writer();
+    w.open({ languages: LANGS, translates: true });
+    w.write(line(1, ""));
+    w.write(line(2, " \t "));
+
+    expect(jsonl(), "silent finals created a transcript file").toEqual([]);
+
+    w.write(line(3, "rush B"));
+    const [file] = jsonl();
+    expect(rawRecords(file).filter((r) => r.kind === "line")).toMatchObject([{ n: 1, source: "rush B" }]);
+  });
+
+  /**
    * With translation on, the relay emits one utterance twice under one id:
    * the line, then the same line again carrying `target`. Recording each emit
    * as a line would double every utterance in the archive.

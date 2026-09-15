@@ -153,7 +153,9 @@ export class TranscriptWriter {
 
   /** never throws: a disk that cannot be written must not cost anyone a caption */
   write(line: TranscriptLine): void {
-    if (!this.opts.enabled()) return;
+    // Deepgram emits empty finals on silent channels so the live viewer can
+    // retire an interim row. They carry no transcript content worth saving.
+    if (!this.opts.enabled() || !line.source.trim()) return;
     if (line.target === undefined) {
       if (this.current) this.appendLine(this.current, line);
       return;
