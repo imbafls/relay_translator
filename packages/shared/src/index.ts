@@ -1148,9 +1148,18 @@ export type ServerToViewer =
 
 export type ViewerToServer = { type: "ping" } | { type: "sync" };
 
+/**
+ * There is deliberately no `status` here, and there never has been one sent.
+ * A publisher is the thing that makes a session live, so it has nothing to
+ * learn from being told that it is; what it does need - the pipeline dying
+ * under it - arrives as `error`, which `onSttError` and `onTranslateError`
+ * both raise. The member was declared at the first commit and built by nothing
+ * in every commit since, which is a promise to a publisher client that the
+ * relay was never keeping. `packages/shared/test/publisherMessages.test.ts`
+ * holds every member of this union to having a producer.
+ */
 export type ServerToPublisher =
   | { type: "ready"; sampleRate: number }
-  | { type: "status"; live: boolean; message?: string }
   | ({ type: "partial"; id: number; source: string } & SpeakerTag)
   | ({ type: "subtitle"; id: number; source: string; target?: string; latency?: SubtitleLatency } & SpeakerTag)
   | { type: "error"; message: string }
