@@ -127,7 +127,8 @@ export function resolveRoute(pathname: string, method = "GET"): Route {
   if (pathname === "/" || pathname === "/watch" || pathname === "/watch/") return { kind: "home" };
 
   const watch = TOKEN_PATH.exec(pathname);
-  if (watch) return { kind: "viewer-page", token: watch[1] };
+  const watchToken = watch?.[1];
+  if (watchToken !== undefined) return { kind: "viewer-page", token: watchToken };
 
   // /watch/style.css, /watch/app.js, /watch/fonts/fonts.css
   if (pathname.startsWith("/watch/")) {

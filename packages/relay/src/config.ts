@@ -103,11 +103,15 @@ export function tryLoadDotenv(dirs: string[]): void {
         //  a space after it kept the space.
         const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
         if (!m) continue;
-        const [, key, raw] = m;
+        const key = m[1];
+        if (key === undefined) continue;
+        // the value group is `(.*?)`, which matches the empty string, so a bare
+        // `KEY=` is a real line setting a real empty value - not a parse failure
+        const raw = m[2] ?? "";
         // quotes have to match to count, and whatever is inside them is kept
         // verbatim - that is the way to write a value with real spaces in it
         const quoted = /^(["'])([\s\S]*)\1$/.exec(raw);
-        const value = quoted ? quoted[2] : raw;
+        const value = quoted?.[2] ?? raw;
         if (process.env[key] === undefined) process.env[key] = value;
       }
     } catch {

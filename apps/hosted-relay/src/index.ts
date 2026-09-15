@@ -295,7 +295,7 @@ async function handleFeedback(request: Request, env: Env): Promise<Response> {
   }
 
   // 3. JSON only.
-  const contentType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  const contentType = ((request.headers.get("Content-Type") || "").split(";")[0] ?? "").trim().toLowerCase();
   if (contentType !== "application/json") {
     return json({ error: "expected application/json" }, 415);
   }

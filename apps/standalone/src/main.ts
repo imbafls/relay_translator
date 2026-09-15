@@ -177,9 +177,11 @@ function openExternal(url: string): void {
 /** ws(s)://host[:port] -> http(s)://host[:port]; keeps TLS intact */
 function httpOriginOfRelayUrl(relayUrl: string): string | null {
   const m = relayUrl.match(/^(wss?):\/\/([^/]+)\/?$/i);
-  if (!m) return null;
-  const scheme = m[1].toLowerCase() === "wss" ? "https" : "http";
-  return `${scheme}://${m[2]}`;
+  const proto = m?.[1];
+  const host = m?.[2];
+  if (proto === undefined || host === undefined) return null;
+  const scheme = proto.toLowerCase() === "wss" ? "https" : "http";
+  return `${scheme}://${host}`;
 }
 
 /**

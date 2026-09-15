@@ -66,6 +66,7 @@ export function parseToken(raw: string | null | undefined): ParsedToken | null {
   const parts = raw.split("_");
   if (parts.length !== 3) return null;
   const [prefix, rid, secret] = parts;
+  if (prefix === undefined || rid === undefined || secret === undefined) return null;
   const kind = PREFIX[prefix];
   if (!kind) return null;
   if (!RID.test(rid) || !SECRET.test(secret)) return null;

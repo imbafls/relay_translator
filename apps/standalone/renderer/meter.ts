@@ -34,5 +34,6 @@ export function renderMeter(): void {
   const bars = $("meter").children;
   const db = level > 0 ? 20 * Math.log10(level) : -100;
   const lit = Math.round(Math.min(1, Math.max(0, (db + 50) / 50)) * bars.length);
-  for (let i = 0; i < bars.length; i++) bars[i].classList.toggle("on", i < lit);
+  // an HTMLCollection is indexed, not iterable in the way a loop wants
+  Array.from(bars).forEach((bar, i) => bar.classList.toggle("on", i < lit));
 }

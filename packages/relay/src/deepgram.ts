@@ -231,13 +231,18 @@ export function createMockSttStream(
       if (!opened) return false;
       bytesSeen += chunk.length;
       if (bytesSeen >= nextAt) {
+        // `lines` is a caller-supplied parameter, so an empty script is
+        // reachable: `line % 0` is NaN and the lookup then published
+        // `undefined` as a caption. A script with nothing in it says nothing.
         const text = lines[line % lines.length];
-        const channel = channels > 1 ? line % channels : 0;
-        line += 1;
-        events.onPartial?.(text, channel);
-        // the real engines always report where the final sits on the audio
-        // clock; the mock has to as well or it hides every timing bug
-        events.onFinal?.(text, { audioEndSec: bytesSeen / (SAMPLE_RATE * 2 * channels), channel });
+        if (text !== undefined) {
+          const channel = channels > 1 ? line % channels : 0;
+          line += 1;
+          events.onPartial?.(text, channel);
+          // the real engines always report where the final sits on the audio
+          // clock; the mock has to as well or it hides every timing bug
+          events.onFinal?.(text, { audioEndSec: bytesSeen / (SAMPLE_RATE * 2 * channels), channel });
+        }
         nextAt = bytesSeen + bytesPerLine;
       }
       return true;

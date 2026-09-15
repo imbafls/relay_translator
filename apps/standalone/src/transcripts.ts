@@ -344,7 +344,7 @@ export function listTranscripts(dir: string): TranscriptSummary[] {
     out.push({
       id,
       startedAt,
-      endedAt: t.rows.length ? t.rows[t.rows.length - 1].t : startedAt,
+      endedAt: t.rows.at(-1)?.t ?? startedAt,
       lines: t.rows.length,
       bytes: stat.size,
       languages: t.header?.languages,

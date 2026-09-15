@@ -209,5 +209,5 @@ function shortError(detail: string): string {
   if (/404|Not Found/i.test(detail)) return "no release feed found";
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|network/i.test(detail)) return "no connection";
   if (/403|rate limit/i.test(detail)) return "feed refused the request";
-  return detail.split("\n")[0].slice(0, 120);
+  return (detail.split("\n")[0] ?? detail).slice(0, 120);
 }

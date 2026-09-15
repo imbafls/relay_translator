@@ -171,8 +171,10 @@ interface Attempt {
       // retry with backoff on 429 (quota) / 5xx - short so latency stays low
       let lastErr: unknown;
       const backoff = opts.backoffMs ?? [0, 1200, 3000];
-      for (let i = 0; i < backoff.length; i += 1) {
-        if (backoff[i] > 0) await sleep(backoff[i]);
+      // over the values, not the indices: the delay is the only thing the body
+      // wanted the index for
+      for (const waitMs of backoff) {
+        if (waitMs > 0) await sleep(waitMs);
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {

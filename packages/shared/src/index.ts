@@ -215,9 +215,11 @@ export const HOSTED_RELAY_URL = "wss://textrelay.cc";
  */
 export function claimUrlFor(relayUrl: string | undefined): string | undefined {
   const m = (relayUrl || "").match(/^(wss?):\/\/([^/]+)\/?$/i);
-  if (!m) return undefined;
-  const scheme = m[1].toLowerCase() === "wss" ? "https" : "http";
-  return `${scheme}://${m[2]}/claim`;
+  const proto = m?.[1];
+  const host = m?.[2];
+  if (proto === undefined || host === undefined) return undefined;
+  const scheme = proto.toLowerCase() === "wss" ? "https" : "http";
+  return `${scheme}://${host}/claim`;
 }
 
 /** what POST /claim answers with: one room, two tokens */
@@ -437,7 +439,7 @@ export function resolveSourceIds(cfg: Partial<AppConfig> | null | undefined): st
  * tag is the only thing telling them apart, and two of them sharing a colour
  * is the same as not having one.
  */
-export const SPEAKER_COLORS: readonly string[] = ["#e0a43a", "#7fb6d9", "#9ad17f"];
+export const SPEAKER_COLORS: readonly [string, ...string[]] = ["#e0a43a", "#7fb6d9", "#9ad17f"];
 
 /**
  * A speaker colour, or undefined.
@@ -514,7 +516,8 @@ export function speakerTags(kinds: readonly SourceKind[], labels?: readonly (str
     const given = labels?.[i];
     const name = typeof given === "string" ? given.trim() : "";
     if (name) return name.slice(0, MAX_SPEAKER_TAG);
-    return i < 2 ? derived[i] : `CH${i + 1}`;
+    // only the first two get a derived tag; beyond that they are numbered
+    return (i < 2 ? derived[i] : undefined) ?? `CH${i + 1}`;
   });
 }
 
@@ -1581,7 +1584,8 @@ export function redactLog(text: string): string {
     /(?:(?:[A-Za-z]:[\\/]|\\\\[^\\/\r\n]+[\\/]|\\)[Uu]sers[\\/]|[\\/]Users[\\/])([^\\/\r\n]+)/g;
   const windowsUsers = new Set<string>();
   for (const m of out.matchAll(windowsUserRe)) {
-    windowsUsers.add(m[1]);
+    const user = m[1];
+    if (user !== undefined) windowsUsers.add(user);
   }
   if (windowsUsers.size > 0) {
     // Longest first. JS alternation takes the FIRST branch that succeeds, not

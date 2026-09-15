@@ -58,8 +58,8 @@ export type FeedbackResult =
  */
 export function feedbackUrlFor(hostedRelayUrl: string = HOSTED_RELAY_URL): string {
   const m = hostedRelayUrl.match(/^(wss?):\/\/([^/]+)\/?$/i);
-  const scheme = m && m[1].toLowerCase() === "wss" ? "https" : "http";
-  const host = m ? m[2] : "textrelay.cc";
+  const scheme = m?.[1]?.toLowerCase() === "wss" ? "https" : "http";
+  const host = m?.[2] ?? "textrelay.cc";
   return `${scheme}://${host}/feedback`;
 }
 

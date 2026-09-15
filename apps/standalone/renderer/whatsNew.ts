@@ -19,6 +19,8 @@ const KIND_LABEL: Record<string, string> = { added: "NEW", fixed: "FIXED", chang
 
 export function renderWhatsNew(entries: ChangelogEntry[], from: string): void {
   const newest = entries[0];
+  // nothing to show rather than a panel of "undefined"
+  if (!newest) return;
   $("wnVersion").textContent = newest.version;
   $("wnHeadline").textContent = newest.headline;
   $("wnFrom").textContent = `UPDATED FROM ${from}`;

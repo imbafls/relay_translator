@@ -75,7 +75,8 @@ export async function publishRetry(
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (!code || !LOCKED.has(code)) throw err;
-      if (attempt >= waits.length) {
+      const wait = waits[attempt];
+      if (wait === undefined) {
         throw new Error(
           `the model downloaded but could not be put in place - its files are still open ` +
             `${Math.round(waits.reduce((a, b) => a + b, 0) / 1000)}s after unpacking. ` +
@@ -83,7 +84,7 @@ export async function publishRetry(
             `or exclude the models folder from real-time scanning (${code})`,
         );
       }
-      await sleep(waits[attempt]);
+      await sleep(wait);
     }
   }
 }
@@ -140,7 +141,7 @@ export interface ResumeOpts {
  * deliberately so: the budget below is reset by any byte that arrives, so this
  * bounds a connection that is STUCK, not a download that is going badly.
  */
-const RESUME_WAITS = [400, 900, 1800, 3500];
+const RESUME_WAITS = [400, 900, 1800, 3500] as const;
 
 export function resumableBody(url: string, opts: ResumeOpts): Readable {
   const call = opts.fetchImpl ?? fetch;
@@ -232,7 +233,9 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
           });
         }
         opts.onRetry?.(received, detail);
-        await sleep(RESUME_WAITS[Math.min(stuck - 1, RESUME_WAITS.length - 1)]);
+        // clamped into the array; the fallback is the first step of the backoff
+        // rather than a number invented for the compiler
+        await sleep(RESUME_WAITS[Math.min(stuck - 1, RESUME_WAITS.length - 1)] ?? RESUME_WAITS[0]);
       }
     }
   }

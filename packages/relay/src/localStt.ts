@@ -317,11 +317,18 @@ export function createLocalSttStream(opts: LocalSttOptions, cfg: LocalSttConfig,
   worker.on("exit", () => finish());
   }
 
+  // the shared voice detector is the one file every local model needs. `files![0]`
+  // asserted both that the catalogue entry has files and that the first one is
+  // the detector; if either stopped being true, `undefined.name` threw from
+  // inside path.join with nothing naming the catalogue.
+  const vadFile = LOCAL_VAD.files?.[0];
+  if (!vadFile) throw new Error(`the model catalogue lists no files for ${LOCAL_VAD.id}, so local speech cannot start`);
+
   const initMsg: LocalSttInit = {
     type: "init",
     engine: info.engine,
     modelDir: path.join(opts.modelsDir, cfg.model),
-    vadModel: path.join(opts.modelsDir, LOCAL_VAD.id, LOCAL_VAD.files![0].name),
+    vadModel: path.join(opts.modelsDir, LOCAL_VAD.id, vadFile.name),
     channels: cfg.channels,
     melBins: info.melBins,
     language: cfg.language,

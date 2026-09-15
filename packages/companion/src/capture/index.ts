@@ -52,8 +52,10 @@ export function captureSources(sources: string | string[]): string[] {
 export function rmsLevel(chunk: Int16Array): number {
   if (chunk.length === 0) return 0;
   let sum = 0;
-  for (let i = 0; i < chunk.length; i++) {
-    const v = chunk[i] / 32768;
+  // over the samples, not the indices - the index was never used for anything
+  // else, and iterating an Int16Array yields numbers rather than maybe-numbers
+  for (const sample of chunk) {
+    const v = sample / 32768;
     sum += v * v;
   }
   return Math.sqrt(sum / chunk.length);
@@ -69,7 +71,9 @@ export interface SourceLost {
 
 /** every audio track across the open streams, in slot order */
 const tracksOf = (streams: readonly MediaStream[]): MediaStreamTrack[] =>
-  streams.map((s) => s.getAudioTracks()[0]).filter(Boolean);
+  // slice(0, 1) rather than [0] + filter(Boolean): a stream with no audio track
+  // contributes nothing instead of an undefined that only filter() removed
+  streams.flatMap((s) => s.getAudioTracks().slice(0, 1));
 
 /** whether anything at all is still being captured */
 export function anyTrackLive(streams: readonly MediaStream[]): boolean {
@@ -292,7 +296,9 @@ export class BrowserAudioCapture {
     };
 
     if (channels === 1) {
-      ctx.createMediaStreamSource(streams[0]).connect(node);
+      const only = streams[0];
+      if (!only) throw new Error("capture was started with no streams to read");
+      ctx.createMediaStreamSource(only).connect(node);
     } else {
       // each source -> mono (explicit 1-channel gain downmixes) -> its own merger input
       const merger = ctx.createChannelMerger(channels);

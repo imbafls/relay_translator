@@ -2,7 +2,15 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    // Off here, on everywhere else. In shipping code it is worth an error: it
+    // found the mock STT publishing `undefined` as a caption when handed an
+    // empty script, and a `files![0]` that would have thrown from inside
+    // path.join if the catalogue ever changed shape. In tests it is ceremony -
+    // they index straight after building or asserting the thing, and a wrong
+    // index fails the test it is in. It reports 232 sites here, each of which
+    // would gain a guard against nothing.
+    "noUncheckedIndexedAccess": false
   },
   // the ambient .d.ts files come too: a test that imports app source pulls in
   // whatever that source declares for its untyped dependencies

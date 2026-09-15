@@ -43,6 +43,23 @@ const REQUIRED: Record<string, boolean> = {
   strict: true,
 };
 
+/**
+ * Required of the projects that ship, and deliberately NOT of the test project.
+ *
+ * `noUncheckedIndexedAccess` types every `arr[i]` as possibly undefined. In
+ * shipping code that is the point: it found the mock STT publishing
+ * `undefined` as a caption when handed an empty script. In tests it is
+ * ceremony - they index straight after asserting what they just built, a wrong
+ * index fails the test it is in, and turning it on there reports 232 sites that
+ * would each gain a guard against nothing. Measured, not assumed - see the card.
+ */
+const SOURCE_ONLY: Record<string, boolean> = {
+  noUncheckedIndexedAccess: true,
+};
+
+/** the one project whose files are tests rather than shipped code */
+const TEST_PROJECT = "tsconfig.test.json";
+
 /** every tsconfig the gate actually runs, found rather than listed */
 function projectConfigs(): string[] {
   const dirs = [root, ...["packages", "apps"].flatMap((group) => {
@@ -81,7 +98,8 @@ function resolved(configPath: string): ts.CompilerOptions {
 function violations(configPath: string): string[] {
   const options = resolved(configPath) as Record<string, unknown>;
   const rel = path.relative(root, configPath).split(path.sep).join("/");
-  return Object.entries(REQUIRED)
+  const rules = rel === TEST_PROJECT ? REQUIRED : { ...REQUIRED, ...SOURCE_ONLY };
+  return Object.entries(rules)
     .filter(([flag, want]) => options[flag] !== want)
     .map(([flag, want]) => `${rel}: ${flag} is ${String(options[flag])}, not ${String(want)}`);
 }

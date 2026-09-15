@@ -177,7 +177,7 @@ function trFull(id: string): string {
 }
 function langName(code: string): string {
   const l = LANGUAGES.find((x) => x.code === code);
-  return l ? l.label.split(" (")[0] : code.toUpperCase();
+  return l ? (l.label.split(" (")[0] ?? l.label) : code.toUpperCase();
 }
 function outputLabel(o: OutputTarget): string {
   return o === "obs" ? "OBS" : o === "both" ? "Phone + OBS" : "Phone";
@@ -361,7 +361,7 @@ async function openSaved(): Promise<void> {
   if (view !== "saved") return;
   if (savedPick && !savedList.some((s) => s.id === savedPick)) savedPick = undefined;
   // the newest is nearly always the one wanted: the session that just died
-  if (!savedPick && savedList.length) savedPick = savedList[0].id;
+  if (!savedPick) savedPick = savedList[0]?.id;
   renderSavedList();
   await renderSavedReader();
 }
@@ -433,8 +433,9 @@ async function renderSavedReader(): Promise<void> {
     lines.appendChild(el);
   };
   if (!t) return note("This transcript could not be read.");
-  if (!t.rows.length) return note("No lines in this one.");
-  const start = t.header?.startedAt ?? t.rows[0].t;
+  const first = t.rows[0];
+  if (!first) return note("No lines in this one.");
+  const start = t.header?.startedAt ?? first.t;
   const solo = !t.rows.some((r) => r.target);
   for (const r of t.rows) {
     const row = document.createElement("div");
@@ -1401,7 +1402,8 @@ function renderSourceNames(live: boolean): void {
     const input = inp(`sourceName${i + 1}`);
     const row = input.closest(".namerow") as HTMLElement | null;
     if (row) row.hidden = !ids[i];
-    $(`sourceDevice${i + 1}`).textContent = ids[i] ? sourceLabel(ids[i]) : "";
+    const id = ids[i];
+    $(`sourceDevice${i + 1}`).textContent = id ? sourceLabel(id) : "";
     // never overwrite what someone is in the middle of typing
     if (document.activeElement !== input) input.value = config?.sourceLabels?.[i] || "";
     input.placeholder = tags[i] || "no tag";
