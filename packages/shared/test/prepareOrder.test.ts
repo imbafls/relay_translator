@@ -61,3 +61,65 @@ describe("preparing a session does not spend the link before it can use it", () 
     expect(viewer, "the viewer link is read before the rotate that replaces it").toBeGreaterThan(rotate);
   });
 });
+
+/**
+ * And that it rotates only when the user asked for a link that rotates.
+ *
+ * `linkMode` is a two-button control in SETTINGS. "unique" mints a fresh viewer
+ * link each session; "fixed" keeps the one the user has already handed out -
+ * which is the entire point of offering the choice, and the reason
+ * `showLink` in the renderer will display a fixed link before a session starts
+ * and a unique one only once it is live.
+ *
+ * The behaviour is one condition:
+ *
+ *   if (opts.rotate && cfg.linkMode === "unique") await rotateLink();
+ *
+ * Drop the second half - it reads like a redundant check beside `opts.rotate` -
+ * and a user on "fixed" has every link they ever sent invalidated the next time
+ * they press START. From inside the app nothing looks wrong: the rotate
+ * succeeds, the new link appears, and it is the people holding the old one who
+ * get THIS LINK HAS ENDED. The ordering tests above would not notice; they care
+ * about where the rotate sits, not whether it should happen.
+ *
+ * Source-level for the reason the file already gives: `main.ts` imports
+ * Electron and cannot be loaded here. Comments are stripped first, because a
+ * condition inside a block comment still reads as present - three guards in
+ * this repo were green against exactly that until `e419a3f`.
+ */
+describe("a fixed link stays fixed", () => {
+  const code = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  /**
+   * The rotate inside the prepare handler, comments removed.
+   *
+   * Scoped to that handler deliberately, and the first version of this was not:
+   * searching the whole file finds `rotateLink`'s own definition first, and
+   * also the tray's "Rotate viewer link" item - which calls it unconditionally
+   * and should, because that is a person asking for a new link rather than a
+   * session starting.
+   */
+  function rotateStatement(): string {
+    const body = code(prepareHandler());
+    const at = body.indexOf("rotateLink()");
+    expect(at, "the prepare handler no longer rotates - this guard needs re-pointing").toBeGreaterThan(-1);
+    const from = body.lastIndexOf("\n", at) + 1;
+    const to = body.indexOf("\n", at);
+    return body.slice(from, to < 0 ? undefined : to);
+  }
+
+  it("still rotates somewhere, so the check below is not vacuous", () => {
+    expect(rotateStatement(), "the rotate statement could not be read").toContain("rotateLink()");
+  });
+
+  it("rotates only for a link mode that asked to rotate", () => {
+    const line = rotateStatement();
+    expect(
+      /linkMode\s*===\s*["'`]unique["'`]/.test(line),
+      `the session rotate is "${line.trim()}" - it no longer checks linkMode. A user on "fixed" would have ` +
+        "every viewer link they have handed out invalidated on the next START, and nothing inside the app " +
+        "would look wrong: the rotate succeeds and only the people holding the old link see it fail.",
+    ).toBe(true);
+  });
+});
