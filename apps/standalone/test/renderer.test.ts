@@ -696,6 +696,76 @@ describe("what's new after an auto-update", () => {
   });
 });
 
+/**
+ * The shape the panel builds, as distinct from when it is shown.
+ *
+ * The tests above cover whether it appears, and that the version and the body
+ * text are right. They say nothing about how the list is put together, and that
+ * is the part a reader actually uses to tell one release from the next in a
+ * multi-version jump: the newest release is already named in the header above
+ * the list, so it must NOT repeat itself there, while the older ones must be
+ * named or their changes belong to nothing.
+ *
+ * Written before that renderer moved to its own file, because these are exactly
+ * the properties a move can break without any existing assertion noticing.
+ */
+describe("the shape the what's-new panel builds", () => {
+  /** the labels the panel puts on each change; restated rather than imported,
+   *  so a map that quietly changed would show up here as a difference */
+  const LABEL: Record<string, string> = { added: "NEW", fixed: "FIXED", changed: "CHANGED" };
+
+  const releases = (): Element[] => [...document.querySelectorAll("#wnBody .wn-release")];
+  const namedVersions = (): string[] =>
+    [...document.querySelectorAll("#wnBody .wn-release-head .wn-release-ver")].map(
+      (n) => n.textContent ?? "",
+    );
+
+  /** a jump that skipped a release, so the list has more than one entry in it */
+  const jump = async (): Promise<void> => {
+    appVersion = "0.5.4";
+    await bootWith({ setupDone: true, lastSeenVersion: "0.5.2" });
+    await settle(60);
+  };
+
+  it("names every release in the list except the one already in the header", async () => {
+    await jump();
+
+    expect(releases().length, "the jump did not produce a multi-release list, so this proves nothing").toBeGreaterThan(1);
+    expect(
+      namedVersions(),
+      "the newest release repeated its own version inside the list, under the header that already says it",
+    ).not.toContain("0.5.4");
+    expect(
+      namedVersions().length,
+      "an older release went unnamed, so its changes belong to nothing a reader can see",
+    ).toBe(releases().length - 1);
+  });
+
+  it("labels every change with the word for its kind", async () => {
+    await jump();
+
+    const kinds = [...document.querySelectorAll<HTMLElement>("#wnBody .wn-kind")];
+    expect(kinds.length, "no change lines were rendered at all").toBeGreaterThan(0);
+    for (const el of kinds) {
+      const kind = el.dataset.kind ?? "";
+      expect(kind, "a change line carries no kind for the stylesheet to colour").not.toBe("");
+      expect(el.textContent, `the label for "${kind}" is not the word this panel uses`).toBe(
+        LABEL[kind] ?? kind.toUpperCase(),
+      );
+    }
+  });
+
+  it("puts a date beside every release it names", async () => {
+    await jump();
+
+    const named = document.querySelectorAll("#wnBody .wn-release-head").length;
+    const dated = [...document.querySelectorAll("#wnBody .wn-release-head .wn-release-date")].filter(
+      (n) => (n.textContent ?? "").trim() !== "",
+    ).length;
+    expect(dated, "a named release has no date beside it").toBe(named);
+  });
+});
+
 describe("LINK MODE", () => {
   /**
    * The worst defect found in the UI review, because it is visible on a live

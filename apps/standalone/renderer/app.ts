@@ -7,6 +7,7 @@
 import { BrowserAudioCapture, captureErrorText, RelayPublisherClient, rmsLevel } from "@callout-relay/companion";
 import { $, inp, sel } from "./dom";
 import { log, logSubtitle, wordless } from "./log";
+import { renderWhatsNew } from "./whatsNew";
 import {
   AppConfig,
   AudioDeviceInfo,
@@ -2370,53 +2371,6 @@ async function obGoto(step: 1 | 2 | 3): Promise<void> {
 // ---------------------------------------------------------------------------
 // what's new
 // ---------------------------------------------------------------------------
-
-const KIND_LABEL: Record<string, string> = { added: "NEW", fixed: "FIXED", changed: "CHANGED" };
-
-function renderWhatsNew(entries: ChangelogEntry[], from: string): void {
-  const newest = entries[0];
-  $("wnVersion").textContent = newest.version;
-  $("wnHeadline").textContent = newest.headline;
-  $("wnFrom").textContent = `UPDATED FROM ${from}`;
-
-  const body = $("wnBody");
-  body.innerHTML = "";
-  for (const entry of entries) {
-    const rel = document.createElement("div");
-    rel.className = "wn-release";
-
-    // the newest release's headline is already above the list; the older ones
-    // in a multi-version jump still need naming
-    if (entry !== newest) {
-      const head = document.createElement("div");
-      head.className = "wn-release-head";
-      const ver = document.createElement("span");
-      ver.className = "wn-release-ver";
-      ver.textContent = entry.version;
-      const date = document.createElement("span");
-      date.className = "wn-release-date";
-      date.textContent = entry.date;
-      head.append(ver, date);
-      rel.append(head);
-    }
-
-    for (const line of entry.changes) {
-      const row = document.createElement("div");
-      row.className = "wn-line";
-      const kind = document.createElement("span");
-      kind.className = "wn-kind";
-      kind.dataset.kind = line.kind;
-      kind.textContent = KIND_LABEL[line.kind] || line.kind.toUpperCase();
-      const text = document.createElement("span");
-      text.className = "wn-text";
-      text.textContent = line.text;
-      row.append(kind, text);
-      rel.append(row);
-    }
-    body.append(rel);
-  }
-  $("whatsnew").hidden = false;
-}
 
 /**
  * Show what changed, once, after the app has updated itself.
