@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { insecureRedirect, installerName, resolveRoute } from "../src/routes";
 import { formatToken, newRoomId, newSecret, parseToken, secretsMatch } from "../src/tokens";
 
@@ -307,5 +309,69 @@ describe("what a crawler is allowed to ask for", () => {
     for (const p of ["/app.js", "/style.css", "/index.html", "/home.html", "/secrets.json"]) {
       expect(resolveRoute(p).kind, `${p} should not be served`).toBe("not-found");
     }
+  });
+});
+
+/**
+ * The three things that have to agree about an asset: the page that asks for
+ * it, the router that decides whether it is servable, and the bundle it is
+ * supposed to come out of.
+ *
+ * `check-renderer-ids.mjs` exists because a re-layout can drop an element while
+ * the script still asks for it, and the page then fails silently in a browser
+ * nobody is watching. This is the same failure one level out. A root-absolute
+ * reference is served only if it is on the router's allowlist, so adding
+ * `<link rel="icon" href="/icon-192.png">` and shipping the file is not enough
+ * - the router 404s it, the icon quietly does not appear, and no test here
+ * notices. The reverse is just as quiet: `og:image` points at `/og.png`, and if
+ * that file left the bundle every shared link would lose its preview card while
+ * every route test still passed.
+ *
+ * The references are read out of the shipped HTML rather than listed, so a new
+ * one is covered the day it is added.
+ */
+describe("what the shipped pages ask the router for", () => {
+  const publicDir = path.resolve(__dirname, "..", "..", "..", "packages", "viewer", "public");
+
+  /** every root-absolute local reference in the shipped pages, with its page */
+  function rootRefs(): { page: string; ref: string }[] {
+    const out: { page: string; ref: string }[] = [];
+    for (const page of ["index.html", "home.html"]) {
+      const html = fs.readFileSync(path.join(publicDir, page), "utf8");
+      const refs = [
+        ...[...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((m) => m[1] ?? ""),
+        // og:image and friends are absolute URLs; only this origin's own count
+        ...[...html.matchAll(/content="https:\/\/textrelay\.cc(\/[^"]*)"/g)].map((m) => m[1] ?? ""),
+      ];
+      for (const ref of refs) {
+        if (!ref.startsWith("/")) continue; // relative ones are served under /watch/
+        out.push({ page, ref });
+      }
+    }
+    return out;
+  }
+
+  it("is something the router will serve", () => {
+    const lost = rootRefs()
+      .filter(({ ref }) => resolveRoute(ref).kind === "not-found")
+      .map(({ page, ref }) => `${page} asks for ${ref} and the router does not serve it`);
+    expect(lost, lost.join("\n")).toEqual([]);
+  });
+
+  it("is something the bundle actually contains, when it comes from the bundle", () => {
+    const missing = rootRefs()
+      .map(({ page, ref }) => ({ page, ref, route: resolveRoute(ref) }))
+      .filter((r) => r.route.kind === "asset")
+      .filter((r) => !fs.existsSync(path.join(publicDir, (r.route as { rel: string }).rel)))
+      .map((r) => `${r.page} asks for ${r.ref} and it is not in packages/viewer/public`);
+    expect(missing, missing.join("\n")).toEqual([]);
+  });
+
+  it("found references on both pages, so the two assertions above are about something", () => {
+    const refs = rootRefs();
+    expect(refs.filter((r) => r.page === "home.html").length).toBeGreaterThan(3);
+    // the social card is the one that fails most invisibly - nothing in the
+    // product breaks, only every link anybody shares
+    expect(refs.map((r) => r.ref)).toContain("/og.png");
   });
 });
