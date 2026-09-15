@@ -1020,9 +1020,13 @@ function fitSelect(box: HTMLSelectElement): void {
 let fontsPending = true;
 function refitSelects(): void {
   for (const id of ["translation", "langSource", "langTarget"]) fitSelect(sel(id));
-  if (fontsPending && document.fonts?.status !== "loaded") {
+  // the `?.` on the line below used to guard the check and not the use, so
+  // anywhere without a font loader - a harness, a test environment, an older
+  // embedder - got past the condition and threw on `.ready` one line later
+  const fonts = document.fonts;
+  if (fontsPending && fonts && fonts.status !== "loaded") {
     fontsPending = false;
-    void document.fonts.ready.then(() => {
+    void fonts.ready.then(() => {
       for (const id of ["translation", "langSource", "langTarget"]) fitSelect(sel(id));
     });
   }
