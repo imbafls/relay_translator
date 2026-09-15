@@ -193,7 +193,12 @@ input[type="range"] {
   flex: 1;
   -webkit-appearance: none;
   appearance: none;
-  height: 22px;
+  /* DESIGN.md: hit targets >= 44px on phone. A slider has to be dragged where
+     it sits, so no wrapping label can stand in for it - the band itself is the
+     target. The track stays a hairline and the thumb stays 22px; both are
+     centred in whatever height this box has, so only the tappable area grows.
+     The row it sits in is taller by the difference, which is the cost. */
+  height: 44px;
   background: transparent;
   margin: 0;
 }
@@ -227,8 +232,13 @@ input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; background: v
 .drow-pick select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .pick { font-size: 12px; }
 .swatches { display: flex; gap: 6px; }
-.swatch { width: 20px; height: 20px; position: relative; display: block; border: 1px solid var(--rule-3); }
-.swatch > span { position: absolute; inset: 0; }
+/* DESIGN.md: hit targets >= 44px on phone. The square a reader sees is still
+   20px - the border and the colour move onto the inner span - and the label
+   around it is the part a thumb lands on. Three of these sit side by side, so
+   the targets are spread rather than overlapped: an oversized area that covers
+   its neighbour picks the wrong colour instead of missing. */
+.swatch { width: 44px; height: 44px; position: relative; display: flex; align-items: center; justify-content: center; }
+.swatch > span { width: 20px; height: 20px; border: 1px solid var(--rule-3); }
 .swatch input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .display-foot {
   flex: none;
