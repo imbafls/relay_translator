@@ -230,6 +230,28 @@ The sweep runs from an alarm set when the room is claimed, under
   An idle hour on the same account was 0.04 GB-s, so essentially all of that is
   the room.
 
+  **That baseline predates the viewer heartbeat, and re-measuring is the only
+  way to confirm the heartbeat is free.** Viewers now send `{"type":"ping"}`
+  every 20 s. The room hands that exact frame to
+  `setWebSocketAutoResponse`, so the runtime answers it without waking the
+  object: no request, no duration, and the figures above should barely move
+  with a viewer attached.
+
+  If the pair ever stops matching what the page sends — one added space is
+  enough — the beat falls through to `webSocketMessage`, which answers a ping
+  too. **The viewer still gets its pong either way.** Nothing breaks, no test
+  fails, `verify-deploy.cjs` passes, and the only thing that changes is that
+  every beat wakes this object and is billed: roughly **180 requests per hour,
+  per viewer**, on top of the 1,597 above. Watching a socket receive a pong is
+  therefore not evidence of anything, which is what makes this worth writing
+  down.
+
+  So the check is the billing, not the behaviour: run `scripts/measure-cost.cjs`
+  and `scripts/read-cost.cjs` against a room with one viewer attached for the
+  window, and compare billed requests against the 1,597 in the table. Roughly
+  unchanged means the runtime is answering. About 1,780 means it is not, and
+  the frames have drifted apart.
+
   **Hibernation works, and works so well that duration stopped being the
   question.** 3.83 GB-s/hr against the free plan's 13,000 GB-s/day is 3,400
   room-hours a day. The premise - that hosting friends is effectively free - is

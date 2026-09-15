@@ -94,3 +94,51 @@ describe("a viewer's heartbeat on the hosted relay", () => {
     ).toMatch(/case "pong":/);
   });
 });
+
+/**
+ * The failure mode this arrangement has, and why a deploy cannot see it.
+ *
+ * If the auto-response pair ever stops matching what viewers send, the beat
+ * falls through to `webSocketMessage`, which answers a ping too. So the viewer
+ * still gets its pong, every test here still passes, `verify-deploy.cjs` still
+ * passes, and the only thing that changes is that every beat from every viewer
+ * wakes this object and is billed - roughly 180 requests an hour each.
+ *
+ * A silent regression whose only symptom is money is exactly the shape this
+ * repo keeps finding, so the README carries the diagnostic: the frame to
+ * compare against and the script that measures it. This holds that note to the
+ * code, the way `reap.test.ts` holds the reaping note to `reap.ts` - a
+ * diagnostic that quietly disagrees with the thing it diagnoses is worse than
+ * none.
+ */
+describe("the README's note on what a heartbeat costs", () => {
+  const readme = fs.readFileSync(path.join(root, "apps", "hosted-relay", "README.md"), "utf8");
+
+  it("quotes the frame this room actually auto-answers", () => {
+    const pair = autoResponse();
+    expect(
+      readme.includes(pair.request),
+      `the README does not quote the frame the room auto-answers (${pair.request}), so a reader checking the ` +
+        "billing has nothing to compare against",
+    ).toBe(true);
+  });
+
+  it("names the script that would show it, and that script is there", () => {
+    expect(readme, "the README describes no way to tell whether beats are being billed").toMatch(
+      /measure-cost\.cjs/,
+    );
+    expect(
+      fs.existsSync(path.join(root, "apps", "hosted-relay", "scripts", "measure-cost.cjs")),
+      "the README points at a measuring script that does not exist",
+    ).toBe(true);
+  });
+
+  it("says a client cannot tell the difference, because that is the whole trap", () => {
+    const flat = readme.replace(/\s+/g, " ").toLowerCase();
+    expect(
+      /pong either way|answers it too|still gets its pong|still answered/.test(flat),
+      "the README does not say that a viewer receives a pong whether or not the auto-response matched. Without " +
+        "that, the obvious check - open a viewer, send a ping, see a pong - reads as proof and is not.",
+    ).toBe(true);
+  });
+});
