@@ -430,8 +430,17 @@
     const finals = linesEl.querySelectorAll(".row:not(.interim)");
     let target = finals[finals.length - 1] || null;
     // insertion order: with two capture sources the most recently opened
-    // interim is the one being spoken now
-    for (const el of interims.values()) target = el;
+    // interim is the one being spoken now.
+    //
+    // Only while there is something in it to see. An interim carries the source
+    // line and nothing else - its `.tgt` is removed when it is built, there
+    // being nothing to translate yet - so with the original turned off it draws
+    // nothing at all. Promoting it there would put an empty row on the
+    // broadcast for the length of every utterance and take the last finished
+    // translation off the screen to do it, which is the opposite of what a
+    // streamer captioning for an audience that does not read the original
+    // asked for.
+    if (style.showSource) for (const el of interims.values()) target = el;
     for (const el of linesEl.querySelectorAll(".row")) el.classList.toggle("obs-live", el === target);
     resetFade();
   }

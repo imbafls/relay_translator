@@ -1419,3 +1419,67 @@ describe("the display settings a reader actually changes", () => {
     expect(on("center")).toBe(false);
   });
 });
+
+/**
+ * Those settings meet the overlay, and one combination empties it.
+ *
+ * `DESIGN.md` says the overlay "Honors the other viewer display settings", and
+ * turning the original off is a setting a streamer captioning for an
+ * international audience would reach for first: show them the translation and
+ * nothing else.
+ *
+ * The overlay renders exactly one row and promotes the open interim into that
+ * slot, so a caption resolves in place instead of arriving a whole sentence
+ * late. But an interim carries the source line and nothing else - its `.tgt` is
+ * removed when it is built, because there is nothing to translate yet. With the
+ * original hidden it has nothing left to draw, so promoting it puts an empty
+ * row on the broadcast for the length of every utterance, and takes the last
+ * finished translation off the screen to do it. What the audience sees while
+ * somebody is talking is the amber bar and nothing beside it.
+ */
+describe("the overlay with the original turned off", () => {
+  const obsOverlay = (style: Record<string, unknown>): void => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify(style));
+    boot("?obs=1");
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  const live = (): HTMLElement | null => document.querySelector("#lines .row.obs-live");
+
+  it("keeps the finished translation up while somebody is speaking", () => {
+    obsOverlay({ showSource: false });
+    push({ type: "subtitle", id: 1, source: "push B", target: "len B di", final: true, channel: 0 });
+    push({ type: "partial", id: 2, source: "one on A", channel: 0 });
+
+    const el = live();
+    expect(el, "nothing at all is marked as the overlay's line").not.toBeNull();
+    expect(
+      el?.classList.contains("interim"),
+      "the overlay promoted a half-caption that has nothing to show, so the broadcast is an amber " +
+        "bar and an empty row until the speaker finishes",
+    ).toBe(false);
+    expect(el?.querySelector(".tgt")?.textContent, "the finished translation is not the line on air").toContain(
+      "len B di",
+    );
+  });
+
+  it("still promotes the interim when the original is shown", () => {
+    // the promotion is the fix for captions arriving a whole utterance late,
+    // and it has to keep working wherever there is something to draw
+    obsOverlay({ showSource: true });
+    push({ type: "subtitle", id: 1, source: "push B", target: "len B di", final: true, channel: 0 });
+    push({ type: "partial", id: 2, source: "one on A", channel: 0 });
+
+    expect(
+      live()?.classList.contains("interim"),
+      "the live line is not the one being spoken, so the overlay is a sentence behind again",
+    ).toBe(true);
+  });
+});
