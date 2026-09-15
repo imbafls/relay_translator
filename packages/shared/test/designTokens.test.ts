@@ -233,3 +233,92 @@ describe("the shipped stylesheets against DESIGN.md", () => {
     );
   });
 });
+
+
+/**
+ * The custom properties the scripts set, against the stylesheets that read them.
+ *
+ * The viewer's display settings are seven strings. `applyStyle()` writes
+ * `--cap-font`, `--size`, `--fg`, `--accent`, `--bgc` and `--shadow` onto the
+ * root element, `applyBrand()` writes `--brand`, and the stylesheet reads them
+ * back by name. Nothing connects the two ends: `packages/viewer/public/app.js`
+ * is served as-is with no build step, so it can import nothing, and the sheet
+ * is a separate file with no knowledge of it.
+ *
+ * Rename either end and the failure is total and silent. No error, no
+ * exception, no failing test - happy-dom does not apply stylesheets, so the
+ * viewer suite is structurally unable to see it - just a reader whose chosen
+ * font size, or colour, or the streamer's brand, quietly stops working while
+ * every setting still looks saved. It is the same contract-with-no-shared-
+ * constant that `closeCodes.test.ts` and `viewerPing.test.ts` exist for, and
+ * this repo has found that shape already broken twice.
+ *
+ * Two directions, because they fail differently:
+ *
+ *  - set by a script and read by nothing: the setting does nothing at all
+ *  - read by a stylesheet and defined nowhere: `var()` falls back to the
+ *    initial value, so the element renders, wrongly, with no clue why
+ *
+ * Comments are stripped from the scripts first. A prose mention of `var(--fg)`
+ * explaining what the VIEWER does, sitting in the renderer's source, reads as a
+ * use of a token the renderer does not have - which is exactly the false
+ * positive this produced before the strip was added.
+ */
+describe("custom properties, across the files that cannot import each other", () => {
+  const SURFACES = [
+    {
+      name: "phone/OBS viewer",
+      css: ["packages/viewer/public/style.css"],
+      markup: ["packages/viewer/public/index.html", "packages/viewer/public/home.html"],
+      scripts: ["packages/viewer/public/app.js"],
+    },
+    {
+      name: "desktop renderer",
+      css: ["apps/standalone/renderer/style.css"],
+      markup: ["apps/standalone/renderer/index.html"],
+      scripts: ["apps/standalone/renderer/app.ts"],
+    },
+  ];
+
+  const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
+  const stripComments = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  describe.each(SURFACES)("$name", (surface) => {
+    const css = surface.css.map(read).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+    const markup = surface.markup.map(read).join("\n");
+    const scripts = stripComments(surface.scripts.map(read).join("\n"));
+
+    /** `--x:` anywhere a value can be declared */
+    const declared = new Set<string>();
+    for (const m of `${css}\n${markup}`.matchAll(/(--[\w-]+)\s*:/g)) declared.add(m[1] ?? "");
+    /** written from a script at runtime */
+    const fromScript = new Set<string>();
+    for (const m of scripts.matchAll(/setProperty\(\s*["'`](--[\w-]+)["'`]/g)) fromScript.add(m[1] ?? "");
+    /** `var(--x)` - only stylesheets and markup consume; a script sets */
+    const consumed = new Set<string>();
+    for (const m of `${css}\n${markup}`.matchAll(/var\(\s*(--[\w-]+)/g)) consumed.add(m[1] ?? "");
+
+    it("reads something, so the two checks below are not vacuous", () => {
+      expect(declared.size, "no custom property was declared anywhere on this surface").toBeGreaterThan(5);
+      expect(consumed.size, "no var() use was found, so nothing is being held to anything").toBeGreaterThan(5);
+    });
+
+    it("sets nothing from script that no stylesheet reads", () => {
+      const dead = [...fromScript].filter((v) => !consumed.has(v));
+      expect(
+        dead,
+        "the script writes these onto the root element and no stylesheet reads them back, so setting them does " +
+          "nothing at all - and the panel that sets them still looks like it worked",
+      ).toEqual([]);
+    });
+
+    it("reads nothing from the stylesheet that is defined nowhere", () => {
+      const orphan = [...consumed].filter((v) => !declared.has(v) && !fromScript.has(v));
+      expect(
+        orphan,
+        "the stylesheet reads these and nothing defines them, so var() falls back to the initial value and the " +
+          "element renders wrongly with nothing to say why",
+      ).toEqual([]);
+    });
+  });
+});
