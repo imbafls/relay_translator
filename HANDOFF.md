@@ -27,9 +27,11 @@ what was looked at, what it turned out to be, and how it was proved.
 - **Code signing (B4).** `win.publisherName` plus a certificate. Without it
   electron-updater's signature check returns early, so an update is verified
   only against a hash in the feed's own file. A purchase, not a code change.
-- **In-app archive model downloads (B6).** Still reported failing at ~28% on
-  one machine and still not reproducible on the dev desktop - see issue 1
-  below, and the full investigation in `docs/OPEN-WORK.md`.
+- **In-app archive model downloads (B6).** 0.8.1 pins every archive to a
+  SHA-256 and retries a failed attempt in a staging folder of its own, which
+  closes the one cause that matches the reported symptom. Still never seen to
+  fail or succeed on the machine that reports it - see issue 1 below, and the
+  full investigation in `docs/OPEN-WORK.md`.
 
 ## First run on a new machine
 
@@ -149,7 +151,7 @@ short pane.
 `docs/OPEN-WORK.md` is the full and current list. These are the ones a new
 machine is most likely to walk into.
 
-### 1. In-app model downloads are corrupting — not yet fixed
+### 1. In-app archive downloads — pinned and retried, not yet confirmed
 
 Downloading `local-whisper-tiny-en` inside the app fails at ~28% with
 `Error in bzip2: crc32 do not match`. The **identical** download and decompress
@@ -161,13 +163,29 @@ stack (proxy?) corrupts or truncates the stream.
 Per-file downloads from Hugging Face do work in the app — `whisper-small`'s
 375 MB arrived byte-exact — so it is not simply "big downloads fail".
 
-Until it is fixed, no new archive model can be installed through the UI.
-Leftover `<id>.part` folders are harmless; they are cleared on the next attempt.
+**What 0.8.1 changed.** Every archive in the catalogue now carries a pinned
+SHA-256, hashed over the compressed bytes as they stream and checked before
+anything an attempt unpacked is published - so bytes that decoded but are not
+the pinned archive are a named failure rather than a model. A failed attempt
+is retried up to three times, each in a staging folder of its own (`<id>.part`,
+then `<id>.part-2`), because on Windows a scanner holding a failed attempt's
+files keeps that folder from being removed, and a leftover held by an earlier
+run used to abort the next download before it made its first request. That
+last shape fits the report exactly: both reported failures left an EMPTY
+`.part` directory behind.
+
+**It is still a hypothesis that fits the evidence, not a reproduction.** No
+download has been seen to fail or succeed on the machine that reports this,
+on 0.8.1 or any build. Get the instrumented message from a real failure
+before calling it closed.
 
 **The suggested instrumentation is now in.** `fetchArchive` counts the bytes it
-actually receives against `content-length`, so the next failure says either
-`the download stopped early: N of M bytes (P%)` or `the archive would not
-unpack after all N bytes arrived`. That one line decides which half to chase.
+actually receives against `content-length`, so the next failure says one of
+`the download stopped early: N of M bytes (P%)`, `the archive would not
+unpack after all N bytes arrived`, or - new in 0.8.1 - `archive checksum
+mismatch: expected SHA-256 ..., got ...`. That one line decides which half to
+chase, and the third answer is the one the earlier instrumentation could not
+give: bytes that arrived whole and were still not the archive.
 
 Evidence gathered since, which narrows it but does not settle it: probed
 directly, a truncated bz2 stream reports `input stream ended prematurely` or a
@@ -183,14 +201,10 @@ Nobody has run a transcription session with any of them. Download, extraction,
 staging and every failure path are well tested with synthetic and real
 archives; the earlier session verified decoding for Moonshine, Whisper tiny.en
 and Nemotron through the worker. But end-to-end in-app decode is unproven, and
-issue 2 currently blocks installing them.
+issue 1 currently blocks installing them.
 
 `whisper-turbo` in particular has never been loaded — it is the one the mel-bin
 fix targets.
-
-### 3. Cosmetic
-
-- The release workflow warns that its GitHub actions target Node 20.
 
 ## Release process
 

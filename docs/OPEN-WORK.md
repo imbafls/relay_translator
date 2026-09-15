@@ -170,9 +170,25 @@ LAN-MITM paths; it does not make an update cryptographically verified.
 wire signing into `electron-builder`.
 
 ### B6 — In-app archive model downloads corrupt at ~28%
-**Band: medium. Status: still failing for the user, still not reproducible
-here. Instrumented 2026-09-07 so the next failure leaves evidence; two
-candidate causes fixed the same day, one of them demonstrated end to end.**
+**Band: medium. Status: re-scoped by v0.8.1, still never reproduced here and
+still never retried there. Instrumented 2026-09-07; two candidate causes fixed
+the same day, one demonstrated end to end. v0.8.1 then pinned every archive to
+a SHA-256 and gave each retry a staging folder of its own.**
+
+> **What v0.8.1 closed, and what it did not.** `516247f` hashes the compressed
+> bytes as they stream and refuses to publish anything whose digest is not the
+> pinned one, so an archive that decoded and is still not the right bytes is now
+> a named failure (`archive checksum mismatch`) instead of a model. It also
+> retries three times, each attempt in its own numbered staging folder, because
+> a leftover folder the scanner still held used to abort the next download
+> **before its first request** - which is exactly the shape of the report below:
+> both failures left an EMPTY `.part` directory and no model. That makes the
+> leftover-abort a plausible whole explanation for the reported symptom.
+>
+> It is not a reproduction. The original ~28% corruption has never been seen on
+> this machine, and no download has been attempted on the reporting machine on
+> 0.8.1 or on any build since 0.5.12. Treat this as a hypothesis that fits the
+> evidence until the instrumented message comes back from a real 0.8.1 failure.
 
 > **Untested since the fix, as of 2026-09-08 - said plainly here so nobody
 > re-derives it.** B6 has never been retried on a build that contains the
@@ -350,6 +366,45 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
 Each entry in the audit carries a reproduced failure scenario and a suggested
 fix — read the numbered section there before starting.
+
+### Found in the v0.8.1 release review, not in the audit
+
+All three were confirmed against the source by independent verification and
+are **pre-existing** - none is a regression from the eight commits in v0.8.1.
+They are recorded rather than fixed because each needs a guard test of its own,
+and a release commit is the wrong place to write one.
+
+- **The desktop's own caption stage renders empty finals.** `onSubtitle` in
+  `apps/standalone/renderer/app.ts` is the third consumer of a recogniser final
+  and the one nothing guards. `onPartial` twenty lines above it checks
+  `!seg.source.trim()`, the viewer page checks `!msg.source && !msg.target`, and
+  0.8.1 added the same check to the translator and to the saved transcript - but
+  the streamer's own 04 OUTPUT stage still builds a full row for a wordless
+  final. A quiet channel emits one every couple of seconds, so a silence long
+  enough evicts all twelve real captions (`MAX_ROWS`) and leaves blank
+  timestamped rows carrying a `...` that now never resolves, because 0.8.1
+  correctly stops translating them. Guard the wiring point, not the two
+  consumers separately - `logSubtitle` shares the same capped LOG buffer and has
+  the same problem. Present at v0.8.0 and before; `85c4531` only changed the
+  blank row's translation column from an invented callout to a permanent `...`.
+
+- **File-based local models have no integrity check at all.** The SHA-256 pin
+  `516247f` added covers only the seven `archive` models. The file-based ones
+  (`local-zipformer-en-20m`, `local-parakeet-tdt-0.6b-v3`, `local-sense-voice`)
+  download loose files with no digest and no post-download size check, and
+  `localModelReady()` decides they are installed by filename alone - so a
+  truncated file is published and reported ready. The cheap half is one line:
+  the catalogue already carries each file's exact `size`, so comparing it
+  against `fs.statSync(part).size` before the rename closes truncation without
+  any new catalogue data. A `sha256` per file would close substitution too.
+
+- **Every silent final forces a Durable Object storage write.** The uplink
+  forwards wordless finals verbatim and each carries a higher segment id, so
+  `apps/hosted-relay/src/room.ts` persists room state on every silent tick -
+  roughly a 5x write amplification that comes entirely from silence. The
+  broadcast itself must not change: remote viewers need the empty final to
+  retire their interim row. Keep the id in memory and persist only when the
+  line carries words.
 
 ### Found while fixing the above, not in the audit
 

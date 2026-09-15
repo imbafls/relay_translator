@@ -3352,3 +3352,52 @@ Nine guards across the two commits, every one proved by reverting. **Still not
 reproduced**, and both candidates are the strongest reading of the evidence
 rather than a confirmed cause. The thing that will actually settle it is
 `relay.log`, which turn 90 added and which nobody has sent yet.
+
+### Turn 92 - The third shape, and a sweep that still named one folder
+
+Cutting v0.8.1 meant reviewing eight commits that had landed on two diverged
+branches. Two of them are the same fix at different layers: `85c4531` stops an
+empty final reaching Gemini, `05b9a87` stops it reaching the saved transcript.
+Both gate on `text.trim()`, both sit on the correct side of the
+`onTranscript`/`onBroadcast` split, and the translation echo carries the same
+`source` - so a blank line cannot orphan a translation. That part held.
+
+**The adjacent shape stayed open, the way it always does.** A recogniser final
+has a third consumer nobody guarded: `onSubtitle` in the desktop renderer.
+`onPartial` twenty lines above it checks `!seg.source.trim()`; the viewer page
+checks `!msg.source && !msg.target`; the streamer's own 04 OUTPUT stage checks
+nothing and builds a full row. Through a long silence that evicts all twelve
+real captions. Pre-existing - v0.8.0's renderer has no guard either, and its
+`deepgram.ts` already dispatched empty finals - so it is recorded in
+`docs/OPEN-WORK.md` rather than fixed inside a release. `85c4531` did change
+how it looks: the blank row's translation column used to fill with an invented
+callout, and now keeps a `...` for the life of the session.
+
+**A fix that numbered the folders, and two sweeps that still named one.**
+`516247f` gave each download attempt a staging folder of its own - `<id>.part`,
+then `<id>.part-2` - because on Windows a scanner holding a failed attempt keeps
+its folder from being removed. But both places that clean staging up still
+spelled `<id>.part` literally: the failure sweep in `download()`, and the
+`remove()` behind the button. Before the commit those were complete, because one
+folder was all there had ever been. After it, a numbered folder left behind by
+the exact lock the numbering exists for had nothing that would ever delete it -
+not the sweep, not the user. Finding 2 again, and found by asking what the
+commit had made newly reachable rather than by reading the diff.
+
+Fixed with `stagingFor()`, used at both sites, guarded by a test watched failing
+first: three staging folders on disk, `remove()`, and the two numbered ones
+survived. It is the only regression the review found in the eight commits.
+
+**A guard that held two of three protections.** The packaged-app recipe in
+`HANDOFF.md` protects the owner three ways at once - a scratch data dir on the
+launch line, a scratch `transcriptDir`, a dead `updateFeedUrl`. Transcripts do
+not live in the data dir, so they need naming separately. Guards existed for the
+first and the third and not the second, so half of `a3e1186` could be reverted
+with the whole suite green. Written, and watched failing by deleting the seed's
+`transcriptDir` from the document.
+
+**One thing the review got right by being told to doubt itself.** Of 27 raw
+findings, 8 did not survive three adversarial readings - including a confident
+"the version was never bumped" blocker, which is not a defect in the commits but
+the release step about to be taken. Worth remembering that a reviewer reading a
+tree mid-release will report the release's own unfinished state as a bug.
