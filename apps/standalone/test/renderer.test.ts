@@ -1093,6 +1093,67 @@ describe("three capture sources in the app", () => {
     expect(row(3).hidden).toBe(true);
   });
 
+  /**
+   * Changing one colour writes all three, because the handler reads every
+   * picker rather than patching the slot that moved - which is right, since
+   * `sourceColors` is one list. It is only safe while every picker holds what
+   * the config holds, and the rows above are hidden for slots with no device.
+   *
+   * A streamer who runs three sources, colours them, then drops to one - the
+   * coach left, the chat mix is off - and later nudges their own colour would
+   * have the other two silently reset to the defaults. Nothing says so: the
+   * rows are not on screen, the write succeeds, and the loss only shows up
+   * the next time that source is plugged back in.
+   *
+   * The name fields do not have this problem, which is the tell. They are
+   * seeded straight from `config.sourceLabels` for all three slots; the colours
+   * were seeded from `channelColors(activeSources())`, a list as long as the
+   * sources that are actually on.
+   */
+  it("keeps the colours of slots that are not on screen", async () => {
+    await bootWith(
+      { setupDone: true, sources: ["default-mic"], sourceColors: ["#111111", "#22ee22", "#3333ff"] },
+      devices,
+    );
+    await openSettings();
+
+    const picker = document.getElementById("sourceColor1") as HTMLInputElement;
+    picker.value = "#ff00ff";
+    picker.dispatchEvent(new Event("change"));
+    await settle(40);
+
+    const last = calls.setConfig.filter((p) => p.sourceColors).pop();
+    expect(
+      last?.sourceColors,
+      "changing one slot's colour overwrote the colours of the slots that are off, so a source " +
+        "plugged back in comes back a different colour than the one it was given",
+    ).toEqual(["#ff00ff", "#22ee22", "#3333ff"]);
+  });
+
+  // the names are written the same way, from all three fields at once, so they
+  // are open to the same loss and are only safe because they are seeded for
+  // every slot rather than for every live channel. Asserted rather than
+  // believed: this is the half that is already right, and the reason it is
+  // right is one line that could be narrowed to match the colours at any time.
+  it("keeps the names of slots that are not on screen", async () => {
+    await bootWith(
+      { setupDone: true, sources: ["default-mic"], sourceLabels: ["ME", "CHAT", "COACH"] },
+      devices,
+    );
+    await openSettings();
+
+    const name = document.getElementById("sourceName1") as HTMLInputElement;
+    name.value = "OMER";
+    name.dispatchEvent(new Event("change"));
+    await settle(40);
+
+    const last = calls.setConfig.filter((p) => p.sourceLabels).pop();
+    expect(
+      last?.sourceLabels,
+      "renaming one slot dropped the names of the slots that are off",
+    ).toEqual(["OMER", "CHAT", "COACH"]);
+  });
+
 });
 
 describe("a source whose device is no longer plugged in", () => {

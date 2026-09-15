@@ -1431,7 +1431,16 @@ function renderSourceNames(live: boolean): void {
     input.placeholder = tags[i] || "no tag";
     input.disabled = live;
 
-    const colour = colours[i] || SPEAKER_COLORS[i] || SPEAKER_COLORS[0];
+    // config first, then the colour this channel is actually carrying. The two
+    // agree for a slot that holds a device, and differ for one that does not:
+    // `colours` is as long as the sources that are ON, so slots 2 and 3 of a
+    // one-source setup would fall through to the defaults here. That matters
+    // because the change handler writes all three pickers as one list - so a
+    // picker showing a default instead of the stored colour does not merely
+    // look wrong, it overwrites the stored colour the next time any of the
+    // three is touched, for a row that is not even on screen.
+    const colour =
+      safeSpeakerColor(config?.sourceColors?.[i]) || colours[i] || SPEAKER_COLORS[i] || SPEAKER_COLORS[0];
     const picker = inp(`sourceColor${i + 1}`);
     picker.value = colour;
     picker.disabled = live;
