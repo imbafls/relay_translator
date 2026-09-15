@@ -44,3 +44,6 @@ graphify-out/
 
 # AI handoff package (docs + copied secrets) - never commit
 _handoff/
+
+# personal scratch note - not part of the product
+IDEA.md
