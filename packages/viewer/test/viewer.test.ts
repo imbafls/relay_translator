@@ -1329,3 +1329,93 @@ describe("how many lines the page keeps", () => {
     ).toBe(1);
   });
 });
+
+/**
+ * Four of the reader's display settings did what they do by putting a class on
+ * `<body>`, and not one of them was covered.
+ *
+ * `showSource` is the one that matters most and reads like the least: a friend
+ * who does not speak the streamer's language turns the original off, and half
+ * their screen stops being text they cannot read. `showTranslation` is the same
+ * move in reverse. `timestamps` and `align` are smaller and break the same way.
+ *
+ * Each is checked twice on purpose, because either half alone passes on a
+ * broken page. Asserting the class proves the setting reached `<body>` and
+ * nothing about whether that means anything; asserting the stylesheet proves a
+ * rule exists and nothing about whether the class ever arrives. The comment
+ * over `applyBrand` in the shipped file says why this matters here in
+ * particular - happy-dom applies no stylesheets, so "a test asserting it would
+ * pass on markup that shows the brand to a whole Twitch audience".
+ */
+describe("the display settings a reader actually changes", () => {
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+  const on = (name: string): boolean => document.body.classList.contains(name);
+
+  const tick = (id: string, checked: boolean): void => {
+    const el = $(id) as HTMLInputElement;
+    el.checked = checked;
+    el.dispatchEvent(new Event("change"));
+  };
+  const choose = (id: string, value: string): void => {
+    const el = $(id) as HTMLSelectElement;
+    el.value = value;
+    el.dispatchEvent(new Event("change"));
+  };
+
+  /** the rules in the shipped stylesheet that key on `body.<name>` */
+  const rulesFor = (name: string): string[] =>
+    [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => new RegExp(`body\\.${name}\\b`).test(m[1]))
+      .map((m) => `${m[1].trim().replace(/\s+/g, " ")} { ${m[2].trim()} }`);
+
+  beforeEach(() => {
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+  });
+
+  for (const name of ["no-src", "no-tgt", "no-ts", "center"]) {
+    it(`has something in the stylesheet behind .${name}`, () => {
+      expect(
+        rulesFor(name),
+        `nothing in style.css keys on body.${name}, so the setting that sets it changes nothing on screen`,
+      ).not.toEqual([]);
+    });
+  }
+
+  it("turns the original off for a reader who cannot read it", () => {
+    expect(on("no-src"), "the original was already hidden before anything was asked").toBe(false);
+    tick("setShowSource", false);
+    expect(on("no-src"), "SHOW ORIGINAL was turned off and the page kept showing it").toBe(true);
+    tick("setShowSource", true);
+    expect(on("no-src")).toBe(false);
+  });
+
+  it("turns the translation off for a reader who does not want it", () => {
+    tick("setShowTranslation", false);
+    expect(on("no-tgt"), "SHOW TRANSLATION was turned off and the page kept showing it").toBe(true);
+  });
+
+  it("hides the translation on a stream that is not translating, whatever the reader asked for", () => {
+    // the class is `!serverTranslates || !showTranslation`: there is nothing to
+    // show, and a column reserved for nothing is worse than no column
+    push({ type: "hello", languages: { source: "en", target: "en" }, live: true, translates: false });
+    expect(on("no-tgt")).toBe(true);
+    tick("setShowTranslation", true);
+    expect(
+      on("no-tgt"),
+      "the reader asked for a translation the stream is not producing and got an empty column for it",
+    ).toBe(true);
+  });
+
+  it("turns the timestamps off", () => {
+    tick("setTimestamps", false);
+    expect(on("no-ts")).toBe(true);
+  });
+
+  it("centres the lines when asked, and only then", () => {
+    expect(on("center")).toBe(false);
+    choose("setAlign", "center");
+    expect(on("center"), "ALIGN was set to centre and the page stayed left").toBe(true);
+    choose("setAlign", "left");
+    expect(on("center")).toBe(false);
+  });
+});
