@@ -428,7 +428,11 @@ const HELLO_HOPS = [
   {
     file: "apps/hosted-relay/src/room.ts",
     hop: "the hosted relay greeting an internet viewer",
-    frames: 2,
+    // three since the `sync` reply was added: the late joiner's greeting, the
+    // one rebuilt from an uplink hello, and the answer to a viewer asking to
+    // be caught up. This count is what made somebody check the new one carries
+    // the brand as well, which is the whole reason it is asserted.
+    frames: 3,
   },
 ];
 

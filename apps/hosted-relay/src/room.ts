@@ -344,10 +344,34 @@ export class Room {
       send(ws, { type: "pong" });
       return;
     }
-    if (!isUplink) return; // viewers may only ping and sync
+    // `ViewerToServer` is `ping | sync`, and this answered only the ping - a
+    // sync fell past the gate and was discarded in silence, while the comment
+    // on that line said viewers may send one. The self-hosted relay answers
+    // both. Kept BEFORE the load so anything else off a viewer socket still
+    // costs nothing: this object is billed per operation, which is the whole
+    // reason it hibernates.
+    if (!isUplink && msg.type !== "sync") return;
 
     const room = await this.load();
     if (!room) return;
+
+    // a viewer asks for this to pick up state it missed across a blip, so the
+    // answer is the same greeting a late joiner gets
+    if (msg.type === "sync") {
+      send(ws, {
+        type: "hello",
+        languages: room.languages,
+        live: room.live,
+        translates: room.translates,
+        since: room.since,
+        epoch: room.epoch,
+        brandName: room.brandName,
+        brandColor: room.brandColor,
+      });
+      return;
+    }
+
+    if (!isUplink) return; // past here is the uplink's alone
 
     if (msg.type === "hello") {
       const was = snapshot(room);

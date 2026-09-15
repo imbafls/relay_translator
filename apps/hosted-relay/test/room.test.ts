@@ -98,6 +98,8 @@ function stand() {
     viewer,
     /** what the record holds between messages - the thing a late joiner is greeted from */
     stored: (): Frame => store.get("room") as Frame,
+    /** how many hellos have reached viewers - a sync has to ADD one */
+    helloCount: (): number => viewer.seen.filter((m) => m.type === "hello").length,
     /** the last hello this room fanned out to viewers */
     relayed: (): Frame | undefined => viewer.seen.filter((m) => m.type === "hello").pop(),
     /** storage writes so far; `stand()` itself makes none */
@@ -111,6 +113,9 @@ function stand() {
         uplink as unknown as WebSocket,
         JSON.stringify({ type: "status", live: true, since: 1_788_000_000_000, ...patch }),
       ),
+    /** the one thing a viewer may send besides a ping, per ViewerToServer */
+    sync: (): Promise<void> =>
+      room.webSocketMessage(viewer as unknown as WebSocket, JSON.stringify({ type: "sync" })),
     hello: (brand: Frame = {}): Promise<void> =>
       room.webSocketMessage(
         uplink as unknown as WebSocket,
@@ -461,5 +466,37 @@ describe("a hosted room told something it already knew", () => {
 
     expect(s.writes() - after, "the stream stopping never reached the record").toBe(1);
     expect(s.stored().live).toBe(false);
+  });
+});
+
+/**
+ * `ViewerToServer` is `{ type: "ping" } | { type: "sync" }`, and the
+ * self-hosted relay answers both - a sync re-sends the whole hello, which is
+ * how a viewer picks up state it missed across a blip.
+ *
+ * This room answered only the ping. The line that dropped the rest carried the
+ * comment `// viewers may only ping and sync`, which is the thing it was not
+ * doing: a sync arrived, fell past the uplink gate, and was discarded in
+ * silence. One contract, two relays, two behaviours.
+ */
+describe("a viewer asking the hosted room to catch it up", () => {
+  it("gets a fresh hello back, the way the self-hosted relay answers", async () => {
+    const s = stand();
+    await s.hello({ brandName: "Callouts", brandColor: "#e0a43a" });
+    await s.status({ live: true });
+
+    // COUNT them. `relayed()` returns the LAST hello, and the uplink's own
+    // hello is already one - so asserting that a hello exists after the sync
+    // passes whether or not the sync did anything at all.
+    const before = s.helloCount();
+    expect(before, "the harness never saw a hello at all").toBeGreaterThan(0);
+
+    await s.sync();
+
+    expect(s.helloCount(), "the sync was dropped - no new hello came back").toBe(before + 1);
+    const answer = s.relayed();
+    expect(answer?.languages, "the sync reply carries no languages").toEqual({ source: "en", target: "vi" });
+    expect(answer?.live, "the sync reply did not say the stream is live").toBe(true);
+    expect(answer?.brandName, "the sync reply lost the brand a late joiner needs").toBe("Callouts");
   });
 });
