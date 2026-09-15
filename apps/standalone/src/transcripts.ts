@@ -386,8 +386,22 @@ export function toText(t: Transcript): string {
   return out.join(EOL) + EOL;
 }
 
-/** a cue shows until the next one starts, within these bounds */
-const MIN_CUE_MS = 1000;
+/**
+ * A cue shows until the next one starts, capped so that a long pause does not
+ * leave one line on screen for the whole gap; the last cue gets a fixed tail.
+ *
+ * There is deliberately no minimum. One used to hold a cue open for a second
+ * whatever the next line did, which reads as a readability floor and is really
+ * an overlap: a floor can only bind when the next line is already closer than
+ * the floor, so it fires in exactly the case where it must not. Four lines
+ * 400ms apart - ordinary game comms - put three cues on screen at once, from a
+ * single speaker. A short cue is what was said in that window, and the screen
+ * is never empty, because the next cue takes over the instant this one ends.
+ *
+ * Two lines stamped in the same millisecond give the first a cue of no length.
+ * That is two things said at once rendered truthfully, and it cannot be helped
+ * by extending one of them, which would put it over the other.
+ */
 const MAX_CUE_MS = 6000;
 const LAST_CUE_MS = 4000;
 
@@ -398,7 +412,7 @@ export function toSrt(t: Transcript): string {
     const from = r.t - start;
     const next = t.rows[i + 1];
     const until = next ? next.t - start : from + LAST_CUE_MS;
-    const to = Math.min(Math.max(until, from + MIN_CUE_MS), from + MAX_CUE_MS);
+    const to = Math.min(until, from + MAX_CUE_MS);
     const text = [said(r)];
     if (r.target) text.push(r.target);
     return [String(i + 1), `${srtTime(from)} --> ${srtTime(to)}`, ...text].join(EOL);

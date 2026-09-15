@@ -371,6 +371,63 @@ describe("export", () => {
     expect(cues[1].split(/\r?\n/)[0]).toBe("2");
     expect(cues[1]).toMatch(/^2\r?\n00:00:05,000 --> 00:00:0\d,\d{3}\r?\nCHAT: one on A$/);
   });
+
+  /**
+   * The case above has three seconds between lines, which is slow speech. Real
+   * game comms are not: "push B", "one left", "rotating" land a few hundred
+   * milliseconds apart, and that is the shape of nearly every transcript this
+   * app writes. The test above is named for what a video editor will accept
+   * and never exercises it.
+   *
+   * A cue used to be held open for a minimum readable time whatever the next
+   * one did, so four lines 400ms apart produced cues a full second long, each
+   * running over the next two. At 0.9s into that file three cues are live at
+   * once, from ONE speaker. A player that stacks overlapping subtitles shows
+   * three lines piling up; one that shows the last to start flickers between
+   * them.
+   *
+   * There is no way to keep that floor and not overlap, because the floor only
+   * ever binds when the next line is already closer than the floor. So a cue
+   * now ends where the next begins. A short cue is what was actually said in
+   * that window, and the screen is never empty: the next cue takes over the
+   * instant this one ends.
+   */
+  it("gives a fast speaker cues that do not run over each other", () => {
+    const w = writer();
+    w.open({ languages: LANGS, translates: false });
+    for (let i = 1; i <= 4; i++) {
+      clock += 400;
+      w.write(line(i, `line ${i}`));
+    }
+    w.close();
+    const t = readTranscript(dir, jsonl()[0].replace(/\.jsonl$/, ""))!;
+
+    const ms = (h: string, mi: string, se: string, mil: string): number =>
+      Number(h) * 3600000 + Number(mi) * 60000 + Number(se) * 1000 + Number(mil);
+    const times = toSrt(t)
+      .trim()
+      .split(/\r?\n\r?\n/)
+      .map((cue) => {
+        const m = /(\d\d):(\d\d):(\d\d),(\d{3}) --> (\d\d):(\d\d):(\d\d),(\d{3})/.exec(cue);
+        if (!m) throw new Error(`no timing line in cue: ${JSON.stringify(cue)}`);
+        return { from: ms(m[1], m[2], m[3], m[4]), to: ms(m[5], m[6], m[7], m[8]) };
+      });
+
+    expect(times.length, "the sample stopped producing four cues").toBe(4);
+
+    const overlapping = times
+      .map((cue, i) => ({ cue, next: times[i + 1], i }))
+      .filter(({ cue, next }) => next && cue.to > next.from)
+      .map(({ cue, next, i }) => `cue ${i + 1} ends at ${cue.to}ms and cue ${i + 2} starts at ${next.from}ms`);
+    expect(
+      overlapping,
+      "cues run over each other, so a player has more than one on screen at a time from a single speaker",
+    ).toEqual([]);
+
+    // and the rule stated exactly: each cue lasts until the next begins, with
+    // the last one getting the fixed tail
+    expect(times.map((c) => c.to - c.from)).toEqual([400, 400, 400, 4000]);
+  });
 });
 
 describe("export and delete", () => {
