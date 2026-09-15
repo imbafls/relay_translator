@@ -322,3 +322,107 @@ describe("custom properties, across the files that cannot import each other", ()
     });
   });
 });
+
+
+/**
+ * The data attributes the stylesheets select on, against the code that sets them.
+ *
+ * The last name-shaped contract on this seam. A rule like
+ * `[data-session="live"]` waits for a string a script writes at runtime, and
+ * the two are connected by nothing: rename the state and the rule stops
+ * matching, with no error and no failing test, because happy-dom does not apply
+ * stylesheets. The ON AIR panel simply stops looking live.
+ *
+ * It is how the previous iteration found something real: `[data-kind="added"]`
+ * names a value that is nowhere in `app.ts`, because it comes from shared's
+ * `ChangeKind` by way of `whatsNew.ts` - a renderer module the id checker had
+ * never been told about.
+ *
+ * **What this deliberately does not promise.** The values are computed at the
+ * point of use (`el.dataset.state = state`), so the strong form - every value a
+ * selector needs is reachable at runtime - is not statically decidable. This
+ * takes the weaker one: the value exists as a literal somewhere in the code that
+ * feeds the surface. That catches a rename, which is the realistic break, and it
+ * can be masked for a short common word that survives elsewhere for unrelated
+ * reasons. Worth having and worth not overstating. The attribute NAME check has
+ * no such weakness - `data-session` is distinctive, and if nothing sets it, that
+ * whole family of rules is dead.
+ */
+describe("data attributes, between the stylesheets and the code that sets them", () => {
+  const SURFACES = [
+    {
+      name: "desktop renderer",
+      css: ["apps/standalone/renderer/style.css"],
+      markup: ["apps/standalone/renderer/index.html"],
+      // the renderer's own modules, plus the shared source its values come from
+      scripts: [
+        "apps/standalone/renderer/app.ts",
+        "apps/standalone/renderer/dom.ts",
+        "apps/standalone/renderer/log.ts",
+        "apps/standalone/renderer/meter.ts",
+        "apps/standalone/renderer/whatsNew.ts",
+        "packages/shared/src/index.ts",
+        "packages/shared/src/changelog.ts",
+      ],
+    },
+    {
+      name: "phone/OBS viewer",
+      css: ["packages/viewer/public/style.css"],
+      markup: ["packages/viewer/public/index.html", "packages/viewer/public/home.html"],
+      scripts: ["packages/viewer/public/app.js", "packages/shared/src/index.ts"],
+    },
+  ];
+
+  const load = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf8");
+  const noComments = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const kebab = (s: string): string => s.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+
+  describe.each(SURFACES)("$name", (surface) => {
+    const css = surface.css.map(load).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+    const markup = surface.markup.map(load).join("\n");
+    const scripts = noComments(surface.scripts.map(load).join("\n"));
+
+    /** data-x -> the exact values the sheet waits for */
+    const selected = new Map<string, Set<string>>();
+    for (const m of css.matchAll(/\[data-([a-z-]+)(?:\s*[~^|$*]?=\s*"([^"]*)")?\]/g)) {
+      const name = m[1] ?? "";
+      if (!selected.has(name)) selected.set(name, new Set());
+      if (m[2] !== undefined) selected.get(name)?.add(m[2]);
+    }
+
+    const setNames = new Set<string>();
+    for (const m of scripts.matchAll(/dataset\.([a-zA-Z][\w]*)\s*=/g)) setNames.add(kebab(m[1] ?? ""));
+    for (const m of scripts.matchAll(/setAttribute\(\s*["'`]data-([a-z-]+)["'`]/g)) setNames.add(m[1] ?? "");
+    for (const m of markup.matchAll(/\sdata-([a-z-]+)\s*=/g)) setNames.add(m[1] ?? "");
+
+    const literals = new Set<string>();
+    for (const m of scripts.matchAll(/["'`]([A-Za-z][\w-]*)["'`]/g)) literals.add(m[1] ?? "");
+    for (const m of markup.matchAll(/\sdata-[a-z-]+\s*=\s*"([^"]*)"/g)) literals.add(m[1] ?? "");
+
+    it("selects on some, so the two checks below are not vacuous", () => {
+      expect(selected.size, "this stylesheet selects on no data attribute at all").toBeGreaterThan(0);
+      expect(setNames.size, "nothing in this surface sets a data attribute, so the matcher found nothing").toBeGreaterThan(0);
+    });
+
+    it("waits on no attribute that nothing sets", () => {
+      const orphans = [...selected.keys()].filter((name) => !setNames.has(name));
+      expect(
+        orphans,
+        "the stylesheet has rules keyed on these and no script or markup ever sets them, so that whole family " +
+          "of rules is dead and the elements they style never change appearance",
+      ).toEqual([]);
+    });
+
+    it("waits on no value the code cannot produce", () => {
+      const dead: string[] = [];
+      for (const [name, values] of selected) {
+        for (const v of values) if (!literals.has(v)) dead.push(`data-${name}="${v}"`);
+      }
+      expect(
+        dead,
+        "the stylesheet waits for these exact strings and no code that feeds this surface contains them, so the " +
+          "rule never matches - the state it styles simply never appears",
+      ).toEqual([]);
+    });
+  });
+});
