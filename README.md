@@ -143,7 +143,8 @@ GitHub release notes, so the two cannot drift.
 
 ```powershell
 pnpm version-bump 0.5.7
-git commit -am "Release v0.5.7"
+git add package.json apps/*/package.json packages/*/package.json   # not -a: the tree may hold unrelated edits
+git commit -m "Release v0.5.7"
 git tag -a v0.5.7 -m "v0.5.7"
 git push origin master v0.5.7
 ```
@@ -387,6 +388,8 @@ never stalls. Parakeet decodes a 6 s utterance in ~0.6 s on a desktop CPU.
 ```powershell
 pnpm -r build                      # do this first on a clean checkout - shared
                                    # emits the .d.ts everything else reads
+pnpm -r typecheck                  # each package's src/, which the test config
+                                   # below does not cover
 pnpm test                          # the whole suite
 pnpm typecheck:test                # tests live outside each package's rootDir,
                                    # so `pnpm -r typecheck` does not see them

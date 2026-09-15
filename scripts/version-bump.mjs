@@ -33,5 +33,8 @@ for (const file of files) {
 }
 
 console.log(changed ? `\n${changed} file(s) set to ${version}` : `already at ${version}`);
-console.log(`next: git commit -am "Release v${version}" && git tag -a v${version} -m "v${version}"`);
+// -a would sweep whatever else the tree happens to hold; CLAUDE.md, HANDOFF.md
+// and README.md all specify the explicit add, so the tooling says it too.
+console.log(`next: git add package.json apps/*/package.json packages/*/package.json`);
+console.log(`      git commit -m "Release v${version}" && git tag -a v${version} -m "v${version}"`);
 console.log(`      git push origin master v${version}   # the Release workflow builds and publishes`);
