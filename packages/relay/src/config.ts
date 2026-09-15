@@ -33,16 +33,61 @@ function persistedToken(value: unknown): string | undefined {
 }
 
 /**
+ * The characters a viewer token may be made of.
+ *
+ * The same sentence as `persistedToken` above, one layer further along. A
+ * viewer token is not only compared against a query param - it is written into
+ * the middle of a URL PATH and read back out of one, and both ends of that
+ * round trip already fix its alphabet:
+ *
+ *   - `packages/viewer/public/app.js` takes it off the path with
+ *     `/\/watch\/([A-Za-z0-9_-]+)/`, and that file is served as-is with no
+ *     build step, so it can import nothing and the class is a literal there.
+ *   - `apps/hosted-relay/src/routes.ts` decides whether `/watch/<x>` is a page
+ *     or an asset on whether `x` holds a dot, and says so in its own comment.
+ *
+ * So a token with a dot in it - `team.alpha`, a version, an IP - does not make
+ * a link that half works. The relay comes up, serves the page, and refuses
+ * every viewer that opens it, because the page asks with the part before the
+ * dot. Adopting one persists that state, which is exactly what the note above
+ * exists to prevent.
+ *
+ * The publisher token is deliberately not held to this: it travels as a query
+ * parameter, encoded on the way out and decoded on the way in, so it survives
+ * characters a path cannot carry.
+ */
+const VIEWER_TOKEN = /^[A-Za-z0-9_-]+$/;
+
+export function usableViewerToken(value: unknown): string | undefined {
+  return typeof value === "string" && VIEWER_TOKEN.test(value) ? value : undefined;
+}
+
+/**
  * Resolve relay tokens: explicit opts > env > state file > generate.
  * State file keeps tokens stable across restarts ("fixed" link mode).
  */
 export function loadState(
   dataDir: string,
   opts: { publisherToken?: string; viewerToken?: string },
+  log?: (level: "info" | "warn" | "error", message: string) => void,
 ): RelayState {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, "relay-state.json");
   const persisted = readStateFile(file);
+
+  /**
+   * A refused token is said out loud and then skipped rather than being made
+   * to work. Silence here is the bad outcome: whoever set it would watch the
+   * relay start cleanly and every viewer be turned away, with the link they
+   * chose nowhere in sight.
+   */
+  const viewer = (value: unknown, where: string): string | undefined => {
+    const usable = usableViewerToken(value);
+    if (!usable && persistedToken(value)) {
+      log?.("warn", `${where} holds a viewer token a link cannot carry (A-Z a-z 0-9 _ - only) - ignoring it`);
+    }
+    return usable;
+  };
 
   const state: RelayState = {
     publisherToken:
@@ -51,9 +96,9 @@ export function loadState(
       persistedToken(persisted?.publisherToken) ||
       generateToken(),
     viewerToken:
-      opts.viewerToken ||
-      process.env.RELAY_VIEWER_TOKEN ||
-      persistedToken(persisted?.viewerToken) ||
+      viewer(opts.viewerToken, "the config this relay was started with") ||
+      viewer(process.env.RELAY_VIEWER_TOKEN, "RELAY_VIEWER_TOKEN") ||
+      viewer(persisted?.viewerToken, "relay-state.json") ||
       generateToken(),
   };
   saveState(dataDir, state);

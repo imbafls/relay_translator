@@ -264,10 +264,14 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
   const log = opts.log || (() => {});
   const dataDir = opts.dataDir || ".";
   const updatesDir = opts.updatesDir || path.join(dataDir, "updates");
-  const state = loadState(dataDir, {
-    publisherToken: opts.publisherToken,
-    viewerToken: opts.viewerToken,
-  });
+  const state = loadState(
+    dataDir,
+    {
+      publisherToken: opts.publisherToken,
+      viewerToken: opts.viewerToken,
+    },
+    log,
+  );
   const mockStt = opts.mockStt ?? process.env.RELAY_MOCK_STT === "1";
   const mockGemini = opts.mockGemini ?? process.env.RELAY_MOCK_GEMINI === "1";
   const geminiStats: GeminiStats = { count: 0, cacheHits: 0, tokensIn: 0, tokensOut: 0 };
