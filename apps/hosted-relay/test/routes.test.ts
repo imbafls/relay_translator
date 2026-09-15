@@ -375,3 +375,60 @@ describe("what the shipped pages ask the router for", () => {
     expect(refs.map((r) => r.ref)).toContain("/og.png");
   });
 });
+
+/**
+ * The one line that makes every routing test above mean anything.
+ *
+ * With an `[assets]` directory configured, Cloudflare serves any path matching
+ * a file BEFORE the Worker runs, unless `run_worker_first` says otherwise. The
+ * comment beside it in `wrangler.toml` records what that cost: "/" answered
+ * with index.html - the viewer page - instead of letting the router serve
+ * home.html, and /watch/<token> was reaching the page by luck rather than by
+ * routing. It was "caught by deploying", because the behaviour lives in the
+ * platform rather than in the code.
+ *
+ * The behaviour still cannot be tested from here, and this does not pretend
+ * to. What it pins is the setting, which is the part that lives in this repo:
+ * delete that line and `resolveRoute` stops being consulted for anything that
+ * happens to match a filename, the four-name root allowlist becomes
+ * decorative, and every assertion in this file passes while describing a
+ * service that no longer behaves that way. A failure that costs a deploy to
+ * notice is worth a test that costs a second.
+ */
+describe("the deploy config the router depends on", () => {
+  const wrangler = fs.readFileSync(path.resolve(__dirname, "..", "wrangler.toml"), "utf8");
+
+  /** `key = value` in the [assets] table, comments and blank lines ignored */
+  function assetsTable(): Record<string, string> {
+    const section = /^\[assets\]\s*$([\s\S]*?)(?=^\[|\Z)/m.exec(wrangler)?.[1] ?? "";
+    const out: Record<string, string> = {};
+    for (const line of section.split(/\r?\n/)) {
+      const m = /^\s*([A-Za-z_]+)\s*=\s*(.+?)\s*$/.exec(line);
+      if (m && m[1] && m[2]) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+    return out;
+  }
+
+  it("lets the Worker decide every path, rather than the file system", () => {
+    expect(
+      assetsTable().run_worker_first,
+      "without run_worker_first the platform answers before resolveRoute is ever called, " +
+        "and every routing assertion in this file describes something that is no longer true",
+    ).toBe("true");
+  });
+
+  it("points the asset binding at the viewer bundle that is actually shipped", () => {
+    const dir = assetsTable().directory;
+    expect(dir, "the [assets] table names no directory").toBeTruthy();
+    const resolved = path.resolve(__dirname, "..", dir ?? "");
+    expect(fs.existsSync(path.join(resolved, "index.html")), `${dir} is not the viewer bundle`).toBe(true);
+    expect(fs.existsSync(path.join(resolved, "home.html")), `${dir} has no landing page`).toBe(true);
+  });
+
+  it("read the table at all, so the two assertions above are about something", () => {
+    // a regex that matched nothing would leave every lookup undefined and the
+    // first assertion would fail loudly - but the directory one would not, so
+    // this says plainly that the section was found
+    expect(Object.keys(assetsTable()).length).toBeGreaterThan(1);
+  });
+});
