@@ -118,6 +118,9 @@ function stand() {
 
   return {
     viewer,
+    /** a request straight to the room, the way the router forwards one */
+    ask: (op: string, secret: string): Promise<Response> =>
+      room.fetch(new Request(`https://room.internal/?op=${op}&rid=r&secret=${secret}`, { method: "POST" })),
     /** what the record holds between messages - the thing a late joiner is greeted from */
     stored: (): Frame => store.get("room") as Frame,
     /** how many hellos have reached viewers - a sync has to ADD one */
@@ -562,5 +565,40 @@ describe("the session clock on the hosted relay", () => {
     await s.sync();
     const hello = s.relayed();
     expect(near(hello?.elapsedMs, 90_000), `sync elapsedMs: ${String(hello?.elapsedMs)}`).toBe(true);
+  });
+});
+
+/**
+ * Per-room /health, and who may ask it.
+ *
+ * It answers whether the streamer is on air and how many people are
+ * watching. The room read the secret from the token and never compared it,
+ * so any well-formed token for the room answered - including one made up
+ * from the room id inside a link that NEW had already rotated away, which is
+ * exactly the reader rotation exists to shut out. The streamer's own publish
+ * key and the current viewer link still get an answer; nothing else does.
+ */
+describe("per-room health on the hosted relay", () => {
+  it("does not answer a secret the room does not hold", async () => {
+    const s = stand();
+    await s.status({ live: true });
+    const res = await s.ask("health", "0".repeat(32));
+    expect(res.status, "a made-up secret was told whether the stream is on").toBe(403);
+    expect(((await res.json()) as Frame).live).toBeUndefined();
+  });
+
+  it("answers the streamer's own publish key", async () => {
+    const s = stand();
+    await s.status({ live: true });
+    const res = await s.ask("health", "p");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Frame).live).toBe(true);
+  });
+
+  it("stops answering a viewer link once it has been rotated away", async () => {
+    const s = stand();
+    expect((await s.ask("health", "v")).status, "the current viewer link was refused").toBe(200);
+    await s.ask("rotate-viewer-token", "p");
+    expect((await s.ask("health", "v")).status, "a rotated-out link still reads the room").toBe(403);
   });
 });

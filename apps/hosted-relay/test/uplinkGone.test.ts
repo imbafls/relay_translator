@@ -419,3 +419,20 @@ describe("a late joiner's session clock", () => {
     expect(Math.abs((hello?.elapsedMs as number) - expected)).toBeLessThan(5_000);
   });
 });
+
+// Counting for /health lets go of a viewer that has gone silent - and threw
+// away that it had, so the app went on showing the old number.
+describe("a health check that finds a viewer gone", () => {
+  it("tells the app the count went down", async () => {
+    const s = stand(ago(5_000));
+    s.watching.beat = ago(5 * MINUTE);
+
+    const health = await s.health();
+
+    expect(health.viewers).toBe(0);
+    expect(
+      s.uplink.seen.filter((m) => m.type === "viewers").pop(),
+      "the app was never told the silent viewer was let go",
+    ).toEqual({ type: "viewers", count: 0 });
+  });
+});

@@ -357,10 +357,22 @@ export class Room {
     }
 
     if (op === "health") {
+      // For somebody the room knows: the streamer's publish key or the current
+      // viewer link. The secret used to be read and never compared, so any
+      // well-formed token answered - a room id taken from a link NEW had
+      // already rotated away, plus any 32 hex digits, still told a reader
+      // whether the stream was on and how many were watching.
+      if (!secretsMatch(secret, room.publisherSecret) && !secretsMatch(secret, room.viewerSecret)) {
+        return json({ error: "forbidden" }, 403);
+      }
       // the same payload the single-tenant relay returns; docs/OPEN-WORK.md
       // diagnoses production with exactly these three fields
       await this.dropSilentPublisher(room);
-      return json({ ok: true, live: room.live, viewers: this.viewerCount() });
+      // counting lets go of a viewer gone silent, and the app is told when it
+      // does - viewerCount() alone threw that away and left the old number up
+      const { live, dropped } = this.liveViewers();
+      if (dropped > 0) this.broadcastViewerCount();
+      return json({ ok: true, live: room.live, viewers: live.length });
     }
 
     if (op === "viewer-token" || op === "rotate-viewer-token") {

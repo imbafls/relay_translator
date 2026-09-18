@@ -4309,3 +4309,16 @@ room now works the duration out on its own clock and sends it beside every
 late-joiner greeting through the `fetch` harness, the rest in `room.test.ts`).
 The uplink protocol is untouched: what is left is the streamer's own PC
 against the Worker, and Windows keeps that in step by itself.
+
+**48 - Health for anyone with the room id.** Per-room `/health` says
+whether the streamer is on air and how many are watching. The router accepts
+either token kind and passes the secret on; the room read it and never
+compared it. The room id is inside every viewer link, and NEW - which the
+default link mode runs on every START - rotates links away without changing
+the id, so a reader shut out by rotation could go on polling with the old id
+and any 32 hex digits. It now answers the publish key and the current viewer
+link, and a test rotates a link and watches it lose the answer. The card's
+second half was smaller and sillier: counting viewers for `/health` lets go
+of silent sockets and threw away that it had, so the app kept showing the
+old number; it tells the app now, as the caption fan-out already did. Both
+verify scripts ask with the publish key, so neither changes.

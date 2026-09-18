@@ -942,6 +942,13 @@ fixed**, the last two on 2026-09-15.
   sends `since` - the greeting, the relayed hello, every status, the sync
   reply - and the page, which already prefers it, counts from its own clock.
 
+- ~~**Per-room /health answered any well-formed token.**~~ Fixed 2026-09-18,
+  found by the 1.0 discovery pass. The room read the secret and never compared
+  it, so a room id from a link NEW had rotated away, plus any 32 hex digits,
+  still told a reader whether the stream was on and how many watched. It now
+  answers the publish key and the current viewer link and nothing else. The
+  count it gives also no longer drops a silent viewer without telling the app.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

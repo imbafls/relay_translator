@@ -87,7 +87,7 @@ Verified against the real client:
 | stops on `4409` too, as "replaced by another machine" | `4409` when a second publisher takes the room |
 | `uplinkUrlFor(relayUrl, token)` (`packages/shared`) - one trailing slash taken off | `/ws/uplink?token=` |
 | `Authorization: Bearer <publisherToken>` → `{viewerToken}` (`main.ts:213`) | same, Bearer first, query fallback |
-| `/health` → `{ok, live, viewers}` | same payload; `docs/OPEN-WORK.md` diagnoses production with exactly those fields |
+| `/health` → `{ok, live, viewers}` | same payload; `docs/OPEN-WORK.md` diagnoses production with exactly those fields. Per-room with the publish key or the current viewer link; any other token is a 403, so a link NEW rotated away no longer reads the room |
 
 Point `relayUrl` at the deployment and paste the publisher token. Anyone running
 their own relay is unaffected.
