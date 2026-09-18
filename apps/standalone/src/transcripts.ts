@@ -156,6 +156,10 @@ export class TranscriptWriter {
     // Deepgram emits empty finals on silent channels so the live viewer can
     // retire an interim row. They carry no transcript content worth saving.
     if (!this.opts.enabled() || !line.source.trim()) return;
+    // `target: ""` is the relay saying this line's translation is not coming,
+    // so the live stage can take its "…" down. A saved session records what
+    // was said and translated; there is nothing here to write.
+    if (line.target === "") return;
     if (line.target === undefined) {
       if (this.current) this.appendLine(this.current, line);
       return;

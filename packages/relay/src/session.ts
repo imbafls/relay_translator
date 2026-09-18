@@ -635,6 +635,10 @@ export class PublisherSession {
               final: true,
               ...tag,
             });
+            // and the streamer's own stage, which builds the same "…" and
+            // waits on the same answer over its own socket. The saved
+            // transcript hangs off this tap too, and skips "not coming".
+            this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: "", ...tag });
             const now = Date.now();
             if (now - this.lastTranslateErrorAt < TRANSLATE_ERROR_EVERY_MS) return;
             this.lastTranslateErrorAt = now;

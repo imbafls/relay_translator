@@ -860,6 +860,16 @@ fixed**, the last two on 2026-09-15.
   follow their devices whenever the list changes shape; a device swapped in
   place keeps its slot's name, and a patch that sets names itself still wins.
 
+- ~~**The desktop stage kept its "…" under a failed translation for good.**~~
+  Fixed 2026-09-18, the desktop half of the viewer fix above. The relay told
+  viewers a failed translation is not coming and told the streamer's own app
+  nothing, so the one screen belonging to the person who could fix the key or
+  the quota kept a column of placeholders. The relay now sends it to the app
+  too; the stage takes the "…" down, the log prints no blank line for it, the
+  saved transcript writes nothing for it, and a "not coming" for a line the
+  stage has already trimmed is ignored rather than put back over the
+  half-caption being spoken.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

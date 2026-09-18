@@ -656,6 +656,11 @@ function onSubtitle(seg: Seg): void {
     return;
   }
   let row = rows.get(seg.id);
+  // "Not coming" for a line the stage no longer holds: nothing is waiting on
+  // it. It is sent only once every retry has run out, so its row has often
+  // been trimmed by then - and taking it for a new line would put the stale
+  // line back over the half-caption being spoken. The viewer page does the same.
+  if (!row && seg.target === "") return;
   if (!row) {
     const interim = interims.get(channel);
     if (interim) {

@@ -3905,3 +3905,88 @@ describe("a START that cannot start", () => {
     expect(calls.prepared.filter((p) => p.rotate)).toHaveLength(1);
   });
 });
+
+/**
+ * A line whose translation is not coming, on the streamer's own stage.
+ *
+ * The stage builds every line with a "…" under it and waits for its
+ * translation. When Gemini gave up the relay told viewers `target: ""` - not
+ * coming - but not this app, so the "…" stayed under every failed line, on the
+ * one screen belonging to the person who could fix the key or the quota. The
+ * relay now sends it here too; the stage takes the placeholder down, and the
+ * log does not print an empty translation line for it.
+ */
+describe("a translation that is not coming, on the desktop stage", () => {
+  type Seg = { id: number; source: string; target?: string; channel?: number };
+  let hooks: { onSubtitle?: (seg: Seg) => void; onPartial?: (seg: Seg) => void };
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: typeof hooks & { onState?: (s: string) => void };
+    }) {
+      hooks = this.hooks;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", { configurable: true, get: () => true });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", { configurable: true, get: () => 1 });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+  const pending = (): number => document.querySelectorAll("#lines .row:not(.interim) .tgt .text.pending").length;
+
+  it("takes the placeholder down", async () => {
+    await goLive();
+    hooks.onSubtitle!({ id: 1, source: "push B", channel: 0 });
+    await settle(30);
+    expect(pending(), "the line was not built with its placeholder").toBe(1);
+
+    hooks.onSubtitle!({ id: 1, source: "push B", target: "", channel: 0 });
+    await settle(30);
+
+    expect(pending(), "the stage kept its '…' under a translation that is not coming").toBe(0);
+  });
+
+  it("does not print an empty translation into the log", async () => {
+    await goLive();
+    hooks.onSubtitle!({ id: 1, source: "push B", channel: 0 });
+    await settle(30);
+    const lines = document.querySelectorAll("#log .sub-vi").length;
+
+    hooks.onSubtitle!({ id: 1, source: "push B", target: "", channel: 0 });
+    await settle(30);
+
+    expect(document.querySelectorAll("#log .sub-vi").length, "the log printed a blank translation line").toBe(lines);
+  });
+
+  // "Not coming" is the slowest message there is - sent once every retry has
+  // run out - so its line has often been trimmed off the stage by then. A
+  // line the stage holds no row for used to take over the channel's open
+  // half-caption, so this would put the stale line back over the sentence
+  // being spoken. The viewer page already ignores it; so does the stage.
+  it("leaves the half-caption being spoken alone when its line is gone", async () => {
+    await goLive();
+    for (let id = 1; id <= 13; id++) hooks.onSubtitle!({ id, source: `line ${id}`, channel: 0 });
+    hooks.onPartial!({ id: 14, source: "half a sentence", channel: 0 });
+    await settle(30);
+    const stage = (): string[] =>
+      [...document.querySelectorAll("#lines .row:not(.interim) .src .text")].map((e) => e.textContent || "");
+    expect(stage(), "line 1 was not trimmed, so this proves nothing").not.toContain("line 1");
+
+    hooks.onSubtitle!({ id: 1, source: "line 1", target: "", channel: 0 });
+    await settle(30);
+
+    expect(
+      document.querySelector("#lines .row.interim .src .text")?.textContent,
+      "a late 'not coming' took over the sentence being spoken",
+    ).toBe("half a sentence");
+    expect(stage()).not.toContain("line 1");
+  });
+});

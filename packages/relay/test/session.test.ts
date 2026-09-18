@@ -33,6 +33,8 @@ function slowTranslator(delayMs: number): Translator & { pending: number } {
 
 function makeSession(translator: Translator) {
   const viewers: ServerToViewer[] = [];
+  /** what the streamer's own app is sent - its stage and its saved transcript */
+  const publisher: Parameters<NonNullable<ConstructorParameters<typeof PublisherSession>[1]["toPublisher"]>>[0][] = [];
   const session = new PublisherSession(
     {
       stt: "deepgram-nova-3",
@@ -48,11 +50,12 @@ function makeSession(translator: Translator) {
       mockStt: true,
       translator,
       toViewers: (msg) => viewers.push(msg),
+      toPublisher: (msg) => publisher.push(msg),
       setLive: () => {},
       log: () => {},
     },
   );
-  return { session, viewers };
+  return { session, viewers, publisher };
 }
 
 const translated = (viewers: ServerToViewer[]) =>
@@ -2573,6 +2576,28 @@ describe("a line whose translation fails", () => {
     expect(
       givenUp.map((m) => m.id),
       "viewers were never told these translations are not coming, so each keeps its placeholder for good",
+    ).toEqual(lines.map((m) => m.id));
+    session.stop();
+  });
+
+  // The streamer's own stage builds the same "…" under each line and waits on
+  // the same answer - over the publisher socket, not the viewers' - so it kept
+  // a column of them through an outage, on the screen of the one person who
+  // could do something about it.
+  it("tells the streamer's own stage as well", async () => {
+    const { session, publisher } = makeSession(failing);
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    session.audio(oneUtterance());
+    await tick(50);
+
+    const lines = publisher.filter((m) => m.type === "subtitle" && m.target === undefined);
+    const givenUp = publisher.filter((m) => m.type === "subtitle" && m.target === "");
+    expect(lines.length, "the mock never produced two lines").toBe(2);
+    expect(
+      givenUp.map((m) => m.id),
+      "the desktop stage was never told, so its placeholder stays under every failed line",
     ).toEqual(lines.map((m) => m.id));
     session.stop();
   });

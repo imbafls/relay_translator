@@ -4173,3 +4173,20 @@ blank. Three tests went red on the old store and three held what must not
 change; four mutations, each red. A config already written with shifted
 names by an older version cannot be told apart from one named that way on
 purpose, so it is left as it is.
+
+**38 - The "…" on the streamer's own screen.** The viewer fix told viewers a
+failed translation is not coming (`target: ""`), over the viewers' channel
+only; the streamer's desktop stage builds the same placeholder and waits on
+the publisher socket, so during an outage it kept a column of "…" - on the
+screen of the one person who could fix the key. Sending the same signal to
+the app reaches three consumers, and each was decided rather than assumed.
+The stage already took the placeholder down for any `target`, so that test
+passed first time and stands as the premise. The log printed a blank
+translation line for it, and now does not. The saved-transcript writer hangs
+off the same tap and would have written a record of the failure; a saved
+session is what was said and translated, so it writes nothing. And the
+change made the adjacent card reachable: "not coming" is the slowest message
+there is, its row is often trimmed by the time it lands, and the stage turns
+the channel's half-caption into any line it holds no row for - so it would
+have put the stale line back over the sentence being spoken. That half is
+fixed here, with its own red; the real-translation half stays on its card.

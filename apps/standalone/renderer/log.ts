@@ -57,7 +57,9 @@ export function logSubtitle(seg: {
   en.className = "sub-en";
   en.textContent = `[${t}] ▸ ${seg.speaker ? `${seg.speaker}: ` : ""}${seg.source}${seg.latency?.stt != null ? `  [stt ${seg.latency.stt}ms]` : ""}`;
   appendLog(en);
-  if (seg.target != null) {
+  // "" is a translation that is not coming - the error log already says why,
+  // rate-limited, and a blank line per failed caption says nothing more
+  if (seg.target) {
     const vi = document.createElement("div");
     vi.className = "sub-vi";
     vi.textContent = `    ${seg.target}${seg.latency?.translate != null ? `  [+${seg.latency.translate}ms]` : ""}`;

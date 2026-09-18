@@ -125,6 +125,28 @@ describe("writing", () => {
   });
 
   /**
+   * `target: ""` is the relay saying a line's translation is not coming - so
+   * the live stage can take its "…" down. It arrives on the same tap as a real
+   * translation, and a saved session records what was said and translated, not
+   * which translations failed: it writes nothing, and the line stays as it was.
+   */
+  it("does not save a translation that is not coming", () => {
+    const w = writer();
+    w.open({ languages: LANGS, translates: true });
+    w.write(line(1, "push B"));
+    w.write(tr(1, "push B", ""));
+    w.close();
+
+    const [file] = jsonl();
+    expect(
+      rawRecords(file).map((r) => r.kind),
+      "a failed translation was written into the saved session",
+    ).toEqual(["session", "line"]);
+    const t = readTranscript(dir, file.replace(/\.jsonl$/, ""))!;
+    expect(t.rows[0]?.target).toBeUndefined();
+  });
+
+  /**
    * With translation on, the relay emits one utterance twice under one id:
    * the line, then the same line again carrying `target`. Recording each emit
    * as a line would double every utterance in the archive.
