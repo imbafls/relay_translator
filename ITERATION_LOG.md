@@ -3716,3 +3716,14 @@ Found while carding them: the triage guard written in iteration 7 inspects
 `## Not blocked` for loose open items, so a new `##` section of live bullets
 would pass it unnoticed - the fifth lesson, one level up. Recorded on the
 release card to close alongside the discovery work.
+
+**12 - GET AN ADDRESS under a live session, part one.** The first P1 from the
+discovery pass, and it went red exactly as its card said. Claiming a hosted
+room writes two relay keys, so main restarts the embedded relay under the live
+session; the relay's `close()` dropped the publisher with 4409, which means "a
+newer publisher took over", and the client - right about what 4409 means -
+gave up for good. Captions stopped, ON AIR stayed. The real client against a
+real relay, restarted on the same port and data dir, sat in `error: replaced
+by another session`; told 1001, the code `close()` already gave the uplink and
+the viewers, it reconnects to the relay that comes back. Part two is the
+renderer, which had no way out of `live` when its stream really did end.

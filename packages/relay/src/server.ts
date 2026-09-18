@@ -510,11 +510,16 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     if (publisher && publisher.ws === ws) publisher.session = session;
   }
 
-  function dropPublisher(reason: string): void {
+  /**
+   * `code` is what the publisher is told, and the client acts on it: 4409 means
+   * a newer publisher took over, which it accepts as final and never reconnects
+   * from. That is right when it is true and wrong on a shutdown - see close().
+   */
+  function dropPublisher(reason: string, code = 4409): void {
     if (!publisher) return;
     publisher.session?.stop();
     try {
-      publisher.ws.close(4409, reason);
+      publisher.ws.close(code, reason);
     } catch {
       /* noop */
     }
@@ -1163,7 +1168,11 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
           // the last thing said finals late, so its translation is usually
           // still running here; let it reach the viewers before their sockets go
           const lastSession = publisher?.session ?? null;
-          dropPublisher("relay shutting down");
+          // 1001, as the uplink and the viewers below are told. The app restarts
+          // this relay under a live session whenever a relay setting changes -
+          // GET AN ADDRESS is one - and a publisher told 4409 took the restart
+          // for a takeover and stopped for good, under ON AIR
+          dropPublisher("relay shutting down", 1001);
           if (lastSession) await lastSession.drain(2000);
           if (uplink) {
             try {

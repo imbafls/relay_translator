@@ -594,6 +594,15 @@ fixed**, the last two on 2026-09-15.
   caption for as long as the runtime holds it. The count itself stays right;
   the chatter and the wasted work are what is wrong.
 
+- ~~**A relay restart under a live session was read as a takeover.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. GET AN ADDRESS - and any other
+  relay setting - restarts the embedded relay, and `close()` dropped the
+  publisher with 4409, the code for "a newer publisher took over", which the
+  publisher client accepts as final. Captions stopped for good under ON AIR.
+  The shutdown now says 1001, as it already did to the uplink and the viewers,
+  and the client reconnects to the relay that comes back
+  (`packages/relay/test/restartKeepsPublisher.test.ts`).
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
