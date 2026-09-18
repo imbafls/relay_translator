@@ -1574,7 +1574,12 @@ async function claimRoom(): Promise<void> {
     note.className = "field-status ok";
     note.textContent = "READY";
     log("your link now works outside this network", "ok");
-    renderSettings();
+    // The two fields a claim changes, and only those. This used to re-fill the
+    // whole of SETTINGS from the stored config, so a key pasted but not yet
+    // saved vanished behind the dots and SAVE wrote the old one.
+    inp("relayUrl").value = config.relayUrl || "";
+    inp("publisherToken").value = config.publisherToken || "";
+    renderReach();
     renderChain();
     renderFooter();
   } finally {

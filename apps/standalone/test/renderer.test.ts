@@ -1596,6 +1596,27 @@ describe("getting a link that works outside this network", () => {
     expect((document.getElementById("publisherToken") as HTMLInputElement).value).toBe("p1_room_secret");
   });
 
+  // A claim changes the relay address and the publish key, nothing else - and
+  // it used to re-fill every field in SETTINGS from the stored config. A key
+  // pasted but not yet saved vanished behind the password dots, and SAVE then
+  // wrote the old key, or none, and said "settings saved".
+  it("keeps a key typed in SETTINGS but not yet saved", async () => {
+    await bootWith({ setupDone: true, geminiApiKey: "gm-old" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(30);
+    const gemini = document.getElementById("geminiApiKey") as HTMLInputElement;
+    gemini.value = "gm-new";
+    gemini.dispatchEvent(new Event("input"));
+
+    claimBtn().click();
+    await settle(80);
+
+    expect(gemini.value, "the claim threw away a key typed but not saved").toBe("gm-new");
+    (document.getElementById("settingsSave") as HTMLButtonElement).click();
+    await settle(40);
+    expect(calls.setConfig.filter((p) => "geminiApiKey" in p).pop()?.geminiApiKey).toBe("gm-new");
+  });
+
   it("tells the user why when it fails, instead of a button that does nothing", async () => {
     claimFails = "could not reach relay.supr.systems - getaddrinfo ENOTFOUND";
     await bootWith({ setupDone: true });

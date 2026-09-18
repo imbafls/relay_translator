@@ -4322,3 +4322,12 @@ second half was smaller and sillier: counting viewers for `/health` lets go
 of silent sockets and threw away that it had, so the app kept showing the
 old number; it tells the app now, as the caption fan-out already did. Both
 verify scripts ask with the publish key, so neither changes.
+
+**49 - A claim that wiped the key field.** GET AN ADDRESS changes two
+settings, the relay address and the publish key, and then called
+`renderSettings()`, which re-fills every field in SETTINGS from the stored
+config. So a key pasted but not yet saved disappeared behind the password
+dots, and SAVE wrote the old key (or none) and reported success. It now
+fills in the two fields it changed and redraws the reach status, and
+nothing else. The existing test that the claim puts its room into ADVANCED
+holds the first half; the new one types a key, claims, and saves.

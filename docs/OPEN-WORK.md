@@ -949,6 +949,12 @@ fixed**, the last two on 2026-09-15.
   answers the publish key and the current viewer link and nothing else. The
   count it gives also no longer drops a silent viewer without telling the app.
 
+- ~~**GET AN ADDRESS discarded a key typed but not yet saved.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. A claim re-filled every field
+  in SETTINGS from the stored config, so a Deepgram or Gemini key pasted but
+  not saved vanished behind the dots and SAVE wrote the old one. It now
+  refreshes only the relay address and publish key it changed.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
