@@ -562,8 +562,11 @@ fixed**, the last two on 2026-09-15.
   directory with no notice covering it.
 - ~~**Cosmetic:** the relay logs `data\relay-state.json` with a backslash on
   Linux.~~ Fixed 2026-09-10 in v0.8.0.
-- **CLAUDE.md's copy of the release workflow's tag guard is abridged in the one
-  place the paragraph under it depends on.** It shows
+- ~~**CLAUDE.md's copy of the release workflow's tag guard is abridged in the one
+  place the paragraph under it depends on.**~~ Fixed 2026-09-18 by the 1.0 loop,
+  which the owner authorised to clear this backlog: the block now quotes the
+  workflow word for word, and `handoff.test.ts` holds it there - red when the
+  quote drifts and red when the workflow does. The original note follows. It shows
 
       tag="$GITHUB_REF_NAME"
 

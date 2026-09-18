@@ -154,15 +154,20 @@ Then `.github/workflows/release.yml` runs on the `v*` tag:
    **tag/version guard**:
 
    ```bash
-   tag="$GITHUB_REF_NAME"
+   tag="${{ github.event.inputs.tag || github.ref_name }}"
    pkg=$(node -p "require('./apps/standalone/package.json').version")
-   if [ "$tag" != "v$pkg" ]; then exit 1; fi
+   if [ "$tag" != "v$pkg" ]; then
+     echo "tag $tag does not match apps/standalone version $pkg" >&2
+     exit 1
+   fi
    ```
 
    This is why **you cannot test the pipeline with an `rc` tag**: `v0.5.4-rc1`
    will never equal `v` + the package version, so the job fails before it
    builds anything. To exercise the workflow, use `workflow_dispatch` with an
-   existing tag. After the guard: build, typecheck, typecheck:test, test,
+   existing tag - the `inputs.tag` half of the first line is what lets that
+   work, because a dispatched run's `ref_name` is a branch. `handoff.test.ts`
+   holds this quotation to the workflow. After the guard: build, typecheck, typecheck:test, test,
    renderer ids, smoke, then electron-builder `--publish never` (the publish
    job owns the release so both builds attach to one) and `pnpm dist:relay`.
    Uploads installer, portable exe, `latest.yml`, `.blockmap`, and the Windows

@@ -3645,3 +3645,16 @@ one was due), and a second test caught the other half - a socket this room
 had closed itself, on a rotation, still counted as somebody reading. The sweep
 now skips anything that is not OPEN. `room.test.ts`'s fake socket had no
 `readyState` at all and gained one; nothing in it was asserted differently.
+
+**5 - The quotation nothing held.** `CLAUDE.md` quoted the release workflow's
+tag guard with its first line cut to `tag="$GITHUB_REF_NAME"`, dropping
+`github.event.inputs.tag` - the half that makes the next paragraph's advice,
+re-run with `workflow_dispatch` on an existing tag, work at all. It had been
+written down in `docs/OPEN-WORK.md` and left for the owner, because the
+improvement loop was not allowed to edit the release process; this loop was
+told to clear that list. The TypeScript quotes in the same file have had a
+guard for a while. This one is shell inside YAML, not a `ts` fence, so the
+guard never saw it. A second guard now finds the block by what it quotes
+rather than where it sits, and requires it verbatim in the workflow: red on
+the abridged copy, green on the real one, and red again when the dispatch half
+was taken out of the workflow instead.

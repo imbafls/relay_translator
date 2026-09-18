@@ -409,6 +409,43 @@ describe("the TypeScript CLAUDE.md quotes", () => {
   });
 });
 
+/**
+ * The other quotation in CLAUDE.md: the release workflow's tag guard.
+ *
+ * It was quoted with its first line abridged to `tag="$GITHUB_REF_NAME"`,
+ * and the half it dropped - `github.event.inputs.tag` - is the half the very
+ * next paragraph depends on: "To exercise the workflow, use
+ * `workflow_dispatch` with an existing tag." Under the quoted version a
+ * dispatched run compares a branch name against the version and always fails,
+ * so a reader who trusts the page concludes the documented workaround cannot
+ * work, or "fixes" the workflow to match it. The TypeScript quotes had a guard
+ * and this one did not, because it is shell inside YAML rather than a `ts`
+ * fence, and that is the whole reason it drifted unnoticed.
+ *
+ * Held the same way: normalised whitespace, and the block has to appear in the
+ * workflow as it stands. Found by what it quotes, not by where it sits, so a
+ * re-ordered page cannot quietly stop it being checked.
+ */
+describe("the tag guard CLAUDE.md quotes from the release workflow", () => {
+  const flat = (t: string): string => t.replace(/\s+/g, " ").trim();
+  const quotes = [...read("CLAUDE.md").matchAll(/```bash\r?\n([\s\S]*?)```/g)]
+    .map((m) => m[1] ?? "")
+    .filter((b) => b.includes("apps/standalone/package.json').version"));
+
+  it("is there, so this checks something", () => {
+    expect(quotes, "CLAUDE.md no longer quotes the tag guard, or quotes it more than once").toHaveLength(1);
+  });
+
+  it("is the guard the workflow actually runs, dispatch half included", () => {
+    const workflow = flat(read(".github/workflows/release.yml"));
+    expect(
+      workflow.includes(flat(quotes[0] ?? "")),
+      "CLAUDE.md quotes a tag guard that is not in .github/workflows/release.yml - and the paragraph under it " +
+        "tells a reader what that guard allows",
+    ).toBe(true);
+  });
+});
+
 describe("the pointer from CLAUDE.md into the iteration log", () => {
   const claude = (): string => fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8");
   const log = (): string => fs.readFileSync(path.join(root, "ITERATION_LOG.md"), "utf8");
