@@ -603,6 +603,18 @@ fixed**, the last two on 2026-09-15.
   and the client reconnects to the relay that comes back
   (`packages/relay/test/restartKeepsPublisher.test.ts`).
 
+- ~~**A session whose stream had ended went on saying ON AIR.**~~ Fixed
+  2026-09-18, the other half of the entry above. `recomputeState()` in
+  `apps/standalone/renderer/app.ts` could only promote, so a publisher that
+  reached its terminal `error` left the topbar on ON AIR, the clock running,
+  the mic captured and every chunk dropped. It now stops the session and says
+  why, under a heading that no longer claims a session that ran "could not
+  start" - the every-source-lost path had the same heading and gets the same
+  fix. A retrying (`disconnected`) publisher stays live, and a client the
+  session has already moved on from is ignored: a review of the first version
+  found that an orphan from a START/STOP/START inside one slow prepare would
+  otherwise end the good session that replaced it.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

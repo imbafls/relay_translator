@@ -73,6 +73,8 @@ let status: ControlStatus | null = null;
 let relayClient: RelayPublisherClient | null = null;
 let session: SessionState = "idle";
 let sessionError: string | undefined;
+/** the heading over `sessionError`; unset means the session never got going */
+let sessionErrorTitle: string | undefined;
 let sessionStart: number | undefined;
 let view: View = "stage";
 let syncing = false;
@@ -719,7 +721,7 @@ function renderIdle(): void {
     translationActive() ? `${trShort(config.translation)} → ` : ""
   }${outputLabel(config.output).toLowerCase()}${translationActive() ? "" : ` · ${langName(config.languages.source)} only`}`;
   $("idleChain").textContent = chain;
-  $("idleTitle").textContent = session === "error" ? "Could not start" : "Nothing on air";
+  $("idleTitle").textContent = session === "error" ? sessionErrorTitle || "Could not start" : "Nothing on air";
   const err = $("idleError");
   err.hidden = !sessionError;
   err.textContent = sessionError || "";
@@ -730,9 +732,15 @@ function renderIdle(): void {
 // session control
 // ---------------------------------------------------------------------------
 
-function setState(next: SessionState, error?: string): void {
+/**
+ * `title` heads the panel an error is shown in. It defaults to the start
+ * failure it was written for; a session that ran and then ended says so, or
+ * the panel reads "Could not start" over the transcript of one that did.
+ */
+function setState(next: SessionState, error?: string, title?: string): void {
   session = next;
   sessionError = error;
+  sessionErrorTitle = title;
   $("app").dataset.session = next;
   cr.reportState(next, error);
   if (next === "live" && !sessionStart) sessionStart = Date.now();
@@ -778,9 +786,28 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     // turned that into a refusal to start instead.
     const channels = clampChannels(sources.length);
 
-    relayClient = new RelayPublisherClient(prep.publisherUrl, {
+    const client = new RelayPublisherClient(prep.publisherUrl, {
       onState: (clientState, detail) => {
         log(`relay: ${clientState}${detail ? ` - ${detail}` : ""}`, clientState === "connected" ? "ok" : "");
+        // A client this session has moved on from speaks for nothing. A START,
+        // STOP and START inside one slow prepareSession leaves the first
+        // start's client connected and unowned, and the relay kicks it with
+        // 4409 when the second arrives - an error that must not end the
+        // session that replaced it.
+        if (client !== relayClient) return;
+        // `error` is the one state the client does not come back from by
+        // itself - a 4409 takeover is the terminal close this relay sends a
+        // publisher - and recomputeState() only ever promotes, so without this the topbar went
+        // on saying ON AIR over a stream that had ended, with the mic captured
+        // and every chunk dropped. `disconnected` is the client retrying, and
+        // stays live: a relay restart produces exactly that for a second.
+        if (clientState === "error" && (session === "live" || session === "starting")) {
+          const why = detail || "the relay closed the session";
+          log(`captions stopped: ${why}`, "err");
+          stopSession(true);
+          setState("error", `The relay closed this session (${why}). Press START to begin again.`, "Captions stopped");
+          return;
+        }
         recomputeState();
       },
       onError: (msg) => log(`relay error: ${msg}`, "err"),
@@ -790,6 +817,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       },
       onPartial: (seg) => onPartial(seg),
     });
+    relayClient = client;
     relayClient.connect({
       stt: config.stt,
       translation: config.translation,
@@ -2475,7 +2503,7 @@ function bind(): void {
     if (live === 0) {
       log(`${name} disconnected - no audio sources left, stopping the session`, "err");
       void stopSession();
-      setState("error", "every audio source disconnected");
+      setState("error", "every audio source disconnected", "Captions stopped");
       return;
     }
     log(`${name} disconnected - that source has stopped captioning. Stop and start to pick another.`, "err");

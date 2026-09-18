@@ -3727,3 +3727,20 @@ real relay, restarted on the same port and data dir, sat in `error: replaced
 by another session`; told 1001, the code `close()` already gave the uplink and
 the viewers, it reconnects to the relay that comes back. Part two is the
 renderer, which had no way out of `live` when its stream really did end.
+
+**13 - Part two: a way out of `live`.** `recomputeState()` could only ever
+promote, so a publisher that reached its terminal `error` left the session
+claiming ON AIR over nothing. The first version of the fix - stop the session
+and say why whenever the client errors - was green, and three reviewers were
+then set on it before it was committed. Two of them, independently, found it
+could now do harm: a START, STOP and START inside one slow prepare leaves the
+first start's client connected and unowned, the relay kicks it with 4409, and
+its error would have ended the good session that replaced it - something that
+healed itself before the change. The third found the panel heading still read
+"Could not start" over a session that had been ON AIR, as the every-source-
+lost path already did. Both were watched red against the uncommitted version,
+then fixed: the hook answers for its own client only, and the heading travels
+with the error. The reviewers also corrected a claim in my own comments - the
+embedded relay never sends a publisher 4401; a bad token is refused at the
+handshake and retried - so the comments now say 4409 alone. The root race,
+STOP during a slow prepare being undone, is the next P1 card, not this one.

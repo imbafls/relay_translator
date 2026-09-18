@@ -3068,3 +3068,124 @@ describe("what the app says when a source disconnects mid-session", () => {
     ).toMatch(/index \+ 1/);
   });
 });
+
+/**
+ * A session whose stream has really ended, still claiming ON AIR.
+ *
+ * `recomputeState()` could only ever promote: `live` when the relay client is
+ * connected and capture is running, `starting` while starting, and nothing
+ * else. So when the publisher client reached a state it will not come back
+ * from on its own - a 4409 close, the one terminal code the embedded relay
+ * sends a publisher (a bad token is refused at the handshake and retried) -
+ * the topbar went on reading ON AIR, the clock kept running,
+ * the mic stayed captured and every chunk was dropped, because `sendAudio`
+ * needs a connected socket. The relay half of the GET AN ADDRESS report was
+ * one way in; any terminal close is another. Audit finding 6 proposed a way
+ * out of `live` and it was never written.
+ *
+ * The other half matters as much: `disconnected` is the client retrying, which
+ * is exactly what a relay restart now produces for a second or two. Ending the
+ * session there would undo the relay fix from this side.
+ */
+describe("a publisher that will not reconnect by itself", () => {
+  let client: { state: string; hooks: { onState?: (s: string, detail?: string) => void } };
+  let stops = 0;
+
+  const goLive = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: typeof client) {
+      client = this;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    stops = 0;
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    companion.BrowserAudioCapture.prototype.stop = () => {
+      stops += 1;
+    };
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => true,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+  };
+
+  const statusText = (): string => (document.getElementById("statusText") as HTMLElement).textContent || "";
+  const sessionState = (): string | undefined => document.getElementById("app")?.dataset.session;
+
+  it("stops claiming ON AIR, and lets go of the mic, when the publisher gives up", async () => {
+    await goLive();
+    expect(statusText()).toBe("ON AIR");
+
+    // what the client does on a 4409 close: a final state, no retry
+    client.state = "error";
+    client.hooks.onState?.("error", "replaced by another session");
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(
+      statusText(),
+      "the publisher has given up for good and nothing will reconnect it, but the topbar still says ON AIR",
+    ).not.toBe("ON AIR");
+    expect(sessionState(), "the session is still live with no stream behind it").not.toBe("live");
+    expect(stops, "the mic is still captured, feeding chunks nobody sends").toBeGreaterThan(0);
+  });
+
+  it("says the captions stopped, not that the session could not start", async () => {
+    await goLive();
+    client.state = "error";
+    client.hooks.onState?.("error", "replaced by another session");
+    await new Promise((r) => setTimeout(r, 20));
+
+    // the panel's heading was fixed to the start-failure wording, so a session
+    // that had been ON AIR ended under "Could not start"
+    expect((document.getElementById("idleTitle") as HTMLElement).textContent).not.toBe("Could not start");
+  });
+
+  /**
+   * A START, STOP and START inside one slow prepareSession - the hosted
+   * rotate is a network call - leaves the first start's client connected and
+   * unowned, and the relay kicks it with 4409 when the second arrives. Its
+   * `error` belongs to a session that no longer exists and must not end the one
+   * that does. Stood in for here by the first session's client reporting after
+   * a second session has taken over.
+   */
+  it("ignores an error from a publisher it has already moved on from", async () => {
+    await goLive();
+    const first = client;
+    const startStop = document.getElementById("startStop") as HTMLButtonElement;
+    startStop.click();
+    await waitFor(() => sessionState() === "idle", "the session to stop");
+    startStop.click();
+    await waitFor(() => sessionState() === "live" && client !== first, "a second session to go live");
+    const stopsBefore = stops;
+
+    first.state = "error";
+    first.hooks.onState?.("error", "replaced by another session");
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(sessionState(), "a client the renderer had already replaced ended the session that replaced it").toBe("live");
+    expect(stops).toBe(stopsBefore);
+  });
+
+  it("stays live while the publisher is only reconnecting", async () => {
+    await goLive();
+
+    // what a relay restart produces now: the client closes, retries, and comes back
+    client.state = "disconnected";
+    client.hooks.onState?.("disconnected", "closed (1001)");
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(sessionState(), "a retrying publisher ended the session, which would undo the relay restart fix").toBe("live");
+    expect(stops).toBe(0);
+  });
+});
