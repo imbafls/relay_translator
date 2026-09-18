@@ -37,12 +37,15 @@ type Frame = Record<string, unknown>;
 interface Sock {
   tags: string[];
   seen: Frame[];
+  /** 1, OPEN: the room only fans out to, and counts, sockets that still are */
+  readyState: number;
   send(data: string): void;
 }
 
 const socket = (...tags: string[]): Sock => ({
   tags,
   seen: [],
+  readyState: 1,
   send(data: string) {
     this.seen.push(JSON.parse(data) as Frame);
   },

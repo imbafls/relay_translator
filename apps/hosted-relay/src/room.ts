@@ -579,6 +579,12 @@ export class Room {
     const live: WebSocket[] = [];
     let dropped = 0;
     for (const ws of this.sockets(TAG_VIEWER)) {
+      // A socket this object already closed is neither a reader nor a new
+      // drop. The runtime keeps handing it back in CLOSING until its peer
+      // answers, and the peer this sweep exists for - a phone gone without a
+      // FIN - never does, so without this every caption closed it again,
+      // counted it again and told the app again.
+      if (ws.readyState !== READY_OPEN) continue;
       const last = this.ctx.getWebSocketAutoResponseTimestamp(ws);
       // null is "has never beaten", which is a viewer page served before the
       // heartbeat shipped - not evidence of anything. Reaping on it would

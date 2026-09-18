@@ -3632,3 +3632,16 @@ schedules rather than renders, and the card's own cutting rule - render out,
 orchestrate in place - keeps it in the spine. That closes the renderer card by
 its own criterion; the rest of `app.ts` moves only after a decision about how
 the spine's shared state is reached, and that decision is the owner's.
+
+**4 - The same corpse, on the viewer side.** Recorded in iteration 1 and fixed
+here. The viewer sweep closes a socket that stopped beating and counts it as
+dropped, and the runtime keeps handing a closed socket back until its peer
+answers - which the peer this sweep exists for, a phone gone without a FIN,
+never does. So every caption closed it again, counted it again and sent the
+app a count that had not changed. The existing test for "tells the app once"
+passed only because its fake let go of a socket the moment it was closed; a
+fake that behaves as the documentation says turned it red (three counts where
+one was due), and a second test caught the other half - a socket this room
+had closed itself, on a rotation, still counted as somebody reading. The sweep
+now skips anything that is not OPEN. `room.test.ts`'s fake socket had no
+`readyState` at all and gained one; nothing in it was asserted differently.

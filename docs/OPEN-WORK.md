@@ -528,7 +528,9 @@ fixed**, the last two on 2026-09-15.
   answers, and a peer that has gone never does, so counting CLOSING sockets
   would have left a room on ON AIR for good once the real publisher left.
   Guarded in `apps/hosted-relay/test/viewerReap.test.ts`.
-- **A half-open viewer is "dropped" again on every caption.** Same runtime
+- ~~**A half-open viewer is "dropped" again on every caption.**~~ Fixed
+  2026-09-18: the sweep now skips any socket that is not OPEN, so a closed one
+  is neither counted nor dropped twice. Same runtime
   fact, other tag: `liveViewers()` in `apps/hosted-relay/src/room.ts` closes a
   silent viewer and counts it dropped, but a socket whose peer vanished stays in
   `getWebSockets("viewer")` as CLOSING, so every later broadcast closes it again,

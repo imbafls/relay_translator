@@ -70,6 +70,18 @@ function socket(tag: string, beat: Date | null): Sock {
   };
 }
 
+/**
+ * A socket whose peer never answers the close: the runtime keeps handing it
+ * back, in CLOSING, until it notices the disconnect.
+ */
+function halfOpen(s: Sock): Sock {
+  s.close = function (code?: number, reason?: string) {
+    this.closed.push({ code, reason });
+    this.readyState = 2;
+  };
+  return s;
+}
+
 function stand(viewers: Sock[]) {
   const uplink = socket(UPLINK, null);
   const all = [uplink, ...viewers];
@@ -223,6 +235,55 @@ describe("a stream running with a socket nobody closed", () => {
       "the room re-announces the viewer count on every caption. A dense stream is one every 2.5 s, and this " +
         "is a billed message to the uplink for a number that has not changed.",
     ).toBe(afterFirst);
+  });
+
+  /**
+   * The fake above lets go of a socket the moment it is closed, and the runtime
+   * does not. Cloudflare's documentation for `getWebSockets`: it "may still
+   * return WebSockets even after `ws.close` has been called" - a server that
+   * sent its close and got none back holds that socket in CLOSING until it
+   * notices the disconnect. A phone that went away without a FIN, which is the
+   * only socket this sweep exists for, is exactly one that never answers.
+   *
+   * So the sweep met the same corpse on every caption: closed it again, counted
+   * it as a fresh drop, and told the app again.
+   */
+  it("tells the app once even while the runtime keeps the socket it closed", async () => {
+    const gone = halfOpen(socket(VIEWER, ago(5 * MINUTE)));
+    const watching = socket(VIEWER, ago(5_000));
+    const s = stand([gone, watching]);
+
+    await s.caption(1, "one");
+    const afterFirst = s.countsSent();
+    await s.caption(2, "two");
+    await s.caption(3, "three");
+
+    expect(afterFirst, "the first caption should have corrected the count").toBe(1);
+    expect(
+      s.countsSent(),
+      "a socket already closed was dropped again on every caption, and each time the app was sent a count " +
+        "that had not changed - for as long as the runtime holds a peer that will never answer",
+    ).toBe(afterFirst);
+    expect(gone.closed, "it was closed again on every caption").toHaveLength(1);
+    expect(s.reported()).toBe(1);
+  });
+
+  it("does not count a viewer it has already closed", async () => {
+    // closed by a rotation a moment ago, still beating recently, peer not yet
+    // answered: whatever else it is, it is not somebody reading this room
+    const rotated = halfOpen(socket(VIEWER, ago(3_000)));
+    rotated.close(4410, "link rotated");
+    const watching = socket(VIEWER, ago(5_000));
+    const leaving = socket(VIEWER, ago(1_000));
+    const s = stand([rotated, watching, leaving]);
+
+    leaving.close();
+    await s.aViewerLeaves(leaving);
+
+    expect(
+      s.reported(),
+      "the app was told two people are reading when one of them is a socket this room closed itself",
+    ).toBe(1);
   });
 
   it("says nothing at all when every viewer is answering", async () => {
