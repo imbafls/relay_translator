@@ -131,6 +131,9 @@
     root.setProperty("--fg", style.fg);
     root.setProperty("--accent", style.accent);
     root.setProperty("--bgc", obs && style.theme === "obs-clear" ? "transparent" : style.bg);
+    // the colour the background was chosen as, opaque even where the page is
+    // not: what draws text on an ink fill, like the active theme button
+    root.setProperty("--bg-solid", style.bg);
     root.setProperty("--shadow", style.shadow ? "0 2px 6px rgba(0,0,0,.7)" : "none");
     body.classList.toggle("light", style.theme === "light");
     body.classList.toggle("obs-black", obs && style.theme === "obs-black");

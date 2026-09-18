@@ -4256,3 +4256,17 @@ strips comments first. And because `:has` with `:focus-visible` is exactly
 the kind of thing a DOM without a renderer cannot judge, it was pressed in
 real Chromium: Tab onto the font picker, the alignment picker and the text
 swatch each drew the ring, and programmatic focus did not.
+
+**44 - A cream block where "OBS clear" should be.** The active theme button
+is drawn inverted - ink behind, the page background in front - and on the
+overlay's default theme, OBS clear, the page background is set to
+`transparent` so OBS composites through it. So the button a streamer lands
+on when they open DISPLAY, and again after RESET, was a label drawn in no
+colour on a cream block. The obvious fix, the chrome's own `--bg`, would
+have broken the light theme, which redefines `--ink` to dark and leaves
+`--bg` dark too. `applyStyle` now publishes the background as it was chosen
+- opaque, even where the page is not - and the button's text uses it. The
+test clicks all four themes on both surfaces and requires the active label
+to be a real colour different from its fill; only OBS clear on the overlay
+failed before, and removing the new property brings that back. In Chromium,
+on a fresh overlay: black on cream, page background still transparent.

@@ -2336,3 +2336,46 @@ describe("keyboard focus in the display settings", () => {
     expect(unmarked, "focus moves onto these with nothing on screen to show it").toEqual([]);
   });
 });
+
+/**
+ * The active theme button, readable on every theme.
+ *
+ * It is drawn inverted - ink behind, the caption background in front - and
+ * on the overlay's default theme, OBS clear, that background is literally
+ * `transparent`. So the button the streamer lands on when they open DISPLAY,
+ * and again after RESET, was a cream block with no "OBS clear" on it. The text
+ * takes the colour the background was chosen as, which is opaque on every
+ * theme, rather than what the page is painted with.
+ */
+describe("the active theme button", () => {
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+  afterEach(() => {
+    document.head.querySelector("style[data-test]")?.remove();
+    localStorage.clear();
+  });
+
+  for (const search of ["", "?obs=1"]) {
+    it(`can be read on every theme${search ? " on the overlay" : ""}`, () => {
+      boot(search);
+      const style = document.createElement("style");
+      style.dataset.test = "1";
+      style.textContent = css;
+      document.head.appendChild(style);
+
+      const unreadable: string[] = [];
+      for (const theme of ["dark", "light", "obs-black", "obs-clear"]) {
+        (document.querySelector(`#themeBar button[data-theme="${theme}"]`) as HTMLButtonElement).click();
+        const active = document.querySelector("#themeBar button.active") as HTMLElement | null;
+        if (!active) {
+          unreadable.push(`${theme}: no button marked active`);
+          continue;
+        }
+        const { color, backgroundColor } = getComputedStyle(active);
+        if (!color || color === "transparent" || /rgba\([^)]*,\s*0\)$/.test(color) || color === backgroundColor) {
+          unreadable.push(`${theme}: "${color}" on "${backgroundColor}"`);
+        }
+      }
+      expect(unreadable, "the active theme's label cannot be read").toEqual([]);
+    });
+  }
+});

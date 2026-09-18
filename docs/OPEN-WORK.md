@@ -910,6 +910,15 @@ fixed**, the last two on 2026-09-15.
   a test discovers every invisible control from the stylesheet and requires
   a ring on its container. Checked with real Tab presses in Chromium.
 
+- ~~**The overlay's active theme button had no readable label.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. It is drawn inverted, ink
+  behind and the page background in front, and on OBS clear - the overlay's
+  default, and where RESET lands - that background is `transparent`: a cream
+  block with no "OBS clear" on it. The label now takes the colour the
+  background was chosen as, which is opaque on every theme; a test checks the
+  active button on all four themes on both surfaces, and Chromium draws it
+  black on cream.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

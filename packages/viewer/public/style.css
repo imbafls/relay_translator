@@ -182,7 +182,10 @@ body.center .row .ts { text-align: right; }
 .theme-bar { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; }
 .theme-bar button { padding: 14px 0; text-align: center; color: var(--dim); min-height: 44px; }
 .theme-bar button + button { border-left: 1px solid var(--rule); }
-.theme-bar button.active { background: var(--ink); color: var(--bgc); }
+/* --bg-solid, not --bgc: on the overlay's OBS clear theme the page background
+   is `transparent`, and a label drawn in it on an ink fill is no label - the
+   button the streamer lands on in DISPLAY read as a blank cream block. */
+.theme-bar button.active { background: var(--ink); color: var(--bg-solid, var(--bgc)); }
 .drow {
   display: flex;
   align-items: center;
