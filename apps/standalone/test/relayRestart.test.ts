@@ -93,6 +93,31 @@ describe("a relay restart that fails after a save", () => {
     );
   });
 
+  /**
+   * And when the relay is down, main says why. startEmbeddedRelay records the
+   * failure, status carries it while there is no relay, and START's error
+   * names it - read off main.ts's source, since it does not run here. The
+   * renderer's half, the chip in 04 OUTPUT, is in renderer.test.ts.
+   */
+  it("hands the console the reason the relay is down, by main", () => {
+    const main = fs
+      .readFileSync(path.resolve(__dirname, "..", "src", "main.ts"), "utf8")
+      .replace(/(^|\s)\/\/.*$/gm, "$1");
+    const body = (name: string): string => {
+      const at = main.indexOf(name);
+      expect(at, `${name} is gone from main.ts`).toBeGreaterThan(-1);
+      return main.slice(at, main.indexOf("\n}", at));
+    };
+
+    const start = body("async function startEmbeddedRelay(");
+    expect(start, "a failed start is not recorded").toMatch(/catch \(err\) \{[^}]*relayStartError = /);
+    expect(start, "a good start does not clear the last failure").toMatch(/relayStartError = undefined/);
+    expect(body("function currentStatus("), "status does not carry the reason").toMatch(
+      /localError: relay \? undefined : relayStartError/,
+    );
+    expect(main, "START's error does not name the reason").toMatch(/local relay not running: \$\{relayStartError\}/);
+  });
+
   it("does nothing else when the restart works", async () => {
     for (const relayWasUp of [true, false]) {
       const h = harness({ relayWasUp, restarts: ["ok"] });

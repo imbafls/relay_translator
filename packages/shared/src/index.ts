@@ -1494,6 +1494,13 @@ export interface ControlStatus {
     billingPaused?: boolean;
     /** last measured uplink ping round-trip (ms) */
     uplinkRttMs?: number;
+    /**
+     * Why the embedded relay is not running, when it is not - most often its
+     * port held by another program (`listen EADDRINUSE ...`). Absent while it
+     * is up. Without it the first sign was START failing with "local relay not
+     * ready", which says neither why nor what fixes it.
+     */
+    localError?: string;
     /** viewers attached to the local relay (OBS + LAN phones) */
     viewers?: number;
     /** viewers attached to the remote relay via the uplink */

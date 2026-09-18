@@ -1068,6 +1068,13 @@ fixed**, the last two on 2026-09-15.
   no letter in it upper-cases to itself and stays valid. The case uses a fixed
   id with letters now, beside its valid lower-case twin.
 
+- ~~**A local relay that could not start was invisible until START.**~~
+  Fixed 2026-09-18, found while fixing the fresh-install setup trap. Its
+  port held by another program, the relay failed with one line in relay.log
+  and nothing on screen; START then said only "local relay not ready".
+  Status now carries the reason, 04 OUTPUT says LOCAL RELAY DOWN with the
+  taken port and where to change it, and START's error names the reason.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

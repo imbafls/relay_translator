@@ -2008,6 +2008,65 @@ describe("warning about the one-viewer limit before it bites", () => {
   });
 });
 
+/**
+ * The embedded relay does all the work - speech, translation, the viewer page
+ * - and when it could not start, because something else holds its port, main
+ * wrote one line to relay.log and nothing reached the screen. The first sign
+ * was START failing with "local relay not ready", which says neither why nor
+ * what fixes it. Since a fresh install with a held port now gets through setup
+ * instead of being stuck in it, that console is where such a user arrives.
+ */
+describe("a local relay that could not start", () => {
+  const output = (): HTMLElement => document.getElementById("metaOutput") as HTMLElement;
+
+  const relayDown = async (localError: string | undefined): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: { localViewerUrl: "", remoteViewerUrl: "", uplinkState: "off", localError },
+      usage: undefined,
+    });
+    await settle(40);
+  };
+
+  it("says so in 04 OUTPUT, with the port that is taken and where to change it", async () => {
+    await bootWith({ setupDone: true, relayPort: 8787 });
+    await relayDown("listen EADDRINUSE: address already in use 0.0.0.0:8787");
+
+    const text = output().textContent || "";
+    expect(text, "nothing on the console said the relay is down").toMatch(/LOCAL RELAY DOWN/);
+    expect(text, "the reason was not given").toMatch(/PORT 8787 IN USE/);
+    expect(text, "nothing said where it is fixed").toMatch(/SETTINGS/);
+    expect(output().querySelector(".warn"), "it is not shown as a warning").not.toBeNull();
+  });
+
+  it("still says it is down, and where to look, for a reason that is not a taken port", async () => {
+    await bootWith({ setupDone: true });
+    await relayDown("EACCES: permission denied");
+
+    const text = output().textContent || "";
+    expect(text).toMatch(/LOCAL RELAY DOWN/);
+    expect(text).toMatch(/SETTINGS/);
+  });
+
+  it("puts the reason in the LOG once, not on every status", async () => {
+    await bootWith({ setupDone: true, relayPort: 8787 });
+    await relayDown("listen EADDRINUSE: address already in use 0.0.0.0:8787");
+    await relayDown("listen EADDRINUSE: address already in use 0.0.0.0:8787");
+
+    const logged = document.getElementById("log")?.textContent || "";
+    expect(logged).toMatch(/local relay could not start: listen EADDRINUSE/);
+    expect(logged.match(/local relay could not start/g) ?? [], "logged on every status push").toHaveLength(1);
+  });
+
+  it("says nothing of the kind when the relay is up", async () => {
+    await bootWith({ setupDone: true });
+    await relayDown(undefined);
+
+    expect(output().textContent || "").not.toMatch(/LOCAL RELAY DOWN/);
+  });
+});
+
 describe("NEW, which disconnects everyone reading", () => {
   const newBtn = (): HTMLButtonElement => document.getElementById("rotateLink") as HTMLButtonElement;
 

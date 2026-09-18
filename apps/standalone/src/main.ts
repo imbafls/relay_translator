@@ -244,9 +244,26 @@ function publisherWsUrl(): string | undefined {
   return `ws://127.0.0.1:${relay.port}/ws/publisher?token=${encodeURIComponent(relay.state.publisherToken)}`;
 }
 
+/**
+ * Why the embedded relay last failed to start, until it next starts. Status
+ * carries it so the console can say the relay is down and why, rather than
+ * leaving START to fail with "local relay not ready".
+ */
+let relayStartError: string | undefined;
+
 async function startEmbeddedRelay(): Promise<void> {
-  const cfg = config();
   if (relay) return;
+  try {
+    await launchEmbeddedRelay();
+    relayStartError = undefined;
+  } catch (err) {
+    relayStartError = String((err as Error)?.message || err);
+    throw err;
+  }
+}
+
+async function launchEmbeddedRelay(): Promise<void> {
+  const cfg = config();
   relay = await startRelay({
     port: cfg.relayPort,
     dataDir: defaultDataDir(),
@@ -511,6 +528,7 @@ function currentStatus() {
       remoteViewerUrl: phoneUrl(),
       uplinkState: uplinkState,
       uplinkRttMs: uplink?.rttMs,
+      localError: relay ? undefined : relayStartError,
       // absent while the embedded relay is not up (startup/restart) rather than
       // false - false would read as "speech is down" to a topbar that has not
       // even connected to a session yet
@@ -607,7 +625,7 @@ function registerIpc(): void {
     // busy invalidated the link three times, with only "start failed" on
     // screen. Nothing about a session that cannot start should spend the link.
     const url = publisherWsUrl();
-    if (!url) throw new Error("local relay not ready");
+    if (!url) throw new Error(relayStartError ? `local relay not running: ${relayStartError}` : "local relay not ready");
     const rotation = opts.rotate && cfg.linkMode === "unique" ? await rotateLink() : undefined;
     return {
       publisherUrl: url,
@@ -975,6 +993,8 @@ if (!gotLock) {
       await startEmbeddedRelay();
     } catch (err) {
       log("error", `embedded relay failed: ${String(err)}`);
+      // status carries the reason now; say so without waiting for a push
+      broadcastStatus();
     }
     // usage refresh loop (Deepgram balance cached inside the relay for 5 min)
     setInterval(() => void refreshUsage(), 60000);

@@ -72,6 +72,8 @@ type View = "stage" | "settings" | "log" | "saved" | "onboarding";
 
 let config: AppConfig;
 let status: ControlStatus | null = null;
+/** the relay start failure already written to the LOG, so it is written once */
+let loggedLocalError: string | undefined;
 let relayClient: RelayPublisherClient | null = null;
 let session: SessionState = "idle";
 let sessionError: string | undefined;
@@ -1345,6 +1347,18 @@ function renderChain(): void {
   const relaySet = !!config.relayUrl;
   const up = rel?.uplinkState;
   const items: { text: string; cls?: string }[] = [];
+  // First, because nothing else here works without it: the embedded relay
+  // does the speech, the translation and the viewer page. Down, it used to say
+  // nothing until START failed with "local relay not ready".
+  if (rel?.localError) {
+    items.push({ text: "LOCAL RELAY DOWN", cls: "warn" });
+    if (/EADDRINUSE/.test(rel.localError)) {
+      items.push({ text: `PORT ${config.relayPort} IN USE`, cls: "warn" });
+      items.push({ text: "CHANGE LOCAL PORT IN SETTINGS", cls: "warn" });
+    } else {
+      items.push({ text: "SEE LOG · CHECK SETTINGS", cls: "warn" });
+    }
+  }
   if (config.output === "obs") {
     items.push({ text: live ? "LOCAL" : "LOCAL · NO RELAY NEEDED" });
   } else if (!relaySet) {
@@ -3092,6 +3106,11 @@ function bind(): void {
     syncControlsFromConfig();
   });
   cr.onStatus((s) => {
+    // the reason the local relay is down, into the LOG once per reason - status
+    // arrives on every viewer and device change, and the chip says it anyway
+    const localError = s.relay?.localError;
+    if (localError && localError !== loggedLocalError) log(`local relay could not start: ${localError}`, "err");
+    loggedLocalError = localError;
     status = s;
     // CPU / RAM never change, so the first broadcast that carries them wins
     if (s.hardware) hardware = s.hardware;

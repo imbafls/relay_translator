@@ -4676,3 +4676,21 @@ the all-digit id pinned, and the new case goes red when the Worker's room-id
 pattern is made case-insensitive. The other malformed cases do not depend on
 what the random values happen to be, and no other test builds an "invalid"
 input by transforming a random one.
+
+**69 - Saying the relay is down.** The last Phase 2 card, carded in
+iteration 59: since a fresh install with a held port gets through setup
+instead of being stuck in it, it reaches a console that did not say the one
+thing wrong with it. The embedded relay failing to bind wrote "embedded relay
+failed" to relay.log and nothing else; the first visible sign was START
+failing with "local relay not ready", which gives neither the reason nor the
+fix. main now records why the relay last failed to start (cleared when it
+next starts), status carries it as `relay.localError` while there is no
+relay, and START's error names it. 04 OUTPUT leads with LOCAL RELAY DOWN in
+amber - with PORT 8787 IN USE and CHANGE LOCAL PORT IN SETTINGS when the
+reason is a taken port, SEE LOG · CHECK SETTINGS otherwise - and the reason
+goes into the LOG once per reason, since status arrives on every viewer and
+device change. Three renderer tests red first; main's half is held by a
+source guard beside the restart one, as main.ts does not run under test.
+Six mutations, three a side, each red. The harness bridge never pushes a
+status, so the chip is not screenshotted here; Phase 3's packaged launch with
+8787 held is where it will be seen for real.
