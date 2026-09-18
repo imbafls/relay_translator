@@ -293,6 +293,14 @@ day. `test/uplinkGone.test.ts` covers it.
   more while live - about 60 room-hours a day - and alarm invocations count
   as requests on Cloudflare's price list.
 
+  `measure-cost.cjs` sends worded captions only, and until 1.0 a real session
+  did not: the app forwarded every wordless final too - one per couple of
+  seconds of silence, 3,105 against 657 lines in one measured session - which
+  is two to three times the requests above, each doing nothing on the far
+  side. Since 1.0 the app sends only lines with words (`forwardsToUplink` in
+  `packages/companion`), so the measurement and the traffic now agree. An
+  older app still sends them until it updates.
+
   On the Workers Paid plan the included 1M requests/month is ~626 room-hours,
   and past that the whole cost is about **$0.29 per 1,000 room-hours**. Still
   nothing, but the number to watch is the request count, and the lever that

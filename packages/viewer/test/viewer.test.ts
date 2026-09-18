@@ -2175,3 +2175,31 @@ describe("who said it, with the original hidden", () => {
     });
   }
 });
+
+/**
+ * Why the app stops sending wordless finals to the hosted relay.
+ *
+ * A wordless final retires the interim row a partial left. The uplink carries
+ * no partials, so on a page reached through the hosted relay there is never an
+ * interim - and a wordless final changes nothing at all. That is what makes
+ * dropping them at the uplink (`forwardsToUplink` in packages/companion) safe,
+ * so it is held here, against the page as it ships, on both surfaces.
+ */
+describe("a wordless final on a page that has no interim", () => {
+  for (const search of ["", "?obs=1"]) {
+    it(`changes nothing${search ? " on the overlay" : ""}`, () => {
+      boot(search);
+      push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false, since: Date.now() });
+      push({ type: "subtitle", id: 1, source: "rush B", final: true });
+      const before = $("lines").innerHTML;
+
+      push({ type: "subtitle", id: 2, source: "", final: true });
+      push({ type: "subtitle", id: 3, source: "", target: "", final: true });
+
+      expect($("lines").innerHTML, "a wordless final changed the page, so it has a job on the hosted hop after all").toBe(
+        before,
+      );
+      expect(lineTexts()).toEqual(["rush B"]);
+    });
+  }
+});

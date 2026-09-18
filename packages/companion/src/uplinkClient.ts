@@ -1,5 +1,23 @@
-import { Languages, ServerToUplink, UplinkToServer } from "@callout-relay/shared";
+import { Languages, ServerToUplink, ServerToViewer, UplinkToServer } from "@callout-relay/shared";
 import { getWebSocketImpl } from "./wsImpl";
+
+/**
+ * Which of the local relay's viewer messages the uplink passes on to the
+ * remote relay. The app tees every broadcast; this is the whole decision.
+ *
+ * A subtitle only when it has words. A wordless final exists to retire the
+ * interim row a partial left, and partials never go up the uplink, so no
+ * remote viewer ever has one to retire - while each final sent is an inbound
+ * message the hosted relay bills as a request, its binding limit. One measured
+ * 94-minute session had 3,105 of them against 657 lines. If partials are ever
+ * forwarded, this has to forward the wordless finals again.
+ */
+export function forwardsToUplink(msg: ServerToViewer): boolean {
+  if (msg.type === "subtitle") return !!msg.source?.trim() || !!msg.target?.trim();
+  if (msg.type === "status") return true;
+  if (msg.type === "hello") return msg.live;
+  return false;
+}
 
 /**
  * Subtitle uplink: pushes FINISHED subtitles from the local relay to a remote

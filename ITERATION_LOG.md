@@ -4089,3 +4089,20 @@ store resolves a list that a patch names from that list alone, so an empty
 one means the default for any caller, not "the ones you had". A config read
 from disk and a legacy patch naming only the pair still fold the pair in,
 and the review found no caller that relied on the old reading.
+
+**33 - Requests that did nothing.** A quiet channel emits a wordless final
+every couple of seconds, and the app tee'd every one up the uplink: 3,105
+against 657 real lines in one measured session. On the hosted relay each is
+an inbound message - a billed request, and requests are that service's
+binding limit - and on the far side each did nothing, because a wordless
+final exists to retire an interim row and partials never travel the uplink.
+`5fbb61f` had removed their storage write on the room's side and kept the
+fan-out, reasoning that remote viewers needed them; that reason held on the
+LAN and not on this hop. The forwarding rule moved unchanged into
+`forwardsToUplink` first, so the test could watch the rule itself send a
+wordless final, and only then did it learn to ask for words. The two facts
+are held together: a test that no partial goes up sits beside the one that
+no wordless final does, and a viewer test shows a wordless final changes
+nothing on a page without an interim, phone and overlay both - make the page
+render one and it goes red. The room still fans out whatever an older app
+sends, and its test now says why.

@@ -480,7 +480,10 @@ fixed**, the last two on 2026-09-15.
   `lastSegId` only when the line carries words, so a silent tick no longer
   reaches storage. The broadcast is unchanged - remote viewers still get the
   empty final that retires their interim row - and the room now writes only
-  when the record it would write differs from the one already there.
+  when the record it would write differs from the one already there. (That
+  reason was wrong for this hop: partials never travel the uplink, so no
+  remote viewer has an interim row. Since 2026-09-18 the app stops sending the
+  wordless finals at all - see the entry below.)
 
 ### Found while fixing the above, not in the audit
 
@@ -805,6 +808,14 @@ fixed**, the last two on 2026-09-15.
   and every START failing on it. The app now falls back to the default
   microphone and says so, and the store resolves a list a patch names from
   that list alone, so an emptied one means the default everywhere.
+
+- ~~**Every wordless final went up the uplink.**~~ Fixed 2026-09-18, found by
+  the 1.0 discovery pass. A quiet channel emits one every couple of seconds,
+  and each was an inbound message the hosted relay bills as a request - its
+  binding limit - for a frame that does nothing there: it exists to retire an
+  interim row, and partials never cross the uplink. `forwardsToUplink` in
+  `packages/companion` now sends a subtitle only when it has words, the app's
+  tee goes through it, and a viewer test holds the premise on both surfaces.
 
 ### Other
 

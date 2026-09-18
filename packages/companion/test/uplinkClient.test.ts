@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { WebSocketServer, WebSocket as WsWebSocket } from "ws";
 import type { WebSocket as NodeWebSocket } from "ws";
-import { UplinkClient } from "../src/uplinkClient";
+import { forwardsToUplink, UplinkClient } from "../src/uplinkClient";
 import { RelayPublisherClient } from "../src/relayClient";
 
 /**
@@ -682,5 +684,62 @@ describe("a remote relay that goes quiet without closing", () => {
 
     await settle(600); // ten heartbeat rounds
     expect(accepted.length, "it tore down a connection that was answering").toBe(1);
+  });
+});
+
+/**
+ * What the app sends up the uplink, out of everything its relay broadcasts.
+ *
+ * A quiet channel produces a wordless final every couple of seconds - one
+ * measured 94-minute session carried 3,105 of them against 657 real lines -
+ * and every one went up the uplink. On the hosted relay each is an inbound
+ * WebSocket message: a billed request, and requests are that service's binding
+ * limit. On the far side it did nothing. A wordless final exists to retire the
+ * interim row a partial left, and partials never cross this hop, so no hosted
+ * viewer ever has one to retire. The two facts only hold together: forward a
+ * partial one day and the wordless final has a job again.
+ */
+describe("what goes up the uplink", () => {
+  const subtitle = (source: string, target?: string) =>
+    ({ type: "subtitle", id: 1, source, target, final: true }) as const;
+
+  it("sends a line with words, in either language", () => {
+    expect(forwardsToUplink(subtitle("enemy down mid"))).toBe(true);
+    expect(forwardsToUplink(subtitle("enemy down mid", "hạ một địch ở giữa"))).toBe(true);
+    expect(forwardsToUplink(subtitle("", "hạ một địch ở giữa"))).toBe(true);
+  });
+
+  // "the translation is not coming" carries the line's own words, and a
+  // hosted viewer needs it to take down the "…"
+  it("sends a translation that is not coming", () => {
+    expect(forwardsToUplink(subtitle("enemy down mid", ""))).toBe(true);
+  });
+
+  it("does not send a final with no words in it", () => {
+    expect(forwardsToUplink(subtitle("")), "a wordless final went up the uplink - a billed request that does nothing").toBe(
+      false,
+    );
+    expect(forwardsToUplink(subtitle("  ")), "whitespace is no more a line than nothing is").toBe(false);
+    expect(forwardsToUplink(subtitle("", ""))).toBe(false);
+  });
+
+  it("never sends a partial - the reason the line above is safe", () => {
+    expect(forwardsToUplink({ type: "partial", id: 1, source: "enemy do" })).toBe(false);
+  });
+
+  it("sends status, and a hello only when it says live", () => {
+    expect(forwardsToUplink({ type: "status", live: false })).toBe(true);
+    const hello = { type: "hello", languages: { source: "en", target: "vi" }, translates: true } as const;
+    expect(forwardsToUplink({ ...hello, live: true })).toBe(true);
+    expect(forwardsToUplink({ ...hello, live: false })).toBe(false);
+  });
+
+  // the decision lives here, so the app has to go through it: a forward
+  // written inline in main.ts would send the wordless finals again
+  it("is the gate the app's tee goes through", () => {
+    const main = fs.readFileSync(path.resolve(__dirname, "..", "..", "..", "apps", "standalone", "src", "main.ts"), "utf8");
+    const tee = main.slice(main.indexOf("function bridgeBroadcasts"), main.indexOf("async function refreshUsage"));
+    expect(tee, "bridgeBroadcasts is not where this looks for it").toContain("relay.onBroadcast(");
+    expect(tee, "the tee no longer asks forwardsToUplink before sending").toMatch(/if \(!forwardsToUplink\(msg\)\) return;/);
   });
 });

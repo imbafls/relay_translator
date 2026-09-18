@@ -15,7 +15,15 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { claimHostedRoom, ConfigStore, defaultDataDir, openFileLog, sendFeedback, UplinkClient } from "@callout-relay/companion";
+import {
+  claimHostedRoom,
+  ConfigStore,
+  defaultDataDir,
+  forwardsToUplink,
+  openFileLog,
+  sendFeedback,
+  UplinkClient,
+} from "@callout-relay/companion";
 import type { FeedbackPayload } from "@callout-relay/companion";
 import { startRelay, RelayHandle, tryLoadDotenv } from "@callout-relay/relay";
 import {
@@ -363,6 +371,7 @@ function bridgeBroadcasts(): void {
   if (!relay) return;
   unsubscribeBroadcast = relay.onBroadcast((msg: ServerToViewer) => {
     if (!uplink || !uplink.connected) return;
+    if (!forwardsToUplink(msg)) return;
     if (msg.type === "subtitle") {
       uplink.sendSubtitle({
         type: "subtitle",
@@ -379,7 +388,7 @@ function bridgeBroadcasts(): void {
       });
     } else if (msg.type === "status") {
       uplink.sendStatus(msg.live, msg.message, msg.since, msg.epoch);
-    } else if (msg.type === "hello" && msg.live) {
+    } else if (msg.type === "hello") {
       uplink.sendHello({
         languages: msg.languages,
         translates: msg.translates !== false,

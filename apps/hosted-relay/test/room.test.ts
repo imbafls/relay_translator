@@ -314,14 +314,15 @@ describe("what a silent channel costs the hosted room in storage writes", () => 
     expect(s.writes(), "silence is still driving a storage write on every tick").toBe(SPOKEN);
   });
 
-  it("still fans every subtitle out, wordless ones included", async () => {
+  // What goes up the uplink is decided in the app (`forwardsToUplink`), which
+  // since 1.0 sends no wordless finals - nothing on this hop has an interim row
+  // for one to retire. An older app still sends them, and the room passes on
+  // whatever it is given rather than second-guessing the publisher.
+  it("still fans out every subtitle the uplink sends", async () => {
     const s = stand();
     await session(s);
 
-    expect(
-      s.captions().length,
-      "a remote viewer stopped getting the empty final it retires its interim row with",
-    ).toBe(SPOKEN + WORDLESS);
+    expect(s.captions().length, "the room dropped subtitles its uplink sent").toBe(SPOKEN + WORDLESS);
   });
 
   it("records the last caption a viewer actually rendered, not the last tick of silence", async () => {

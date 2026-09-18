@@ -13,7 +13,7 @@ export {
 } from "./capture";
 export type { SourceLost } from "./capture";
 export { PCM_WORKLET_SOURCE } from "./capture/workletSource";
-export { UplinkClient } from "./uplinkClient";
+export { forwardsToUplink, UplinkClient } from "./uplinkClient";
 export { claimHostedRoom } from "./hostedRoom";
 export { rotateRemoteLink } from "./rotateLink";
 export type { RemoteRotation } from "./rotateLink";
