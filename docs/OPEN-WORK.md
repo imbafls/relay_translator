@@ -644,6 +644,18 @@ fixed**, the last two on 2026-09-15.
   silent peer never sends the frame. The page now lets go of the socket, says
   RECONNECTING and arms the retry at the moment it gives up.
 
+- ~~**The uplink's heartbeat gave up, then waited out a close the dead relay
+  would never finish.**~~ Fixed 2026-09-18, the viewer fix's adjacent shape.
+  `packages/companion/src/uplinkClient.ts` called `close()` and left the
+  retry to `onclose`, which the `ws` package Electron main runs holds for 30 s
+  when the peer never answers - 30 s more of internet viewers without
+  captions. It now lets go of the socket, terminates it and retries at once.
+  A review found the fix's own trap: the dropped socket's late close stopped
+  the client's one shared heartbeat before asking whether that socket was
+  current, switching off dead-relay detection on the healthy connection -
+  latent on Electron 33, live on the standard WebSocket the next Electron
+  moves to. Fixed and held on both implementations.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

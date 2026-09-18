@@ -3795,3 +3795,23 @@ a second retry that tears down the healthy connection - and a test now does.
 The same shape is in the desktop app's uplink client, whose comment reads
 "closing is enough": the `ws` package it runs on waits 30 s for the handshake.
 That is a card of its own, not part of this commit.
+
+**17 - The uplink's version, and the trap in fixing it.** The desktop app's
+uplink client gave up on a silent hosted relay by calling `close()`, under a
+comment saying closing was enough - and the `ws` package it runs on in
+Electron main waits 30 s for an answer the dead relay never gives. Red on both
+implementations (Node 24's own WebSocket, and `ws` swapped in for the one
+Electron runs), then the viewer's fix: let go, terminate, retry now. All three
+reviewers then found the same trap in it independently. The client has one
+shared heartbeat timer and its `onclose` stopped that timer before asking
+whether the socket was still current, so on the standard WebSocket - where a
+dropped socket can only be closed, and its close lands whenever the dead link
+finally errors - the late close switched off the healthy connection's
+heartbeat. Latent on Electron 33's Node 20; the path the next Electron upgrade
+takes. Reproduced (zero pings on the new connection after the old close),
+fixed by checking currency first, which in turn needed `open()` to stop a
+replaced socket's heartbeat itself - its onclose no longer does, and a test
+with a slow second handshake shows the old timer giving up on the new socket
+mid-handshake without it. Six parts, six mutations, six reds. The publisher
+client carries the same line and it is harmless there: the relay checks a
+publisher with protocol pings every client answers on its own.

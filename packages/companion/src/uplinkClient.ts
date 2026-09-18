@@ -97,8 +97,11 @@ export class UplinkClient {
       this.retryTimer = null;
     }
     const previous = this.ws;
-    // cleared first, so the old socket's onclose sees it is no longer current
+    // cleared first, so the old socket's onclose sees it is no longer current -
+    // which also means that onclose no longer stops the heartbeat, so the
+    // retiring socket's is stopped here
     this.ws = null;
+    this.stopPing();
     if (previous) {
       try {
         previous.close(1000, "reconnecting");
@@ -159,8 +162,14 @@ export class UplinkClient {
     };
 
     ws.onclose = (ev: CloseEvent) => {
-      this.stopPing();
+      // Currency first. The heartbeat timer is this client's one shared timer,
+      // and a socket already let go of - by a give-up, or by open() replacing
+      // it - can be closed long after its replacement started beating: on the
+      // standard WebSocket a dead link's close arrives whenever the link finally
+      // errors. Stopping first switched off the healthy socket's heartbeat.
+      // Whoever retires a socket stops its heartbeat at that moment instead.
       if (this.ws !== ws) return;
+      this.stopPing();
       this.ws = null;
       this.remoteViewers = 0;
       this.rttMs = undefined;
@@ -210,8 +219,9 @@ export class UplinkClient {
    *
    * TWO rounds, where the server allows one. The server is dropping a socket it
    * can rebuild for free; this is tearing down a live stream's uplink, and one
-   * dropped pong on a mobile link is not evidence of a dead relay. Closing is
-   * enough - `onclose` already runs the backoff and reconnect that exist.
+   * dropped pong on a mobile link is not evidence of a dead relay. Closing was
+   * once thought enough, because `onclose` runs the backoff and reconnect - but
+   * a close waits for the dead peer's answer, so giving up retries on the spot.
    */
   private startPing(): void {
     this.stopPing();
@@ -220,11 +230,29 @@ export class UplinkClient {
     const ping = (): void => {
       if (this.unanswered >= 2) {
         this.stopPing();
-        try {
-          this.ws?.close();
-        } catch {
-          /* already gone */
+        // Not close-and-wait. A close waits for the peer's answer - 30 s in the
+        // `ws` package Electron main runs this on, 60 s in Chromium - and a
+        // relay that has stopped answering pings will not answer that either,
+        // so everything hung off onclose sat out the timeout after this line had
+        // already decided. Let go of it here: it stops being current, so its
+        // late onclose is ignored, and the retry onclose would have armed runs now.
+        const dead = this.ws;
+        this.ws = null;
+        this.remoteViewers = 0;
+        this.rttMs = undefined;
+        if (dead) {
+          try {
+            // `ws` can drop the socket outright; the standard WebSocket cannot,
+            // and can only close it - its close event may then arrive long
+            // after the retry, and onclose ignores it because it is not current
+            const terminate = (dead as unknown as { terminate?: () => void }).terminate;
+            if (typeof terminate === "function") terminate.call(dead);
+            else dead.close();
+          } catch {
+            /* already gone */
+          }
         }
+        this.scheduleRetry("the relay stopped answering");
         return;
       }
       this.unanswered += 1;

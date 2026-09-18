@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket as WsWebSocket } from "ws";
 import type { WebSocket as NodeWebSocket } from "ws";
 import { UplinkClient } from "../src/uplinkClient";
 import { RelayPublisherClient } from "../src/relayClient";
@@ -490,6 +490,178 @@ describe("a remote relay that goes quiet without closing", () => {
     // to nothing, which is precisely a peer that has stopped listening
     await until(() => accepted.length === 2, "it never gave up on a relay that stopped answering", 4000);
     expect(states, "it never left the connected state").toContain("disconnected");
+  });
+
+  /**
+   * The test above gives up on a relay that stops answering pings but still
+   * answers the Close frame - this harness is a live `ws` server, and it does,
+   * at once. A relay that has really gone answers nothing, and closing a
+   * socket waits for that answer: 30 s in the `ws` package the app runs on in
+   * Electron main, 60 s in Chromium. Everything that recovers - the state, the
+   * backoff, the reconnect - hung off the close event, so internet viewers went
+   * without captions for that long after the heartbeat had already decided.
+   */
+  it("reconnects when it gives up, without waiting for a close the dead relay will not finish", async () => {
+    // the first relay socket stops reading altogether: no pong, and no answer
+    // to the Close frame either, which is what a peer that has gone looks like
+    wss.on("connection", (ws) => {
+      if (accepted.length === 1) (ws as unknown as { _socket: { pause(): void } })._socket.pause();
+    });
+    const c = new UplinkClient(`ws://127.0.0.1:${port}`, { pingMs: 60 });
+    clients.push(c);
+    c.connect(HELLO);
+    await until(() => c.state === "connected", "the client never reported connected");
+
+    await until(
+      () => accepted.length === 2,
+      "it gave up on the silent relay but did not try again - the retry waited on a close handshake " +
+        "the dead peer will never finish",
+      3000,
+    );
+  });
+
+  // The same, on the implementation the app actually runs there: Electron's
+  // main process is Node 20, which has no global WebSocket, so
+  // getWebSocketImpl() falls back to the `ws` package - whose close waits
+  // CLOSE_TIMEOUT, 30 s, for the peer's answer.
+  it("reconnects the same way on the ws package Electron main runs it on", async () => {
+    const real = (globalThis as { WebSocket?: unknown }).WebSocket;
+    (globalThis as { WebSocket?: unknown }).WebSocket = WsWebSocket;
+    try {
+      wss.on("connection", (ws) => {
+        if (accepted.length !== 1) return;
+        // it reports a viewer before it goes quiet, so there is a count to reset
+        ws.send(JSON.stringify({ type: "viewers", count: 3 }));
+        (ws as unknown as { _socket: { pause(): void } })._socket.pause();
+      });
+      const states: string[] = [];
+      const c = new UplinkClient(`ws://127.0.0.1:${port}`, { onState: (s2) => states.push(s2), pingMs: 60 });
+      clients.push(c);
+      c.connect(HELLO);
+      await until(() => c.state === "connected", "the client never reported connected");
+      await until(() => c.remoteViewers === 3, "the dead relay's viewer count");
+      const dropped = (c as unknown as { ws: { readyState: number } }).ws;
+
+      await until(
+        () => accepted.length === 2,
+        "on the ws package it gave up and then sat out the 30 s close timeout before trying again",
+        3000,
+      );
+      // dropped outright, not left CLOSING for the 30 s the handshake would take
+      expect(dropped.readyState, "the given-up socket is still waiting on a close the dead relay will not answer").toBe(3);
+      expect(c.remoteViewers, "the count the dead relay last reported is still being shown").toBe(0);
+      // `terminate()` fires the dropped socket's close at once. It was let go
+      // of first, so that close is ignored: one give-up is one disconnect, not
+      // two, and the backoff does not step twice for one dead relay
+      expect(
+        states.filter((s2) => s2 === "disconnected"),
+        "the dropped socket's own close was counted as a second disconnect",
+      ).toHaveLength(1);
+    } finally {
+      (globalThis as { WebSocket?: unknown }).WebSocket = real;
+    }
+  });
+
+  /**
+   * On the standard WebSocket - Node 22 and later, Chromium - a dropped
+   * socket cannot be terminated, only closed, and its close event arrives
+   * whenever the dead link finally errors: long after the reconnect has opened
+   * a new socket and started its heartbeat. The heartbeat timer is the client's
+   * one shared timer, and the dropped socket's onclose stopped it before asking
+   * whether that socket was still the current one - so the late close quietly
+   * switched off dead-relay detection on the healthy connection. Electron 33's
+   * main process runs the `ws` package and terminates at once, so this is the
+   * runtime the next Electron upgrade moves the app onto.
+   */
+  it("keeps the new connection's heartbeat when the dropped socket's close finally arrives", async () => {
+    const pings = new Map<number, number>();
+    wss.on("connection", (ws) => {
+      const n = accepted.length;
+      if (n === 1) {
+        (ws as unknown as { _socket: { pause(): void } })._socket.pause();
+        return;
+      }
+      // later relays answer every ping and count them
+      ws.on("message", (data) => {
+        try {
+          if (JSON.parse(String(data)).type !== "ping") return;
+        } catch {
+          return;
+        }
+        pings.set(n, (pings.get(n) || 0) + 1);
+        ws.send(JSON.stringify({ type: "pong" }));
+      });
+    });
+    const c = new UplinkClient(`ws://127.0.0.1:${port}`, { pingMs: 60 });
+    clients.push(c);
+    c.connect(HELLO);
+    await until(() => accepted.length === 2 && c.state === "connected", "the reconnect", 3000);
+
+    // the dead link finally errors, so the dropped socket's close is delivered
+    accepted[0].terminate();
+    await settle(300);
+    const before = pings.get(2) || 0;
+    await settle(400);
+
+    expect(
+      (pings.get(2) || 0) - before,
+      "the dropped socket's late close stopped the new connection's heartbeat - it would never notice this " +
+        "relay going quiet either",
+    ).toBeGreaterThan(0);
+  });
+
+  /**
+   * Retiring a socket stops its heartbeat, and that includes `open()`
+   * replacing a live one. Its onclose no longer does - it is not current by
+   * then - so if `open()` did not, the old socket's timer went on ticking
+   * until the new socket opened. Each tick in that window is a ping with no
+   * socket to answer it, and two of them "gave up" on the NEW socket while its
+   * handshake was still in flight.
+   */
+  it("does not give up on a socket that is still opening, off the heartbeat of the one it replaced", async () => {
+    let n = 0;
+    const slow = new WebSocketServer({
+      port: 0,
+      host: "127.0.0.1",
+      // the replacement's handshake takes a while, the way a remote relay's can
+      verifyClient: (_info: unknown, done: (ok: boolean) => void) => {
+        n += 1;
+        setTimeout(() => done(true), n === 1 ? 0 : 500);
+      },
+    });
+    const slowSockets: NodeWebSocket[] = [];
+    slow.on("connection", (ws) => {
+      slowSockets.push(ws);
+      ws.on("message", (data) => {
+        try {
+          if (JSON.parse(String(data)).type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+        } catch {
+          /* not ours */
+        }
+      });
+    });
+    await new Promise<void>((r) => slow.once("listening", r));
+    const slowPort = (slow.address() as { port: number }).port;
+    const states: string[] = [];
+    const c = new UplinkClient(`ws://127.0.0.1:${slowPort}`, { onState: (s2) => states.push(s2), pingMs: 60 });
+    try {
+      c.connect(HELLO);
+      await until(() => c.state === "connected", "the first connection");
+      await settle(200);
+
+      const from = states.length;
+      c.connect(HELLO); // replace the live socket
+      await until(() => slowSockets.length === 2 && c.state === "connected", "the replacement to open", 3000);
+
+      expect(
+        states.slice(from).filter((s2) => s2 === "disconnected"),
+        "the replaced socket's heartbeat went on ticking and gave up on the replacement mid-handshake",
+      ).toEqual([]);
+    } finally {
+      c.disconnect();
+      for (const ws of slowSockets) ws.terminate();
+      await new Promise<void>((r) => slow.close(() => r()));
+    }
   });
 
   it("stays put while the relay is answering", async () => {
