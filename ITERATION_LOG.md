@@ -4610,3 +4610,18 @@ go red. The fourth, script loading, survives on purpose - happy-dom 20
 refuses script files by default, which the first red run showed - and the
 config says so rather than letting the setting read as load-bearing. The DOM
 files now run without a single ECONNREFUSED line. 105 test files.
+
+**65 - Guards that hold in any order.** Iteration 55's two harness guards
+were pairs of tests: the first left a timer (or a listener) behind, the
+second was where it used to land. Run alone with `-t`, or shuffled, the
+second test had nothing behind it and passed having tested nothing - and the
+timer pair's first test only proved the debounce had not fired yet, not that
+one was waiting, so moving key checks off `input` would have left both green
+and meaningless. The cleanup `afterEach` does to leftovers is now a function,
+`dropLeftovers`, and each guard is one test: arm it, assert it is armed
+(`armedTimeouts` grew; a keydown listener was recorded), call
+`dropLeftovers` the way `afterEach` would, boot again, check. Each goes red
+alone with its half of the cleanup removed; the whole file passes under two
+shuffle seeds; and with the SETTINGS key field made to arm nothing the timer
+guard now fails on "typing armed no timer, so nothing below is tested"
+instead of passing.

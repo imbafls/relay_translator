@@ -373,6 +373,21 @@ beforeEach(() => {
   feedbackResult = { delivered: true, id: "a1b2c3d4e5f6a7b8", logFailed: false };
 });
 
+/**
+ * What a finished test's renderer leaves running - its intervals, its armed
+ * timeouts, the listeners boot() put on document and window - taken away, so
+ * none of it fires into the next test's page. afterEach runs it; the guards
+ * for it call it themselves, so they hold whatever order tests run in.
+ */
+function dropLeftovers(): void {
+  for (const t of timers) clearInterval(t);
+  timers = [];
+  for (const t of armedTimeouts) clearTimeout(t);
+  armedTimeouts.clear();
+  for (const l of bootListeners) l.target.removeEventListener(l.type, l.fn, l.opts);
+  bootListeners = [];
+}
+
 afterEach(() => {
   fakeDevices = [];
   enumerateGate = null;
@@ -393,12 +408,7 @@ afterEach(() => {
   slowNextCheck = null;
   fakeSaved = [];
   fakeSavedBodies = {};
-  for (const t of timers) clearInterval(t);
-  timers = [];
-  for (const t of armedTimeouts) clearTimeout(t);
-  armedTimeouts.clear();
-  for (const l of bootListeners) l.target.removeEventListener(l.type, l.fn, l.opts);
-  bootListeners = [];
+  dropLeftovers();
   vi.restoreAllMocks();
   if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator);
   document.body.innerHTML = "";
@@ -2915,25 +2925,28 @@ describe("settings leads with the question people came to answer", () => {
  * footer - blanking the brand field of the test that happened to be reading
  * it. It failed that test once in a full run and never again in seven.
  *
- * Two tests, in file order, on purpose: the first ends with a debounced key
- * check armed, and the second is where it used to land. The stale check
- * reads the key field of the document it finds - this test's - so the second
- * test fills that field and counts how often its key is validated: once by
- * its own boot, and a second time only if the last test's timer went off.
+ * Each guard plays both tests in one - leave the thing armed, clean up the way
+ * afterEach does, boot again - so it holds run alone, shuffled, or in file
+ * order. It used to be two tests relying on file order, which run alone or
+ * shuffled passed without testing anything. The stale check reads the key
+ * field of the document it finds - the second boot's - so that boot fills the
+ * field and counts how often its key is validated: once by its own boot, and
+ * again only if the first boot's timer went off.
  */
-describe("a timer a finished test left armed", () => {
-  it("is armed as this test ends", async () => {
+describe("what a finished test leaves running", () => {
+  it("does not let a timer it left armed go off in the next test", async () => {
     await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
     (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle(40);
+    const armedBefore = armedTimeouts.size;
     const field = document.getElementById("deepgramApiKey") as HTMLInputElement;
     field.value = "dg-typed-as-the-test-ended";
     field.dispatchEvent(new Event("input", { bubbles: true }));
-    // ends well inside the 500 ms debounce
+    // the debounced check is armed, and has not gone off yet
+    expect(armedTimeouts.size, "typing armed no timer, so nothing below is tested").toBeGreaterThan(armedBefore);
     expect(calls.validated.map((v) => v.key)).not.toContain("dg-typed-as-the-test-ended");
-  });
 
-  it("does not go off in the next one", async () => {
+    dropLeftovers();
     await bootWith({ setupDone: true, deepgramApiKey: "dg-this-test" });
     // SETTINGS fills the key field from config, without an input event
     (document.getElementById("settingsBtn") as HTMLButtonElement).click();
@@ -2941,34 +2954,35 @@ describe("a timer a finished test left armed", () => {
 
     expect(
       calls.validated.filter((v) => v.key === "dg-this-test").length,
-      "the last test's debounced check went off in this one and validated this test's key",
+      "the first boot's debounced check went off after it and validated the second boot's key",
     ).toBe(1);
   });
-});
 
-/**
- * The listeners the same way: boot() puts keydown on document and online on
- * window, and an earlier instance's stay there. Escape in one test reached
- * every instance before it - and one left inside a reopened setup answered it
- * by switching to the stage, in this test's document.
- */
-describe("a listener a finished test left behind", () => {
-  it("is left inside a reopened setup as this test ends", async () => {
+  /**
+   * The listeners the same way: boot() puts keydown on document and online on
+   * window, and an earlier instance's stayed there. Escape in one test reached
+   * every instance before it - and one left inside a reopened setup answered
+   * it by switching to the stage, in the later test's document.
+   */
+  it("does not let a listener it left answer a key pressed in the next test", async () => {
     await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
     (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle(40);
     (document.getElementById("settingsSetup") as HTMLButtonElement).click();
     await settle(40);
     expect(visible("onboarding")).toBe(true);
-  });
+    expect(
+      bootListeners.some((l) => l.type === "keydown"),
+      "boot added no keydown listener, so nothing below is tested",
+    ).toBe(true);
 
-  it("does not answer a key pressed in the next one", async () => {
+    dropLeftovers();
     // a fresh install: setup cannot be closed, so Escape must do nothing here
     await bootWith({ setupDone: false });
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await settle(40);
 
-    expect(visible("onboarding"), "the last test's instance closed this test's setup").toBe(true);
+    expect(visible("onboarding"), "the first boot's listener closed the second boot's setup").toBe(true);
   });
 });
 

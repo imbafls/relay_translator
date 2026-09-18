@@ -1044,6 +1044,12 @@ fixed**, the last two on 2026-09-15.
   page links to - from whatever listens on 3000, which here is another
   project. Loading is off now and the page sits on the discard port.
 
+- ~~**Two harness guards tested nothing when run alone.**~~ Fixed 2026-09-18,
+  found by an independent review. Each was a pair of tests relying on file
+  order, so run alone or shuffled it passed without testing anything. Each
+  is one test now that arms the leftover, proves it is armed, cleans up the
+  way afterEach does and boots again.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
