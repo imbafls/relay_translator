@@ -55,6 +55,37 @@ let calls: Calls;
  * where they go on firing into a page that has been torn down.
  */
 let timers: ReturnType<typeof setInterval>[] = [];
+/**
+ * The same leak through setTimeout, which a test cannot see from outside:
+ * debounces, the link's 20 s re-hide, the SURE? disarm. The renderer arms them
+ * all through the test, not only while booting, so this wrapper stays on for
+ * the whole file and afterEach cancels whatever a finished test left armed.
+ * vitest's own timers were taken before this file ran and are not in here.
+ */
+const armedTimeouts = new Set<ReturnType<typeof setTimeout>>();
+/**
+ * And the listeners boot() puts on document and window (keydown, online),
+ * which outlive the page they were bound for exactly as the timers do.
+ */
+let bootListeners: {
+  target: EventTarget;
+  type: string;
+  fn: EventListenerOrEventListenerObject | null;
+  opts?: boolean | AddEventListenerOptions;
+}[] = [];
+const realSetTimeout = globalThis.setTimeout;
+(globalThis as unknown as { setTimeout: unknown }).setTimeout = (
+  fn: (...a: unknown[]) => void,
+  ms?: number,
+  ...args: unknown[]
+): ReturnType<typeof setTimeout> => {
+  const id = realSetTimeout(() => {
+    armedTimeouts.delete(id);
+    fn(...args);
+  }, ms);
+  armedTimeouts.add(id);
+  return id;
+};
 /** what cr.appVersion() answers; the what's-new panel keys off it */
 let appVersion = "0.5.4";
 const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -285,12 +316,37 @@ async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Prom
     return id;
   }) as typeof setInterval;
 
+  const targets: EventTarget[] = [document, window];
+  // own or inherited varies by environment - the global window carries its
+  // methods as own properties - so each is put back exactly as it was found
+  const found = targets.map((t) => ({
+    own: Object.prototype.hasOwnProperty.call(t, "addEventListener"),
+    add: t.addEventListener,
+  }));
+  for (const target of targets) {
+    const realAdd = target.addEventListener;
+    (target as unknown as { addEventListener: unknown }).addEventListener = function (
+      this: EventTarget,
+      type: string,
+      fn: EventListenerOrEventListenerObject | null,
+      opts?: boolean | AddEventListenerOptions,
+    ) {
+      bootListeners.push({ target, type, fn, opts });
+      return realAdd.call(this, type, fn, opts);
+    };
+  }
+
   try {
     vi.resetModules();
     await import("../renderer/app");
     await settle();
   } finally {
     (globalThis as unknown as { setInterval: unknown }).setInterval = realSetInterval;
+    targets.forEach((target, i) => {
+      const t = target as unknown as { addEventListener?: unknown };
+      if (found[i].own) t.addEventListener = found[i].add;
+      else delete t.addEventListener;
+    });
   }
 }
 
@@ -320,6 +376,10 @@ afterEach(() => {
   fakeSavedBodies = {};
   for (const t of timers) clearInterval(t);
   timers = [];
+  for (const t of armedTimeouts) clearTimeout(t);
+  armedTimeouts.clear();
+  for (const l of bootListeners) l.target.removeEventListener(l.type, l.fn, l.opts);
+  bootListeners = [];
   vi.restoreAllMocks();
   if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator);
   document.body.innerHTML = "";
@@ -2408,8 +2468,9 @@ describe("a key that could not be checked at boot", () => {
   });
 
   it("does not ask again about a key the provider actually turned down", async () => {
-    // a key no other test uses: every earlier boot's listeners are still on
-    // window, and their checks land in this test's call log
+    // a key no other test uses. Written when every earlier boot's listeners
+    // were still on window and their checks landed in this test's call log;
+    // afterEach now takes them off, and a unique key costs nothing to keep
     rejectedKeys = ["dg-rejected-for-real"];
     await bootWith({ setupDone: true, deepgramApiKey: "dg-rejected-for-real" });
     await waitFor(() => /KEY INVALID/.test(text("metaStt")), "the boot check to reject the key");
@@ -2573,6 +2634,72 @@ describe("settings leads with the question people came to answer", () => {
 
   it("puts reaching viewers above the settings people change once", () => {
     expect(groups.slice(0, 2)).toEqual(["reach", "viewers"]);
+  });
+});
+
+/**
+ * Every bootWith re-imports app.ts, and the instance before it lives on: its
+ * timers still fire, and `$()` finds the NEW document. So a timer one test
+ * left armed repainted whatever test was running when it went off, with the
+ * old instance's config. The one that bit: "shows it when the user asks"
+ * reveals the viewer link, whose re-hide fires 20 s later and repaints the
+ * footer - blanking the brand field of the test that happened to be reading
+ * it. It failed that test once in a full run and never again in seven.
+ *
+ * Two tests, in file order, on purpose: the first ends with a debounced key
+ * check armed, and the second is where it used to land. The stale check
+ * reads the key field of the document it finds - this test's - so the second
+ * test fills that field and counts how often its key is validated: once by
+ * its own boot, and a second time only if the last test's timer went off.
+ */
+describe("a timer a finished test left armed", () => {
+  it("is armed as this test ends", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    const field = document.getElementById("deepgramApiKey") as HTMLInputElement;
+    field.value = "dg-typed-as-the-test-ended";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    // ends well inside the 500 ms debounce
+    expect(calls.validated.map((v) => v.key)).not.toContain("dg-typed-as-the-test-ended");
+  });
+
+  it("does not go off in the next one", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-this-test" });
+    // SETTINGS fills the key field from config, without an input event
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(700);
+
+    expect(
+      calls.validated.filter((v) => v.key === "dg-this-test").length,
+      "the last test's debounced check went off in this one and validated this test's key",
+    ).toBe(1);
+  });
+});
+
+/**
+ * The listeners the same way: boot() puts keydown on document and online on
+ * window, and an earlier instance's stay there. Escape in one test reached
+ * every instance before it - and one left inside a reopened setup answered it
+ * by switching to the stage, in this test's document.
+ */
+describe("a listener a finished test left behind", () => {
+  it("is left inside a reopened setup as this test ends", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+    expect(visible("onboarding")).toBe(true);
+  });
+
+  it("does not answer a key pressed in the next one", async () => {
+    // a fresh install: setup cannot be closed, so Escape must do nothing here
+    await bootWith({ setupDone: false });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle(40);
+
+    expect(visible("onboarding"), "the last test's instance closed this test's setup").toBe(true);
   });
 });
 

@@ -4423,3 +4423,29 @@ array, which stops `board.html` rendering the card, and overwrote the
 discovery-pass line it held. Repaired from each card's own detail, and the
 board helper now refuses a card whose `evidence`, `subItems` or `tags`
 is not an array - it refused the broken board first.
+
+**55 - The flake, found.** Reproduced before touching anything, which the
+last iteration could not do because it had not kept the failure text. Load
+alone did not do it: four runs of the renderer file under fourteen busy
+threads, all green. What does: every `bootWith` re-imports `app.ts`, and
+the instance before it lives on with its timers and its document and window
+listeners, and `$()` in the old instance finds the NEW document. "shows it
+when the user asks" reveals the viewer link, whose re-hide goes off 20 s
+later and repaints the footer - including the brand field, from the old
+instance's config, which has no brand. A probe showed it outright: boot,
+reveal, boot again with a brand, wait 20.5 s, and `"Omer's stream"` has
+become `""`. The brand test reads the field in the thirty-odd milliseconds
+after its boot, so it failed only when that re-hide landed there - once.
+Intervals were already cancelled between tests for this reason; timeouts
+never were. A `setTimeout` wrapper for the file now records them and
+`afterEach` cancels what a finished test left armed, and `bootWith`
+records the listeners boot adds and `afterEach` removes them. The same probe
+split across two tests reads `"Omer's stream"` with the fix and `""` with
+the cleanup removed. The first guard went green on its first run - the stale
+debounce did fire, but it read the key field of the new document, which was
+empty, and validated nothing - so it now fills that field and counts. The
+listener half was proved harmful before it was fixed: a test left inside a
+reopened setup, and the next test's Escape closed that test's setup.
+Removing the listener patch's own-property copy by `delete` broke 30-odd
+tests at once, because the global window carries `addEventListener` as its
+own property; it is put back exactly as found. Three mutations, each red.

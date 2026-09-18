@@ -989,6 +989,13 @@ fixed**, the last two on 2026-09-15.
   repainted setup's chain strip over the live console - greyed blocks, no
   translate toggle. The step change now draws only while setup is showing.
 
+- ~~**A renderer test failed once in a full run.**~~ Fixed 2026-09-18. Not the
+  app: each renderer test re-imports the page and the previous instance kept
+  its timers and its document/window listeners, all writing into the next
+  test's document. A revealed link's 20 s re-hide blanked a later test's
+  brand field; an Escape closed a later test's setup. The harness now
+  cancels a finished test's timeouts and takes its listeners off.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
