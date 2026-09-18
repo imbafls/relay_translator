@@ -108,6 +108,10 @@ function bridge(config: AppConfig) {
         await slow.gate;
         return slow.answer;
       }
+      if (unreachableOnce.includes(key)) {
+        unreachableOnce = unreachableOnce.filter((k) => k !== key);
+        return { valid: false, detail: unreachableDetail };
+      }
       if (rejectedKeys.includes(key)) return { valid: false, detail: "key rejected" };
       return { valid: true };
     },
@@ -202,6 +206,10 @@ let releaseReadRelayLogGate: (() => void) | null = null;
 let appVersionFails = false;
 /** keys cr.validateKey() turns down as rejected; every other key is valid */
 let rejectedKeys: string[] = [];
+/** keys whose FIRST check cannot reach the provider - offline at boot - and pass after */
+let unreachableOnce: string[] = [];
+/** how that first check fails: main answers "no connection" or, after 8 s, "timed out" */
+let unreachableDetail = "no connection";
 /**
  * When set, the next cr.validateKey() call waits for `gate` and then answers
  * `answer`: one slow check, so that a later check can overtake it.
@@ -298,6 +306,8 @@ afterEach(() => {
   releaseReadRelayLogGate = null;
   appVersionFails = false;
   rejectedKeys = [];
+  unreachableOnce = [];
+  unreachableDetail = "no connection";
   slowNextCheck = null;
   fakeSaved = [];
   fakeSavedBodies = {};
@@ -2115,6 +2125,90 @@ describe("typing a key in SETTINGS without saving it", () => {
     await settle(40);
     await typeInto("deepgramApiKey", "dg-typed-bad");
     await waitFor(() => /INVALID/.test(text("dgStatus")), "the typed key's verdict beside the field");
+  });
+});
+
+/**
+ * "Could not check" is not a verdict on the key. The silent boot checks run
+ * whenever the app starts, and a PC that starts before its network is up gets
+ * `no connection` for both saved keys. That was cached like any answer, and
+ * RUN SETUP AGAIN reuses cached answers - so, back online, step 1 said COULD
+ * NOT REACH DEEPGRAM with CONTINUE dead, step 2 the same for Gemini with SKIP
+ * the only way on, and SKIP turns translation off. The chain said KEY ? for
+ * the rest of the run, because nothing re-checks a key that has not changed.
+ */
+describe("a key that could not be checked at boot", () => {
+  const text = (id: string): string => (document.getElementById(id) as HTMLElement).textContent || "";
+  const checksOf = (key: string): number => calls.validated.filter((v) => v.key === key).length;
+
+  const offlineBoot = async (): Promise<void> => {
+    unreachableOnce = ["dg-saved", "gm-saved"];
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved", geminiApiKey: "gm-saved", translationEnabled: true });
+    await waitFor(() => /KEY ?/.test(text("metaStt")) && /KEY ?/.test(text("gmKeyState")), "both boot checks to fail to connect");
+  };
+
+  it("is asked again when setup reopens, so step 1 can continue", async () => {
+    await offlineBoot();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+
+    await waitFor(() => checksOf("dg-saved") === 2, "the saved Deepgram key to be checked again");
+    await waitFor(() => /VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
+    expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
+  });
+
+  it("treats a check that timed out the same way", async () => {
+    unreachableDetail = "timed out";
+    await offlineBoot();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+
+    await waitFor(() => checksOf("dg-saved") === 2, "the timed-out key to be checked again");
+    await waitFor(() => /VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
+  });
+
+  it("is asked again for Gemini too, so step 2 is not left with only SKIP", async () => {
+    await offlineBoot();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+
+    await waitFor(() => checksOf("gm-saved") === 2, "the saved Gemini key to be checked again");
+    await waitFor(() => /VALID/.test(text("obGmStatus")), "step 2 to show the key's real verdict");
+    expect((document.getElementById("obContinue2") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
+  });
+
+  it("shows CHECKING while it is asked again, not the stale COULD NOT REACH", async () => {
+    await offlineBoot();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(20);
+
+    expect(text("obDgStatus"), "setup opened on the boot-time failure").not.toMatch(/COULD NOT REACH/);
+    expect(text("obGmStatus"), "setup opened on the boot-time failure").not.toMatch(/COULD NOT REACH/);
+  });
+
+  it("is asked again when the network comes back, so the chain stops saying KEY ?", async () => {
+    await offlineBoot();
+    window.dispatchEvent(new Event("online"));
+
+    await waitFor(() => /KEY OK/.test(text("metaStt")), "the Deepgram readout to recover");
+    await waitFor(() => /KEY OK/.test(text("gmKeyState")), "the Gemini readout to recover");
+  });
+
+  it("does not ask again about a key the provider actually turned down", async () => {
+    // a key no other test uses: every earlier boot's listeners are still on
+    // window, and their checks land in this test's call log
+    rejectedKeys = ["dg-rejected-for-real"];
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-rejected-for-real" });
+    await waitFor(() => /KEY INVALID/.test(text("metaStt")), "the boot check to reject the key");
+    window.dispatchEvent(new Event("online"));
+    await settle(100);
+
+    expect(checksOf("dg-rejected-for-real"), "a real rejection was sent to the provider again").toBe(1);
   });
 });
 

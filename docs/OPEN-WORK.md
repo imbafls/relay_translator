@@ -969,6 +969,13 @@ fixed**, the last two on 2026-09-15.
   slot as OK. Verdicts are now kept per string, and the saved key's is never
   the one let go.
 
+- ~~**A key check that failed only because the PC was offline at boot was
+  final.**~~ Fixed 2026-09-18, found by the 1.0 discovery pass. RUN SETUP
+  AGAIN reused the boot-time "no connection", so CONTINUE stayed dead and
+  SKIP - translation off - was the way through step 2, and the chain said
+  KEY ? all run. Setup now asks again about a key that could not be checked,
+  and so does the network coming back.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

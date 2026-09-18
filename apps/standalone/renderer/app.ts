@@ -135,6 +135,16 @@ function verdictFor(
   return key ? keyCheck[provider].get(key)?.result : undefined;
 }
 
+/**
+ * An answer that says nothing about the key, because the provider was never
+ * reached. It is shown (KEY ?, COULD NOT CHECK) but never trusted as final:
+ * the boot checks run whenever the app starts, and a PC that starts before
+ * its network is up would otherwise carry the failure for the whole run.
+ */
+function couldNotCheck(v: KeyValidation | "checking" | undefined): boolean {
+  return !!v && v !== "checking" && !v.valid && (v.detail === "no connection" || v.detail === "timed out");
+}
+
 function rememberVerdict(provider: "deepgram" | "gemini", key: string, verdict: Verdict): void {
   const kept = keyCheck[provider];
   // re-inserting moves the key to the newest end, which is what eviction reads
@@ -1157,7 +1167,7 @@ function keyStateLabel(provider: "deepgram" | "gemini"): { text: string; cls: st
   const chk = verdictFor(provider, saved);
   if (!present) return { text: "KEY NEEDED", cls: "warn" };
   if (chk === "checking") return { text: "CHECKING…", cls: "" };
-  if (chk && !chk.valid) return { text: chk.detail === "no connection" || chk.detail === "timed out" ? "KEY ?" : "KEY INVALID", cls: "warn" };
+  if (chk && !chk.valid) return { text: couldNotCheck(chk) ? "KEY ?" : "KEY INVALID", cls: "warn" };
   return { text: "KEY OK", cls: "" };
 }
 
@@ -2007,7 +2017,7 @@ function fieldStatus(id: string, key: string, chk: KeyValidation | "checking" | 
     el.textContent = "CHECKING…";
     el.classList.add("dim");
   } else if (chk && !chk.valid) {
-    el.textContent = chk.detail === "no connection" || chk.detail === "timed out" ? "COULD NOT CHECK" : "INVALID";
+    el.textContent = couldNotCheck(chk) ? "COULD NOT CHECK" : "INVALID";
     el.classList.add("warn");
   } else if (chk && chk.valid) {
     el.textContent = chk.creditUsd != null ? `VALID · $${chk.creditUsd.toFixed(2)} CREDIT` : "VALID";
@@ -2154,8 +2164,13 @@ function openSetup(): void {
   obTierPicked = false;
   inp("obDeepgramKey").value = config.deepgramApiKey || "";
   inp("obGeminiKey").value = config.geminiApiKey || "";
-  obDeepgram = verdictFor("deepgram", config.deepgramApiKey) === "checking" ? undefined : verdictFor("deepgram", config.deepgramApiKey);
-  obGemini = verdictFor("gemini", config.geminiApiKey) === "checking" ? undefined : verdictFor("gemini", config.geminiApiKey);
+  // a check still in flight, or one that never reached the provider, is no
+  // verdict: setup asks again instead of opening on a boot-time network blip,
+  // which left CONTINUE dead and SKIP - translation off - the only way on
+  const dgKept = verdictFor("deepgram", config.deepgramApiKey);
+  const gmKept = verdictFor("gemini", config.geminiApiKey);
+  obDeepgram = dgKept === "checking" || couldNotCheck(dgKept) ? undefined : dgKept;
+  obGemini = gmKept === "checking" || couldNotCheck(gmKept) ? undefined : gmKept;
   if (config.deepgramApiKey && !obDeepgram) obCheckDeepgram();
   // the same repair for Gemini: without it a saved key that has never been
   // checked this run leaves step 2 showing EMPTY with CONTINUE dead, and the
@@ -2414,7 +2429,7 @@ function renderObKeyStatus(): void {
     dg.textContent = "CHECKING…";
     dg.classList.add("dim");
   } else if (obDeepgram && !obDeepgram.valid) {
-    dg.textContent = obDeepgram.detail === "no connection" || obDeepgram.detail === "timed out" ? "COULD NOT REACH DEEPGRAM" : "KEY REJECTED";
+    dg.textContent = couldNotCheck(obDeepgram) ? "COULD NOT REACH DEEPGRAM" : "KEY REJECTED";
     dg.classList.add("warn");
   } else if (obDeepgram && obDeepgram.valid) {
     dg.textContent = obDeepgram.creditUsd != null ? `VALID · $${obDeepgram.creditUsd.toFixed(2)} CREDIT` : "VALID";
@@ -2455,7 +2470,7 @@ function renderObKeyStatus(): void {
     gm.textContent = "CHECKING…";
     gm.classList.add("dim");
   } else if (obGemini && !obGemini.valid) {
-    gm.textContent = obGemini.detail === "no connection" || obGemini.detail === "timed out" ? "COULD NOT REACH GEMINI" : "KEY REJECTED";
+    gm.textContent = couldNotCheck(obGemini) ? "COULD NOT REACH GEMINI" : "KEY REJECTED";
     gm.classList.add("warn");
   } else if (obGemini && obGemini.valid) {
     gm.textContent = "VALID";
@@ -2966,6 +2981,16 @@ function bind(): void {
   });
 
   cr.onUpdate((u) => setUpdate(u));
+
+  // nothing else re-checks a key that has not changed, so a saved key the
+  // provider could not be reached about is asked about again once the
+  // network is back - otherwise the chain says KEY ? for the rest of the run
+  window.addEventListener("online", () => {
+    for (const provider of ["deepgram", "gemini"] as const) {
+      const saved = provider === "deepgram" ? config.deepgramApiKey : config.geminiApiKey;
+      if (saved && couldNotCheck(verdictFor(provider, saved))) void checkKey(provider, saved);
+    }
+  });
 
   document.addEventListener("keydown", (e) => {
     // the shortcut every desktop app has for this pane; the footer button is

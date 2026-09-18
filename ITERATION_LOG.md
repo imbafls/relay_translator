@@ -4357,3 +4357,21 @@ saved key that is rejected and a typed one that is good, so the original bug
 reads VALID. Five mutations, each turning its test red: the verdict ignoring
 the string, CLEAR clearing, eviction not sparing the saved key, one slot
 again, and a slow answer overwriting a newer check of the same string.
+
+**52 - Offline at boot, stuck all run.** The silent boot checks run whenever
+the app starts, and a PC that starts before its network is up gets "no
+connection" for both saved keys. That was cached like a real answer. RUN
+SETUP AGAIN re-checks a saved key only when it has no verdict, so, back
+online, step 1 said COULD NOT REACH DEEPGRAM with CONTINUE dead and step 2
+the same with SKIP - which turns translation off - the only button left: the
+exact outcome the re-check's own comment says it exists to prevent. The
+chain said KEY ? for the rest of the run, since nothing re-checks a key that
+has not changed. A could-not-check answer ("no connection" or "timed out",
+now one helper instead of four inline copies) is shown but never final:
+setup opens on CHECKING and asks again, and the `online` event re-asks about
+any saved key left in that state - and only those, which a test holds. Each
+boot in the renderer harness re-imports the page, so every earlier boot's
+`online` listener is still on `window` and its checks land in the current
+test's call log; the test that counts checks uses a key no other test does.
+Four mutations, each red: setup trusting the answer, no `online` re-check,
+an `online` re-check of every key, and "timed out" dropped from the helper.
