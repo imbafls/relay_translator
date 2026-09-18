@@ -913,7 +913,7 @@ describe("reaching the OBS overlay link", () => {
 
   it("markup does not ship the switcher hidden", () => {
     const src = fs.readFileSync(path.join(rendererDir, "index.html"), "utf8");
-    expect(src).toMatch(/id="linkSeg"(?![^>]*hidden)/);
+    expect(src).toMatch(/id="linkSeg"(?![^>]*\bhidden\b)/);
   });
 });
 

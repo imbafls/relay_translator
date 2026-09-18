@@ -4057,3 +4057,19 @@ removed in turn - no count, and a raw socket count - turned a test red.
 `verify-deploy.cjs` only ever connected the uplink before the viewer, the
 order that hides this, so it now reconnects one with a reader attached; that
 check runs against the real runtime at the 1.0 deploy.
+
+**31 - A test that could not fail.** Editing the footer tests turned up
+their neighbour: "markup does not ship the switcher hidden" matched
+`[^>]*<BS>hidden<BS>` - a shell had turned the regex's two `\b` into
+backspace bytes in `901956f`, so the lookahead never matched and the test
+passed with `hidden` in the markup. Checked by putting it there: green. The
+regex is restored with a script rather than a shell, and now goes red on that
+markup. The broader fix is a byte check: `lineEndings.test.ts` fails on any
+control byte but tab, LF and CR in a tracked text file, and asserts it opened
+more than fifty. That assertion earned its place before it was committed -
+the first draft took each path from `git ls-files --eol` by whitespace
+column, the attribute column is two words, and it opened nothing and
+reported a clean tree. The existing CRLF check had parsed rows the same way
+for months; it only garbled its failure messages, and its fixture rows were
+written without the TAB git prints, so its own test could not notice. Both
+use the TAB now, and reverting to the column split turns both red.

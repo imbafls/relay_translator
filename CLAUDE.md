@@ -210,7 +210,11 @@ else if `updateFeedUrl` is set.
   `git ls-files --eol` — anything not stored `i/lf` (or `-text`/`none`) fails
   the suite. `git ls-files --eol .github/workflows/` currently reads
   `i/lf w/crlf`, which is the correct state. A stray CR reaching the VPS is how
-  a `.env` line once stopped parsing; that is why this is enforced.
+  a `.env` line once stopped parsing; that is why this is enforced. The same
+  file fails on any control byte but tab, LF and CR in a tracked text file:
+  that is a backslash a shell or heredoc ate, and it once left a guard test
+  that could not fail. Write anything containing `\` with the Write or Edit
+  tool, never through `node -e` or a heredoc.
 - **Tests live outside each package's `rootDir`,** so `pnpm -r typecheck` does
   not see them. They need `pnpm typecheck:test` or they rot untyped. CI runs
   both.

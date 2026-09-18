@@ -785,6 +785,17 @@ fixed**, the last two on 2026-09-15.
   right after `ready`, as the self-hosted relay always has, and
   `verify-deploy.cjs` checks it against the real runtime.
 
+- ~~**A guard test that could not fail.**~~ Fixed 2026-09-18, found while
+  editing its neighbour. `renderer.test.ts` asserted the footer's PHONE/OBS
+  switcher does not ship hidden, with `\bhidden\b` in its regex - but a shell
+  had turned both `\b` into backspace bytes in `901956f`, so the lookahead
+  could never match and the test passed with `hidden` in the markup (checked).
+  The regex is restored and goes red on that markup, and
+  `packages/shared/test/lineEndings.test.ts` now fails on any control byte in
+  a tracked text file. Its row parser was taking the path from the wrong
+  column, which the new check's first draft inherited and so opened no files
+  at all; both use the TAB git puts before the path now.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
