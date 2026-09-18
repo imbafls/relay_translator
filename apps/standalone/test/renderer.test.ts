@@ -223,6 +223,8 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 
 /** what enumerateDevices() answers; the built-in two are added by the app */
 let fakeDevices: { kind: string; deviceId: string; label: string; groupId: string }[] = [];
+/** when set, navigator.mediaDevices.enumerateDevices() waits for it */
+let enumerateGate: Promise<void> | null = null;
 /** make the main process refuse the save, the way a relay that cannot bind does */
 let setConfigFails = false;
 /** what that refusal says */
@@ -302,7 +304,14 @@ async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Prom
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     writable: true,
-    value: { mediaDevices: { enumerateDevices: async () => devices } },
+    value: {
+      mediaDevices: {
+        enumerateDevices: async () => {
+          if (enumerateGate) await enumerateGate;
+          return devices;
+        },
+      },
+    },
   });
   // happy-dom has no document.fonts; the renderer waits on it while laying out
   // and an exception there stops boot() before it chooses a view
@@ -366,6 +375,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fakeDevices = [];
+  enumerateGate = null;
   setConfigFails = false;
   setConfigMessage = "EADDRINUSE: port 3000 is already in use";
   setConfigGate = null;
@@ -2292,6 +2302,24 @@ describe("a setup step whose save fails", () => {
     expect(visible("obSaveError")).toBe(true);
   });
 
+  it("does not carry step 3's failure back to step 2 with ADD GEMINI KEY", async () => {
+    // one error line serves every step; going back a step must not bring the
+    // last step's failure along to sit under the wrong buttons
+    await toStep2();
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep3"), "step 3");
+    setConfigFails = true;
+    (document.getElementById("obOpenConsole") as HTMLButtonElement).click();
+    await settle(60);
+    expect(visible("obSaveError"), "step 3's failure was not shown to begin with").toBe(true);
+    setConfigFails = false;
+
+    (document.getElementById("addKey") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep2"), "ADD GEMINI KEY to go back to step 2");
+
+    expect(visible("obSaveError"), "step 3's failure came back to step 2").toBe(false);
+  });
+
   it("gives the reason without Electron's wrapping", async () => {
     await bootWith({ setupDone: false });
     await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
@@ -2451,6 +2479,72 @@ describe("leaving setup while a step is still saving", () => {
     release();
 
     await waitFor(() => visible("obStep2"), "step 2 once the save lands");
+  });
+
+  /**
+   * Leaving is one way out of the gap; coming back is the other. A relay
+   * restart can wait on a dead viewer socket for a while, and the tray's Run
+   * setup again works even from inside setup - so a new run of setup can be
+   * on screen when the old run's save lands. It moved the new run on to step
+   * 2 without a click, or opened it on the old run's COULD NOT SAVE.
+   */
+  const reopenAgain = async (): Promise<void> => {
+    await escape();
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+  };
+
+  it("does not move a reopened setup on when the old run's save lands", async () => {
+    await reopenSetup();
+    const release = held();
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(20);
+    await reopenAgain();
+    expect(visible("obStep1"), "the new run did not open on step 1").toBe(true);
+    release();
+    await settle(60);
+
+    expect(visible("obStep2"), "the old run's save moved the new run on").toBe(false);
+    expect(visible("obStep1")).toBe(true);
+  });
+
+  it("does not open a reopened setup on the old run's failure", async () => {
+    await reopenSetup();
+    // a different key, so the failed save has not landed
+    const field = document.getElementById("obDeepgramKey") as HTMLInputElement;
+    field.value = "dg-changed";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => !(document.getElementById("obContinue1") as HTMLButtonElement).disabled, "the changed key to check");
+    const release = held();
+    setConfigFails = true;
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(20);
+    await reopenAgain();
+    release();
+    await settle(60);
+
+    expect(visible("obSaveError"), "the old run's failure showed in the new run").toBe(false);
+  });
+
+  it("does not move a reopened setup to step 3 when the old run's device read comes back", async () => {
+    // the save has landed, and step 3 is reading the audio devices when setup
+    // is opened again
+    await reopenSetup();
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep2"), "step 2");
+    let release!: () => void;
+    enumerateGate = new Promise<void>((r) => (release = r));
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await settle(40);
+    await reopenAgain();
+    enumerateGate = null;
+    release();
+    await settle(60);
+
+    expect(visible("obStep3"), "the old run's step change moved the new run to step 3").toBe(false);
+    expect(visible("obStep1")).toBe(true);
   });
 });
 

@@ -2110,6 +2110,13 @@ async function saveSettings(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 let obStep: 1 | 2 | 3 = 1;
+/**
+ * Which opening of setup is on screen; openSetup counts it up. A step's save
+ * is a round trip that can outlast the run it was made in - a relay restart
+ * can wait on a dead viewer socket, and the tray's Run setup again works from
+ * inside setup - and what it came back with belongs to that run, not this one.
+ */
+let obRun = 0;
 let obDeepgram: KeyValidation | "checking" | undefined;
 let obGemini: KeyValidation | "checking" | undefined;
 /** step 1 choice: cloud (Deepgram key) or local (model on this PC) */
@@ -2189,13 +2196,15 @@ function obSttChoice(): string {
  * against what main actually stored.
  */
 async function obSave(patch: Partial<AppConfig>): Promise<boolean> {
-  const box = $("obSaveError");
-  let ok = await saveAndApply(patch, {
-    onFail: (reason) => {
-      box.textContent = `COULD NOT SAVE · ${reason}`;
-    },
-  });
+  const run = obRun;
+  let reason = "";
+  let ok = await saveAndApply(patch, { onFail: (r) => (reason = r) });
   if (!ok) ok = await storedAsSaved(patch);
+  // setup was closed and opened again while this was out: the step it was
+  // for is gone, and neither moving on nor the failure is this run's to show
+  if (run !== obRun) return false;
+  const box = $("obSaveError");
+  box.textContent = ok ? "" : `COULD NOT SAVE · ${reason}`;
   box.hidden = ok;
   return ok;
 }
@@ -2219,6 +2228,7 @@ async function storedAsSaved(patch: Partial<AppConfig>): Promise<boolean> {
 
 /** (re)open setup at step 1 with the current values filled in */
 function openSetup(): void {
+  obRun++;
   obStep = 1;
   // a failure belongs to the run of setup it happened in
   $("obSaveError").hidden = true;
@@ -2601,8 +2611,14 @@ const obCheckGemini = debounce(async () => {
 }, 500);
 
 async function obGoto(step: 1 | 2 | 3): Promise<void> {
-  obStep = step;
+  const run = obRun;
   if (step === 3) await refreshDevices();
+  // a run of setup opened while the devices were being read starts at step 1
+  if (run !== obRun) return;
+  obStep = step;
+  // one error line serves every step; a failure belongs to the step it
+  // happened on, and ADD GEMINI KEY going back from 3 to 2 carried it along
+  $("obSaveError").hidden = true;
   // Callers get here after a save round trip, and a reopened setup can be left
   // with Escape or CLOSE SETUP while it is out. renderOnboarding has no view
   // guard - it draws setup's chain over the live console, the same repaint

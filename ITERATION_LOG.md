@@ -4577,3 +4577,18 @@ new one until the bullets were struck, and three mutations - the exemption
 put back, any Blocked heading allowed, loose Blocked bullets allowed - each
 turn a fixture red. The "six today" comment was wrong too (seven: the
 preamble and six headings) and says so now.
+
+**63 - A result belongs to the run and the step it was made in.** Two review
+cards, taken together because they are one fault in the same two functions.
+A step's save is a round trip that can outlast the run of setup it was made
+in - a relay restart can wait on a dead viewer socket, and the tray's Run
+setup again works from inside setup - and when it came back it moved the new
+run on to step 2 without a click, or opened it on the old run's COULD NOT
+SAVE. And one error line serves all three steps, so ADD GEMINI KEY going back
+from step 3 carried step 3's failure to sit under step 2's buttons.
+`openSetup` now counts runs; `obSave` drops what comes back to a run that is
+gone, and `obGoto` does too - it awaits the device list on the way to step 3
+- and clears the error when it changes step. Three tests red first. Of four
+mutations, `obGoto` ignoring the run survived: nothing held the device read.
+A knob now holds `enumerateDevices`, and a fourth test reopens setup while
+step 3 is reading devices; it goes red without that check.

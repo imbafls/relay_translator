@@ -1031,6 +1031,13 @@ fixed**, the last two on 2026-09-15.
   The Closed-by records are struck through now like every other closed item,
   and everything under Blocked must sit under a `### B<n>`.
 
+- ~~**A setup step's result could land in the wrong place.**~~ Fixed
+  2026-09-18, found by an independent review. A save that came back after
+  setup was opened again moved the new run on to the next step, or opened
+  it on the old run's COULD NOT SAVE; and ADD GEMINI KEY carried step 3's
+  failure back to step 2. What a save or a step change comes back with now
+  belongs to the run and the step it was made in.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
