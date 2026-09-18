@@ -3744,3 +3744,18 @@ with the error. The reviewers also corrected a claim in my own comments - the
 embedded relay never sends a publisher 4401; a bad token is refused at the
 handshake and retried - so the comments now say 4409 alone. The root race,
 STOP during a slow prepare being undone, is the next P1 card, not this one.
+
+**14 - STOP while the session is still preparing.** The second P1, and the
+root the previous iteration's reviewers traced. `startSession()` awaits
+`prepareSession()` - with a hosted room, a network POST to rotate the link,
+with no timeout - under a button that already reads STOP, and nothing checked
+the session after the wait. Three tests went red with a gated preparation: a
+STOP undone (`live`, where the streamer had stopped), START/STOP/START
+building two publishers, and - the adjacent shape, found by asking what the
+catch block does with the same missing check - a failure from an abandoned
+preparation dragging a stopped session into ERROR. A start token fixes all
+three. Each line of the fix was removed in turn and each removal turned a test
+red. The pre-commit review found the tests one-sided: nothing held that the
+CURRENT start's failure still reaches ERROR, so a catch that swallowed every
+failure passed all 286 app tests. A fourth test now holds that side, and was
+watched red against exactly that over-broad catch.

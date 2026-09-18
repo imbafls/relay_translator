@@ -615,6 +615,15 @@ fixed**, the last two on 2026-09-15.
   found that an orphan from a START/STOP/START inside one slow prepare would
   otherwise end the good session that replaced it.
 
+- ~~**A STOP pressed while a session was still preparing was undone.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. `startSession()` awaits
+  `prepareSession()` - with a hosted room, a network call to rotate the link -
+  under a button reading STOP, and a stop in that window had nothing to tear
+  down, so the start carried on and went ON AIR. A start now takes a token
+  that every stop and every newer start moves on, and checks it after the
+  wait, on success and on failure. The same gap let START, STOP and START
+  build two publishers; the first is no longer built.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

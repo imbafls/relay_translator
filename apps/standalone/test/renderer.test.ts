@@ -3189,3 +3189,132 @@ describe("a publisher that will not reconnect by itself", () => {
     expect(stops).toBe(0);
   });
 });
+
+/**
+ * A STOP pressed while the session is still preparing.
+ *
+ * `startSession()` sets `starting` and awaits `cr.prepareSession()` - which in
+ * the default link mode, with a hosted room, waits on a network POST to rotate
+ * the viewer link, with no timeout. The button reads STOP the whole time, and
+ * the tray's stop and both setup entries call `stopSession()` too. A stop in
+ * that window had nothing to tear down: no publisher yet, no capture yet. So
+ * it set STANDBY, and when the preparation came back the start simply carried
+ * on - built a publisher, opened the mic and went ON AIR under a streamer who
+ * had pressed STOP. The capture-generation guard from audit finding 15 covers
+ * the window inside `capture.start()`, not this earlier one.
+ *
+ * The same missing check let a START, STOP and START inside one preparation
+ * build two publishers, the first never disconnected; `8ba952d` stopped that
+ * orphan ending the good session, and this stops it being built at all.
+ */
+describe("a STOP pressed while the session is still preparing", () => {
+  let connects = 0;
+  let starts = 0;
+  let gates: Array<{ release: () => void; fail: (e: Error) => void }> = [];
+
+  const boot = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    connects = 0;
+    starts = 0;
+    gates = [];
+    companion.RelayPublisherClient.prototype.connect = function (this: {
+      state: string;
+      hooks: { onState?: (s: string) => void };
+    }) {
+      connects += 1;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => {
+      starts += 1;
+      return true;
+    };
+    companion.BrowserAudioCapture.prototype.stop = () => undefined;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", {
+      configurable: true,
+      get: () => starts > 0,
+    });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", {
+      configurable: true,
+      get: () => 1,
+    });
+    // every preparation waits on a gate the test opens, the way a slow rotate does
+    const cr = (window as unknown as { cr: { prepareSession: (...a: unknown[]) => Promise<unknown> } }).cr;
+    const real = cr.prepareSession;
+    cr.prepareSession = (...args: unknown[]) =>
+      new Promise((resolve, reject) => {
+        gates.push({ release: () => resolve(real(...args)), fail: reject });
+      });
+  };
+
+  const button = (): HTMLButtonElement => document.getElementById("startStop") as HTMLButtonElement;
+  const sessionState = (): string | undefined => document.getElementById("app")?.dataset.session;
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 30));
+
+  it("stays stopped when the preparation finishes", async () => {
+    await boot();
+    button().click();
+    await settle();
+    expect(sessionState()).toBe("starting");
+    button().click();
+    await settle();
+    expect(sessionState()).toBe("idle");
+
+    gates[0]!.release();
+    await settle();
+
+    expect(sessionState(), "the start carried on after STOP and went live under a streamer who stopped it").toBe("idle");
+    expect(connects, "a publisher was built for a session that had been stopped").toBe(0);
+    expect(starts, "the mic was opened for a session that had been stopped").toBe(0);
+  });
+
+  it("builds one publisher when START, STOP and START land inside one preparation", async () => {
+    await boot();
+    button().click();
+    await settle();
+    button().click();
+    await settle();
+    button().click();
+    await settle();
+    expect(gates, "the second START never reached its own preparation").toHaveLength(2);
+
+    gates[0]!.release();
+    await settle();
+    gates[1]!.release();
+    await settle();
+
+    expect(sessionState()).toBe("live");
+    expect(connects, "the stopped start built a publisher too, which is left connected and unowned").toBe(1);
+  });
+
+  it("does not turn a stopped session into an error when the abandoned preparation fails", async () => {
+    await boot();
+    button().click();
+    await settle();
+    button().click();
+    await settle();
+
+    gates[0]!.fail(new Error("rotate failed: network timeout"));
+    await settle();
+
+    expect(sessionState(), "a preparation the user had already stopped dragged the session into ERROR").toBe("idle");
+  });
+
+  // the other side of the same guard: swallowing a stopped start's failure must
+  // not swallow the live one's, or every start failure leaves STARTING on screen
+  it("still reports the failure of the start that is still going", async () => {
+    await boot();
+    button().click();
+    await settle();
+
+    gates[0]!.fail(new Error("rotate failed: network timeout"));
+    await settle();
+
+    expect(sessionState(), "a start that failed on its own was left sitting in STARTING").toBe("error");
+    expect((document.getElementById("idleError") as HTMLElement).textContent).toContain("network timeout");
+  });
+});

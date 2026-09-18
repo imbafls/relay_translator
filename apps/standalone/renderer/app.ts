@@ -754,8 +754,16 @@ function setState(next: SessionState, error?: string, title?: string): void {
   tickClock();
 }
 
+/**
+ * Bumped by every start and every stop. A start that finds it has moved on
+ * while it was waiting was stopped, or replaced by a newer start, and has
+ * nothing left to do - least of all build a publisher and open the mic.
+ */
+let startGeneration = 0;
+
 async function startSession(opts: { rotateLink: boolean }): Promise<void> {
   if (session === "live" || session === "starting") return;
+  const mine = ++startGeneration;
   setState("starting");
   try {
     if (relayClient) {
@@ -767,6 +775,12 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       relayClient = null;
     }
     const prep = await cr.prepareSession({ rotate: opts.rotateLink });
+    // The preparation can take seconds - with a hosted room it waits on a
+    // network call to rotate the link - and the button reads STOP throughout.
+    // A stop in that window has nothing to tear down yet, so this is the only
+    // place that can honour it. The capture-generation guard below covers the
+    // later window inside capture.start(), not this one.
+    if (mine !== startGeneration) return;
     config = prep.config;
     if (sttIsLocal()) {
       if (!modelReady(config.stt)) throw new Error(`Download ${sttFull(config.stt)} first (02 TRANSCRIBE → DOWNLOAD).`);
@@ -847,6 +861,9 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     log(`capture started: ${sources.map(sourceLabel).join(" + ")}${channels > 1 ? ` (${channels} channels)` : ""}`, "ok");
     recomputeState();
   } catch (err) {
+    // a failure belonging to a start that was already stopped or replaced is
+    // not this session's to report
+    if (mine !== startGeneration) return;
     const message = captureErrorText(err);
     log(`start failed: ${message}`, "err");
     stopSession(true);
@@ -856,6 +873,7 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
 
 function stopSession(silent = false): void {
   if (session === "idle") return;
+  startGeneration += 1;
   capture.stop();
   relayClient?.disconnect();
   relayClient = null;
