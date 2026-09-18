@@ -2288,3 +2288,51 @@ describe("the display settings, to a screen reader", () => {
     expect(nameOf($("setSize"))).toBe("Size");
   });
 });
+
+/**
+ * Where keyboard focus is, in DISPLAY.
+ *
+ * The pickers (font, alignment, lines kept, hide after) and the colour
+ * swatches are real controls laid invisibly over what the reader sees -
+ * `opacity: 0` - and opacity takes the browser's own focus ring with it. So a
+ * reader tabbing through the panel, or a streamer driving OBS's Interact
+ * window from the keyboard, saw nothing change as focus moved: no telling
+ * which setting the arrow keys would change. The row wearing the invisible
+ * control has to show it instead - on keyboard focus only, so a tap on a
+ * phone draws nothing, as the desktop app's own pickers do.
+ *
+ * The list is discovered from the stylesheet, not written down: every rule
+ * that makes a `select` or `input` invisible, and the element it sits in.
+ */
+describe("keyboard focus in the display settings", () => {
+  // comments out first: one above a rule would otherwise read as part of its selector
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selectors: m[1].split(",").map((s) => s.trim().replace(/\s+/g, " ")),
+    body: m[2],
+  }));
+  const hidden = rules
+    .filter((r) => /(^|;)\s*opacity:\s*0\s*(;|$)/.test(r.body))
+    .flatMap((r) => r.selectors)
+    .map((s) => /^(.+) (select|input)$/.exec(s))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => m[1]);
+
+  it("finds the invisible controls it is about", () => {
+    expect(hidden, "no invisible select or input was found, so nothing below was checked").toEqual(
+      expect.arrayContaining([".drow-pick", ".swatch"]),
+    );
+  });
+
+  it("shows focus on the row around each invisible control", () => {
+    const unmarked = hidden.filter(
+      (container) =>
+        !rules.some(
+          (r) =>
+            /outline/.test(r.body) &&
+            r.selectors.some((s) => s.startsWith(`${container}:has(`) && s.includes(":focus-visible")),
+        ),
+    );
+    expect(unmarked, "focus moves onto these with nothing on screen to show it").toEqual([]);
+  });
+});

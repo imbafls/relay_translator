@@ -4239,3 +4239,20 @@ are colour inputs in labels whose only text is an empty swatch, and the
 nothing. The slider now takes its name from the "Size" on screen via
 `aria-labelledby`; the swatches say which colour they set. The walk asserts
 it found more than eight controls, so an empty panel cannot pass it.
+
+**43 - Focus you could not see.** DISPLAY's four pickers and three colour
+swatches are real controls laid over what the reader sees at `opacity: 0`,
+and opacity takes the browser's own focus ring with it - so tabbing through
+the panel, on a laptop or in OBS's Interact window, moved focus with nothing
+on screen to show where. The ring now goes on the element around the
+control, `:has(... :focus-visible)`, in the desktop app's own convention: 1px
+ink, square, keyboard only, so a tap on a phone draws nothing. The test
+discovers its own list - every stylesheet rule that makes a `select` or
+`input` invisible, and the element it sits in - asserts it found the two it
+is about, and requires a ring on each; dropping one selector turns it red on
+exactly that one. Its first draft failed on the fix for its own reason: a
+comment above the new rule read as part of the selector, so the parser now
+strips comments first. And because `:has` with `:focus-visible` is exactly
+the kind of thing a DOM without a renderer cannot judge, it was pressed in
+real Chromium: Tab onto the font picker, the alignment picker and the text
+swatch each drew the ring, and programmatic focus did not.

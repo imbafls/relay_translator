@@ -901,6 +901,15 @@ fixed**, the last two on 2026-09-15.
   swatches carry their own, and a test walks every control in DISPLAY so the
   next one cannot ship without one.
 
+- ~~**Keyboard focus was invisible on seven of DISPLAY's controls.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. The four pickers and three
+  colour swatches are real controls laid over what the reader sees at
+  `opacity: 0`, which took the browser's focus ring with them; tabbing
+  through the panel changed nothing on screen. The element around each now
+  shows keyboard focus - `:focus-visible` only, so a tap draws nothing - and
+  a test discovers every invisible control from the stylesheet and requires
+  a ring on its container. Checked with real Tab presses in Chromium.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
