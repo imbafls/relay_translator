@@ -1050,6 +1050,12 @@ fixed**, the last two on 2026-09-15.
   is one test now that arms the leftover, proves it is armed, cleans up the
   way afterEach does and boots again.
 
+- ~~**Four self-undoing timers were run by no test.**~~ Fixed 2026-09-18,
+  found by an independent review. The link's 20 s re-hide, a revealed key's
+  20 s re-hide, and the 5 s disarm of NEW's and DELETE's SURE? used to fire
+  in whatever test came later; once the harness cancelled leftovers, nothing
+  ran them. Each has a fake-timer test now, before and after its deadline.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

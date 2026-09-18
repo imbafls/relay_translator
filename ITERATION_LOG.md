@@ -4625,3 +4625,16 @@ alone with its half of the cleanup removed; the whole file passes under two
 shuffle seeds; and with the SETTINGS key field made to arm nothing the timer
 guard now fails on "typing armed no timer, so nothing below is tested"
 instead of passing.
+
+**66 - The timers the cleanup stopped running.** Cancelling what a finished
+test leaves armed (iteration 55) was right, and had a cost the review named:
+four timers that undo something by themselves - the viewer link's 20 s
+re-hide, a revealed key's 20 s re-hide, and the 5 s disarm of SURE? on NEW
+and on DELETE - used to fire in whatever test came later, where a throw
+would at least have surfaced as an unhandled error. Now nothing ran them. A
+fake-timer test each, checking both sides of the deadline: still showing
+just before it, back just after. Driven with synchronous clicks, since a
+`settle()` never resolves under fake timers. These went green first time,
+which for coverage of working code is expected and proves nothing by itself;
+five mutations are what does - each timer removed, and the reveal time
+halved, which both 20 s tests catch on their "hid itself early" line.

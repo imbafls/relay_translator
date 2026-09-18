@@ -678,6 +678,33 @@ describe("saved transcripts", () => {
   });
 
   /**
+   * The disarm is a timer, and since the harness cancels what a finished test
+   * leaves armed, nothing else runs it: a SURE? that never went back to
+   * DELETE, or a disarm that threw, would pass every other test here.
+   */
+  it("goes back to DELETE by itself when the second press does not come", async () => {
+    fakeSaved = [summary(NEWER)];
+    fakeSavedBodies = { [NEWER]: body(NEWER) };
+    await enterSaved();
+    const btn = document.getElementById("savedDelete") as HTMLButtonElement;
+    vi.useFakeTimers();
+    try {
+      btn.click();
+      expect(btn.textContent).toBe("SURE?");
+      vi.advanceTimersByTime(4_900);
+      expect(btn.textContent, "SURE? went back early").toBe("SURE?");
+      vi.advanceTimersByTime(200);
+      expect(btn.textContent, "SURE? never went back to DELETE").toBe("DELETE");
+      // and a press now asks again rather than deleting
+      btn.click();
+      expect(btn.textContent).toBe("SURE?");
+      expect(calls.deleted).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
    * The file main is writing right now. Deleting it mid-session would leave the
    * writer appending to a path that has gone, and main refuses it anyway - so
    * the button does not offer what would be refused.
@@ -1826,6 +1853,21 @@ describe("the viewer link on screen", () => {
     expect(linkEl().textContent, "clicking it revealed nothing").toContain(TOKEN);
   });
 
+  it("hides it again by itself after twenty seconds", async () => {
+    await withLink();
+    vi.useFakeTimers();
+    try {
+      linkEl().click();
+      expect(linkEl().textContent).toContain(TOKEN);
+      vi.advanceTimersByTime(19_500);
+      expect(linkEl().textContent, "the link hid itself early").toContain(TOKEN);
+      vi.advanceTimersByTime(1_000);
+      expect(linkEl().textContent, "the link stayed revealed").not.toContain(TOKEN);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("hides it again on a second click", async () => {
     await withLink();
     linkEl().click();
@@ -1989,6 +2031,23 @@ describe("NEW, which disconnects everyone reading", () => {
     expect(newBtn().textContent, "nothing on the button says it is now asking").not.toMatch(/^NEW$/i);
   });
 
+  it("stops asking by itself after five seconds, so a stray press does not stay loaded", async () => {
+    await bootWith({ setupDone: true });
+    await liveWith(2);
+    vi.useFakeTimers();
+    try {
+      newBtn().click();
+      expect(newBtn().textContent).toBe("SURE?");
+      vi.advanceTimersByTime(4_900);
+      expect(newBtn().textContent, "SURE? went back early").toBe("SURE?");
+      vi.advanceTimersByTime(200);
+      expect(newBtn().textContent, "the button stayed loaded").toBe("NEW");
+      expect(calls.rotated).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("goes through on the second press", async () => {
     await bootWith({ setupDone: true });
     await liveWith(2);
@@ -2044,6 +2103,23 @@ describe("a revealed key does not stay revealed", () => {
 
     expect(field("deepgramApiKey").type).toBe("password");
     expect(showBtn("deepgramApiKey").textContent).toMatch(/SHOW/i);
+  });
+
+  it("goes back behind its dots by itself after twenty seconds", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-live-secret" });
+    await openSettings();
+    vi.useFakeTimers();
+    try {
+      showBtn("deepgramApiKey").click();
+      expect(field("deepgramApiKey").type).toBe("text");
+      vi.advanceTimersByTime(19_500);
+      expect(field("deepgramApiKey").type, "the key hid itself early").toBe("text");
+      vi.advanceTimersByTime(1_000);
+      expect(field("deepgramApiKey").type, "the key stayed in plain text").toBe("password");
+      expect(showBtn("deepgramApiKey").textContent).toMatch(/SHOW/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows it when asked", async () => {
