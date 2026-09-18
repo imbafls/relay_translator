@@ -2567,6 +2567,81 @@ describe("a key that could not be checked at boot", () => {
     expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
   });
 
+  /**
+   * Setup keeps its own answers for the keys in its fields, apart from the
+   * chain's, and the network coming back re-asked only the chain's. So a setup
+   * that was open when the network dropped kept COULD NOT REACH with CONTINUE
+   * dead after it came back - worst on a first run, where setup opens at boot
+   * and cannot be closed - and a key typed into it was never re-asked at all.
+   */
+  it("asks again for a setup that is open when the network comes back", async () => {
+    // a first run quit after step 1: setup opens at boot, on a saved key
+    unreachableOnce = ["dg-saved"];
+    await bootWith({ setupDone: false, deepgramApiKey: "dg-saved" });
+    await waitFor(() => /COULD NOT REACH/.test(text("obDgStatus")), "setup's own check to fail to connect");
+
+    window.dispatchEvent(new Event("online"));
+
+    await waitFor(() => /^VALID/.test(text("obDgStatus")), "setup to show the key's real verdict");
+    expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
+  });
+
+  it("does it for the Gemini step too", async () => {
+    unreachableOnce = ["gm-saved"];
+    await bootWith({ setupDone: false, geminiApiKey: "gm-saved" });
+    await waitFor(() => /COULD NOT REACH/.test(text("obGmStatus")), "setup's own check to fail to connect");
+
+    window.dispatchEvent(new Event("online"));
+
+    await waitFor(() => /^VALID/.test(text("obGmStatus")), "setup to show the key's real verdict");
+  });
+
+  it("does it for a key typed into setup and never saved", async () => {
+    unreachableOnce = ["dg-typed"];
+    await bootWith({ setupDone: false });
+    const field = document.getElementById("obDeepgramKey") as HTMLInputElement;
+    field.value = "dg-typed";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => /COULD NOT REACH/.test(text("obDgStatus")), "the typed key's check to fail to connect");
+
+    window.dispatchEvent(new Event("online"));
+
+    await waitFor(() => /^VALID/.test(text("obDgStatus")), "the typed key to be asked about again");
+  });
+
+  it("lets setup's newest check of a key decide, not its slowest", async () => {
+    // setup's first check goes out and hangs; the same key is checked again
+    // and answers; then the first comes back, late, having timed out
+    let release!: () => void;
+    slowNextCheck = { gate: new Promise<void>((r) => (release = r)), answer: { valid: false, detail: "timed out" } };
+    await bootWith({ setupDone: false, deepgramApiKey: "dg-saved" });
+    await waitFor(() => checksOf("dg-saved") === 1, "setup's first check to go out");
+    const field = document.getElementById("obDeepgramKey") as HTMLInputElement;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => /^VALID/.test(text("obDgStatus")), "the second check to answer");
+
+    release();
+    await settle(60);
+
+    expect(text("obDgStatus"), "the late, older answer replaced the newer one").toMatch(/^VALID/);
+    expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("and for the Gemini field the same", async () => {
+    let release!: () => void;
+    slowNextCheck = { gate: new Promise<void>((r) => (release = r)), answer: { valid: false, detail: "timed out" } };
+    await bootWith({ setupDone: false, geminiApiKey: "gm-saved" });
+    await waitFor(() => checksOf("gm-saved") === 1, "setup's first check to go out");
+    const field = document.getElementById("obGeminiKey") as HTMLInputElement;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => /^VALID/.test(text("obGmStatus")), "the second check to answer");
+
+    release();
+    await settle(60);
+
+    expect(text("obGmStatus"), "the late, older answer replaced the newer one").toMatch(/^VALID/);
+  });
+
   it("does not ask again about a key the provider actually turned down", async () => {
     // a key no other test uses. Written when every earlier boot's listeners
     // were still on window and their checks landed in this test's call log;

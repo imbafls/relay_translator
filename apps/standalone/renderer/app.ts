@@ -2549,8 +2549,18 @@ function renderObKeyStatus(): void {
   c2.className = ok2 ? "ink-btn" : "outline-btn";
 }
 
+/**
+ * Which of setup's checks is the newest, per field. Two can be out for one
+ * string - opening setup asks, and so does typing it again or the network
+ * coming back - and an older one that hung until it timed out must not land
+ * over the newer answer.
+ */
+let obDeepgramSeq = 0;
+let obGeminiSeq = 0;
+
 const obCheckDeepgram = debounce(async () => {
   const key = inp("obDeepgramKey").value.trim();
+  const seq = ++obDeepgramSeq;
   if (!key) {
     obDeepgram = undefined;
     renderObKeyStatus();
@@ -2559,7 +2569,7 @@ const obCheckDeepgram = debounce(async () => {
   obDeepgram = "checking";
   renderObKeyStatus();
   const res = await cr.validateKey("deepgram", key);
-  if (inp("obDeepgramKey").value.trim() !== key) return;
+  if (seq !== obDeepgramSeq || inp("obDeepgramKey").value.trim() !== key) return;
   obDeepgram = res;
   rememberVerdict("deepgram", key, { result: res });
   // Only if setup is still what the user is looking at. This check is debounced
@@ -2575,6 +2585,7 @@ const obCheckDeepgram = debounce(async () => {
 
 const obCheckGemini = debounce(async () => {
   const key = inp("obGeminiKey").value.trim();
+  const seq = ++obGeminiSeq;
   if (!key) {
     obGemini = undefined;
     renderObKeyStatus();
@@ -2583,7 +2594,7 @@ const obCheckGemini = debounce(async () => {
   obGemini = "checking";
   renderObKeyStatus();
   const res = await cr.validateKey("gemini", key);
-  if (inp("obGeminiKey").value.trim() !== key) return;
+  if (seq !== obGeminiSeq || inp("obGeminiKey").value.trim() !== key) return;
   obGemini = res;
   rememberVerdict("gemini", key, { result: res });
   renderObKeyStatus();
@@ -3059,6 +3070,13 @@ function bind(): void {
     for (const provider of ["deepgram", "gemini"] as const) {
       const saved = provider === "deepgram" ? config.deepgramApiKey : config.geminiApiKey;
       if (saved && couldNotCheck(verdictFor(provider, saved))) void checkKey(provider, saved);
+    }
+    // setup keeps its own answers for the keys in its fields - typed ones
+    // included - and an open setup left on COULD NOT REACH had CONTINUE dead
+    // after the network was back
+    if (view === "onboarding") {
+      if (couldNotCheck(obDeepgram)) obCheckDeepgram();
+      if (couldNotCheck(obGemini)) obCheckGemini();
     }
   });
 

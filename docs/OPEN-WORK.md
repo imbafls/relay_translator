@@ -1016,6 +1016,14 @@ fixed**, the last two on 2026-09-15.
   CONTINUE dead for the run. Only "key rejected" - 401/403, Gemini's 400 - is
   a verdict now; any other status reads KEY ? and is asked again.
 
+- ~~**The network coming back did not reach an open setup.**~~ Fixed
+  2026-09-18, found by an independent review. Setup keeps its own answers
+  for the keys in its fields, and only the chain's were re-asked, so a setup
+  open through the outage kept COULD NOT REACH with CONTINUE dead - on a
+  first run, with no way to close it - and a typed key was never re-asked.
+  It is now, and an older check that hung can no longer land over a newer
+  answer for the same key.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

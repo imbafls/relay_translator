@@ -4542,3 +4542,19 @@ already taken out the statuses that are about the key. Three tests red first
 Three mutations: the HTTP case dropped, Gemini forgotten, and the
 over-correction - everything counted as could-not-check - which six existing
 tests catch because they expect KEY INVALID for a real rejection.
+
+**61 - The network comes back to setup too.** Setup keeps its own answers,
+`obDeepgram` and `obGemini`, for whatever is in its two key fields; the
+`online` listener from iteration 52 re-asked only the chain's saved keys. So
+a setup that was open through the outage stayed on COULD NOT REACH with
+CONTINUE dead once the network was back. On a first run quit after step 1
+setup opens at boot and cannot be closed, and a key typed into it and never
+saved was not re-asked by anything. The listener now re-asks setup's own
+answers when setup is showing. The same review found setup's checks had no
+guard against an older answer landing over a newer one for the same string -
+the field-value check only catches a different string - which the network
+coming back makes easy to hit: setup's first check hangs until it times out,
+a second answers, then the first lands. Each field has a sequence number
+now. Five tests, four red first; the fifth, the Gemini twin of the race,
+was added so the second guard had a test of its own, and four mutations -
+setup skipped, Gemini skipped, either guard removed - each turn one red.
