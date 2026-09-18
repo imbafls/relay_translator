@@ -10,6 +10,20 @@ import { log, logSubtitle, wordless } from "./log";
 import { renderWhatsNew } from "./whatsNew";
 import { feedLevel, renderMeter, resetLevel } from "./meter";
 import {
+  clampUtf8Bytes,
+  esc,
+  fmtBytes,
+  fmtClock,
+  fmtDuration,
+  fmtElapsed,
+  fmtMb,
+  fmtSec,
+  fmtTs,
+  fmtWhen,
+  stripUrl,
+  usd,
+} from "./format";
+import {
   AppConfig,
   AudioDeviceInfo,
   ControlStatus,
@@ -185,13 +199,6 @@ function outputLabel(o: OutputTarget): string {
 function translationActive(): boolean {
   return config.translationEnabled !== false && !!config.geminiApiKey;
 }
-function pad2(n: number): string {
-  return n < 10 ? `0${n}` : String(n);
-}
-function fmtClock(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
-}
 /**
  * Say which language a piece of text is in. index.html is `lang="en"`, so
  * without this a screen reader announces the TRANSLATION column in English -
@@ -206,18 +213,6 @@ function markLang(el: Element | null, code: string | undefined): void {
   else el.removeAttribute("lang");
 }
 
-function fmtTs(d: Date): string {
-  return `${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-}
-function fmtSec(ms: number | undefined): string {
-  return ms == null ? "" : `${(ms / 1000).toFixed(1)}s`;
-}
-function stripUrl(url: string): string {
-  return url.replace(/^[a-z]+:\/\//i, "");
-}
-function usd(n: number, digits = 3): string {
-  return `$${n.toFixed(digits)}`;
-}
 /**
  * The name a picker shows for a device, or nothing when no picker holds it.
  *
@@ -330,27 +325,6 @@ let lastRecording: string | undefined;
 let savedDeleteArmedUntil = 0;
 let savedDeleteTimer: ReturnType<typeof setTimeout> | undefined;
 const SAVED_DELETE_ARM_MS = 5000;
-
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function fmtDuration(ms: number): string {
-  const min = Math.max(0, Math.round(ms / 60000));
-  return min < 60 ? `${min} MIN` : `${Math.floor(min / 60)} H ${min % 60} MIN`;
-}
-
-function fmtElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const two = (n: number): string => String(n).padStart(2, "0");
-  return `${two(Math.floor(s / 3600))}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}`;
-}
-
-function fmtWhen(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
 
 /**
  * Whether lines are being saved, in both places it shows: SETTINGS →
@@ -1545,18 +1519,6 @@ async function claimRoom(): Promise<void> {
 const FEEDBACK_LOG_MAX_BYTES = 1.5 * 1024 * 1024;
 
 /**
- * Clamp `text` to at most `maxBytes` of UTF-8, decoding back to a string. A
- * cut that lands inside a multi-byte character comes back with a trailing
- * replacement character rather than throwing - acceptable for a log that is
- * already being truncated.
- */
-function clampUtf8Bytes(text: string, maxBytes: number): string {
-  const bytes = new TextEncoder().encode(text);
-  if (bytes.length <= maxBytes) return text;
-  return new TextDecoder().decode(bytes.slice(0, maxBytes));
-}
-
-/**
  * Recompute #feedbackPreview from relay.log, redacted, or clear it.
  *
  * Reads through `cr.readRelayLog()` and runs redactLog() on the result
@@ -1718,10 +1680,6 @@ function renderSettings(): void {
 // ---------------------------------------------------------------------------
 // local models (keys view, onboarding, 02 TRANSCRIBE)
 // ---------------------------------------------------------------------------
-
-function fmtMb(mb: number): string {
-  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
-}
 
 /** the local models in one tier, catalog order preserved */
 function modelsInTier(tier?: ModelTier): SttModelInfo[] {
@@ -2056,10 +2014,6 @@ function openSetup(): void {
 const SAMPLE_EN = ["Two pushing B main, one's low", "Rotate A, spike's down", "He's one shot, behind the box", "Reloading, cover me"];
 const SAMPLE_VI = ["Hai đứa đẩy B main, một đứa yếu máu", "Đảo sang A, spike đã đặt", "Nó còn một viên, sau cái hộp", "Đang nạp đạn, che tôi"];
 const SAMPLE_TS = ["00:09", "00:14", "00:21", "00:24"];
-
-function esc(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
-}
 
 function previewLines(opts: { size?: "lg"; tone: (i: number) => string; texts: string[]; ts?: boolean }): string {
   return opts.texts

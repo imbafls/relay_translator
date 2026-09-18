@@ -3597,3 +3597,19 @@ into an empty body. A guard test that tears a page down and waits a second
 watched the dead page write `00:00:00` into markup it no longer owned; the
 harness now stops every timer a page armed when the page ends. Committed first,
 separately, since it is a different effect.
+
+**2 - The seam the survey did not look for.** The renderer-split card said
+every seam that could move without changing behaviour had moved, and closed on
+that. Checked against the file rather than the card: the survey had looked for
+*views*, and stopped at the ones bound to shared state. Thirteen formatters sat
+scattered through `app.ts` - beside the saved view, the model list, the
+feedback form - reading nothing at all, and nobody had weighed them because
+they are not views. They moved to `renderer/format.ts` unchanged, with
+`export` the only word added: `app.ts` gained one import and lost sixty lines,
+and no existing assertion was touched (the id checker's fixture gained the
+module, as it did for each earlier seam). Characterised first, each property
+held by a string a reader actually sees, and twenty mutations - one per
+property - all turned the test red. Harness captures before and after read
+the same to the character. One thing surfaced that a move must not fix:
+`fmtClock` and `fmtElapsed` are two separate implementations of one format.
+The test holds them equal, so folding them is now safe for whoever does it.

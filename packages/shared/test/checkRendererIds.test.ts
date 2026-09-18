@@ -53,6 +53,7 @@ const OK = {
   "apps/standalone/renderer/app.ts": `$("alpha");`,
   // the renderer is several modules, and every one of them is read
   "apps/standalone/renderer/dom.ts": `export const noop = 0;`,
+  "apps/standalone/renderer/format.ts": `export const noop = 0;`,
   "apps/standalone/renderer/log.ts": `export const noop = 0;`,
   "apps/standalone/renderer/meter.ts": `export const noop = 0;`,
   "apps/standalone/renderer/whatsNew.ts": `export const noop = 0;`,
