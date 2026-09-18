@@ -111,6 +111,20 @@ export function safeBrandName(value: unknown): string | undefined {
  * one from its own clock and every such hello differs by construction. That is a
  * property of the fallback above, not of this check.
  */
+/**
+ * How long the stream has been on, measured here - sent beside every `since`.
+ *
+ * The viewer page prefers this to `since`, because it counts its clock from
+ * its own `Date.now()` minus a duration rather than minus somebody else's
+ * timestamp. Without it a phone whose clock was behind showed the session
+ * clock frozen at 00:00:00, and one ahead overstated it. `since` is the
+ * streamer's PC's clock and this is the Worker's, so what is left is that
+ * PC's own skew - which Windows keeps in step by itself - not the phone's.
+ */
+function elapsedSince(since: number | undefined): number | undefined {
+  return typeof since === "number" ? Math.max(0, Date.now() - since) : undefined;
+}
+
 function snapshot(room: RoomState): string {
   return JSON.stringify(room);
 }
@@ -412,6 +426,7 @@ export class Room {
           live: room.live,
           translates: room.translates,
           since: room.since,
+          elapsedMs: elapsedSince(room.since),
         epoch: room.epoch,
           brandName: room.brandName,
           brandColor: room.brandColor,
@@ -463,6 +478,7 @@ export class Room {
         live: room.live,
         translates: room.translates,
         since: room.since,
+        elapsedMs: elapsedSince(room.since),
         epoch: room.epoch,
         brandName: room.brandName,
         brandColor: room.brandColor,
@@ -506,6 +522,7 @@ export class Room {
         live: room.live,
         translates: room.translates,
         since: room.since,
+        elapsedMs: elapsedSince(room.since),
         epoch: room.epoch,
         brandName: room.brandName,
         brandColor: room.brandColor,
@@ -526,6 +543,7 @@ export class Room {
         live: room.live,
         message: msg.message,
         since: room.since,
+        elapsedMs: elapsedSince(room.since),
         epoch: room.epoch,
       });
       return;

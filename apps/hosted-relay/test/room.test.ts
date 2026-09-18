@@ -523,3 +523,44 @@ describe("a viewer asking the hosted room to catch it up", () => {
     expect(answer?.brandName, "the sync reply lost the brand a late joiner needs").toBe("Callouts");
   });
 });
+
+/**
+ * How long the stream has been on, measured on a clock the room can trust.
+ *
+ * Every hello and status the room sent carried only `since` - the streamer's
+ * PC's timestamp - and the viewer page falls back to `Date.now() - since` on
+ * the phone's own clock. A phone a minute or two behind showed the session
+ * clock frozen at 00:00:00; one ahead overstated it. The embedded relay has
+ * sent `elapsedMs` since audit finding 36, which the page prefers; the hosted
+ * room, the path most internet readers are on, never did. It now works the
+ * figure out on its own clock and sends it wherever it sends `since`.
+ */
+describe("the session clock on the hosted relay", () => {
+  const near = (value: unknown, expected: number): boolean =>
+    typeof value === "number" && Math.abs(value - expected) < 5_000;
+
+  it("sends how long the stream has been on with the hello it relays", async () => {
+    const s = stand();
+    await s.hello({ live: true, since: Date.now() - 90_000 });
+    const hello = s.relayed();
+    expect(
+      near(hello?.elapsedMs, 90_000),
+      `the relayed hello carries no usable elapsedMs (${String(hello?.elapsedMs)}), so a phone falls back to its own clock`,
+    ).toBe(true);
+  });
+
+  it("and with every status", async () => {
+    const s = stand();
+    await s.status({ since: Date.now() - 90_000 });
+    const status = s.viewer.seen.filter((m) => m.type === "status").pop();
+    expect(near(status?.elapsedMs, 90_000), `status elapsedMs: ${String(status?.elapsedMs)}`).toBe(true);
+  });
+
+  it("and when a viewer asks to catch up", async () => {
+    const s = stand();
+    await s.hello({ live: true, since: Date.now() - 90_000 });
+    await s.sync();
+    const hello = s.relayed();
+    expect(near(hello?.elapsedMs, 90_000), `sync elapsedMs: ${String(hello?.elapsedMs)}`).toBe(true);
+  });
+});

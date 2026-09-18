@@ -404,3 +404,18 @@ describe("a publisher reconnecting to viewers already there", () => {
     expect(frames.find((m) => m.type === "viewers")).toEqual({ type: "viewers", count: 0 });
   });
 });
+
+// A viewer opening the link mid-stream is greeted the same way: with a
+// duration measured here, not only the streamer's timestamp (room.test.ts
+// holds the relayed hello, the status and the sync reply).
+describe("a late joiner's session clock", () => {
+  it("is greeted with how long the stream has been on", async () => {
+    const s = stand(ago(5_000));
+    const hello = await s.lateJoiner();
+    const expected = Date.now() - 1_788_000_000_000;
+    expect(typeof hello?.elapsedMs, "the greeting carries no elapsedMs, so a phone runs the clock on its own").toBe(
+      "number",
+    );
+    expect(Math.abs((hello?.elapsedMs as number) - expected)).toBeLessThan(5_000);
+  });
+});

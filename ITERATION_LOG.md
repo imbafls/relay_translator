@@ -4297,3 +4297,15 @@ line is never the half-caption promoted in place on this page - it is a row
 of its own, appended - and the second test holds that the finished line and
 its translation are still what a screen reader is handed. Nothing on screen
 changes.
+
+**47 - A clock frozen at zero.** Audit finding 36 taught the embedded relay
+to send `elapsedMs` - a duration - so the viewer counts its session clock
+from its own `Date.now()` rather than minus somebody else's timestamp. The
+hosted room, the path most internet readers are on, never did: every hello
+and status carried only `since`, the streamer's PC's clock, and a phone a
+minute or two behind showed 00:00:00 for as long as the skew lasted. The
+room now works the duration out on its own clock and sends it beside every
+`since` - four places, each with a test that went red without it (the
+late-joiner greeting through the `fetch` harness, the rest in `room.test.ts`).
+The uplink protocol is untouched: what is left is the streamer's own PC
+against the Worker, and Windows keeps that in step by itself.

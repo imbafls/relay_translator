@@ -934,6 +934,14 @@ fixed**, the last two on 2026-09-15.
   translation last. The half-caption is now `aria-hidden` - it is for eyes -
   and the finished line, which arrives as a row of its own, is read as before.
 
+- ~~**The hosted relay's session clock ran on the phone's clock.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass - audit finding 36 on the path
+  most internet readers are on. The room sent only `since`, the streamer's
+  timestamp, so a phone a minute behind showed the clock frozen at 00:00:00.
+  It now works out `elapsedMs` on the Worker's clock and sends it wherever it
+  sends `since` - the greeting, the relayed hello, every status, the sync
+  reply - and the page, which already prefers it, counts from its own clock.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
