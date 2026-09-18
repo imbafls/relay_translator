@@ -893,6 +893,14 @@ fixed**, the last two on 2026-09-15.
   time rather than that the address is wrong - the shape `rotateLink.ts` got
   in the same pass.
 
+- ~~**The text-size slider had no name a screen reader could say.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. Announced as a bare "slider,
+  18", its visible "Size" tied to nothing - and the three colour swatches
+  turned out nameless too, their names in a `title` on the label, where they
+  name nothing. The slider now takes its name from the "Size" on screen, the
+  swatches carry their own, and a test walks every control in DISPLAY so the
+  next one cannot ship without one.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

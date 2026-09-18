@@ -39,8 +39,8 @@
         <button data-theme="obs-clear">OBS clear</button>
       </div>
       <div class="drow drow-size">
-        <div class="drow-head"><span>Size</span><span id="sizeVal" class="mono dim">21</span></div>
-        <div class="slider"><span class="a-sm">A</span><input id="setSize" type="range" min="14" max="40" step="1" /><span class="a-lg">A</span></div>
+        <div class="drow-head"><span id="sizeLabel">Size</span><span id="sizeVal" class="mono dim">21</span></div>
+        <div class="slider"><span class="a-sm">A</span><input id="setSize" type="range" min="14" max="40" step="1" aria-labelledby="sizeLabel" /><span class="a-lg">A</span></div>
       </div>
       <label class="drow"><span>Show original</span><input id="setShowSource" type="checkbox" class="sq" /></label>
       <label class="drow"><span>Show translation</span><input id="setShowTranslation" type="checkbox" class="sq" /></label>
@@ -67,9 +67,9 @@
       </label>
       <div class="drow"><span>Colors</span>
         <span class="swatches">
-          <label class="swatch" title="Text"><span id="swFg"></span><input id="setFg" type="color" /></label>
-          <label class="swatch" title="Accent"><span id="swAccent"></span><input id="setAccent" type="color" /></label>
-          <label class="swatch" title="Background"><span id="swBg"></span><input id="setBg" type="color" /></label>
+          <label class="swatch" title="Text"><span id="swFg"></span><input id="setFg" type="color" aria-label="Text color" /></label>
+          <label class="swatch" title="Accent"><span id="swAccent"></span><input id="setAccent" type="color" aria-label="Accent color" /></label>
+          <label class="swatch" title="Background"><span id="swBg"></span><input id="setBg" type="color" aria-label="Background color" /></label>
         </span>
       </div>
     </div>

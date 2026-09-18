@@ -2238,3 +2238,53 @@ describe("the overlay after a half-caption that came to nothing", () => {
     expect(live()?.querySelector(".src")?.textContent).toContain("push B");
   });
 });
+
+/**
+ * Every control in DISPLAY has a name a screen reader can say.
+ *
+ * The text-size slider was announced as a bare "slider, 18": its visible
+ * "Size" is a sibling span tied to nothing. A low-vision reader is the most
+ * likely person to reach for that control, and the one who could not tell
+ * what it was. The colour swatches were the same - each is a colour input in
+ * a label whose only text is an empty swatch, with the name in a `title` on
+ * the label, where it names nothing. This walks every control the panel has,
+ * so the next one added cannot ship nameless either.
+ */
+describe("the display settings, to a screen reader", () => {
+  /** the accessible name, as far as markup can give one: aria, then a label, then a title */
+  const nameOf = (el: HTMLElement): string => {
+    const aria = el.getAttribute("aria-label")?.trim();
+    if (aria) return aria;
+    const by = el.getAttribute("aria-labelledby");
+    if (by) {
+      const text = by
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent?.trim() || "")
+        .join(" ")
+        .trim();
+      if (text) return text;
+    }
+    const label = (el.id && document.querySelector(`label[for="${el.id}"]`)) || el.closest("label");
+    if (label) {
+      const copy = label.cloneNode(true) as HTMLElement;
+      // a label's name is its own text, not the options of the select inside it
+      for (const inner of copy.querySelectorAll("input, select, textarea")) inner.remove();
+      const text = copy.textContent?.replace(/\s+/g, " ").trim();
+      if (text) return text;
+    }
+    return el.getAttribute("title")?.trim() || "";
+  };
+
+  it("names every control it has", () => {
+    boot();
+    const controls = [...document.querySelectorAll<HTMLElement>("#display input, #display select")];
+    expect(controls.length, "found no controls in DISPLAY, so this checked nothing").toBeGreaterThan(8);
+    const nameless = controls.filter((c) => !nameOf(c)).map((c) => `#${c.id}`);
+    expect(nameless, "these are announced with no name at all").toEqual([]);
+  });
+
+  it("calls the size slider what it is labelled on screen", () => {
+    boot();
+    expect(nameOf($("setSize"))).toBe("Size");
+  });
+});

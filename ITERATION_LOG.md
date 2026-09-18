@@ -4227,3 +4227,15 @@ says the relay did not answer in time; without that check the same stall is
 reported as a wrong address, and a mutation shows the test knows the
 difference. The teardown learned to drop open connections, because a
 stalled answer is exactly what `close()` waits on.
+
+**42 - Controls with no names.** The card was the text-size slider: a screen
+reader announced "slider, 18", because the visible "Size" is a sibling span
+tied to nothing - and a low-vision reader is the likeliest person to need it.
+Rather than test that one input, the test walks every control in DISPLAY and
+asks each for a name the way a screen reader would: aria, then its label's
+own text, then a title. It found four, not one: the three colour swatches
+are colour inputs in labels whose only text is an empty swatch, and the
+`title` that looks like their name sits on the label, where it names
+nothing. The slider now takes its name from the "Size" on screen via
+`aria-labelledby`; the swatches say which colour they set. The walk asserts
+it found more than eight controls, so an empty panel cannot pass it.
