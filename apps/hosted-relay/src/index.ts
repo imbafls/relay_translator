@@ -239,15 +239,29 @@ function parseFeedback(body: unknown): FeedbackReport | undefined {
   const b = body as Record<string, unknown>;
   if (typeof b.message !== "string" || typeof b.appVersion !== "string") return undefined;
 
-  const message = b.message.trim();
-  const appVersion = b.appVersion.trim();
+  const message = b.message.replace(TEXT_CONTROLS, "").trim();
+  const appVersion = b.appVersion.replace(ALL_CONTROLS, "").trim();
   if (!message || message.length > FEEDBACK_MESSAGE_MAX) return undefined;
   if (!appVersion || appVersion.length > FEEDBACK_VERSION_MAX) return undefined;
 
   if (b.log === undefined) return { message, appVersion };
   if (typeof b.log !== "string" || b.log.length > FEEDBACK_LOG_MAX) return undefined;
-  return { message, appVersion, log: b.log };
+  return { message, appVersion, log: b.log.replace(TEXT_CONTROLS, "") };
 }
+
+/**
+ * Control characters, which no report needs and a terminal obeys.
+ *
+ * This endpoint takes no token, and nothing it checked rejected them, so a
+ * report could carry OSC 52 (write the reader's clipboard), cursor movement
+ * (hide the reports around it) or OSC 8 (dress one link up as another) - and
+ * `scripts/read-feedback.cjs` printed the version and message to the
+ * maintainer's terminal. A message and a log keep their tabs and line breaks;
+ * a version keeps nothing, since it is one short token. C1 goes too: several
+ * terminals read U+009B as ESC [.
+ */
+const TEXT_CONTROLS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+const ALL_CONTROLS = /[\x00-\x1f\x7f-\x9f]/g;
 
 /**
  * A short reference id for one feedback report, so a person can quote it if

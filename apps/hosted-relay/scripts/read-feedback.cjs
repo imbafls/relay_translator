@@ -115,13 +115,37 @@ function writeUnder(outDir, key, text) {
   return dest;
 }
 
+/**
+ * Text for the terminal with every control character shown, not obeyed.
+ *
+ * A report is written by anyone who can reach POST /feedback - no token - and
+ * JSON.parse turns a stored "\x1b" back into a real ESC. Printed as it was,
+ * a report could write this machine's clipboard (OSC 52), move the cursor to
+ * hide the reports around it, or disguise a link (OSC 8), in the shell that
+ * holds the wrangler login. The Worker strips them on the way in now, but
+ * records stored before that are still in the bucket.
+ */
+function printable(text) {
+  return String(text).replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+}
+
 /** one line for the terminal - message trimmed to a screen width, not the file written to disk */
 function preview(message) {
-  const oneLine = message.replace(/\s+/g, " ").trim();
+  const oneLine = printable(String(message).replace(/\s+/g, " ").trim());
   return oneLine.length > 72 ? `${oneLine.slice(0, 69)}...` : oneLine;
 }
 
-(async () => {
+module.exports = { printable, preview };
+if (require.main === module) void main();
+
+async function main() {
+  await run().catch((err) => {
+    console.error("read failed:", printable(err?.message || err));
+    process.exit(1);
+  });
+}
+
+async function run() {
   const [outDir, prefix] = process.argv.slice(2);
   if (!outDir) {
     console.error("usage: node scripts/read-feedback.cjs <out-dir> [prefix]");
@@ -158,7 +182,7 @@ function preview(message) {
     try {
       record = JSON.parse(raw);
     } catch {
-      console.log(`${obj.key}  (could not parse as JSON - saved raw)`);
+      console.log(`${printable(obj.key)}  (could not parse as JSON - saved raw)`);
       continue;
     }
 
@@ -171,13 +195,11 @@ function preview(message) {
       withLog += 1;
     }
 
+    // every field through printable(): the record came from anyone
     console.log(
-      `${record.timestamp ?? "?"}  v${record.appVersion ?? "?"}  ${hasLog ? "[log]" : "     "}  ${preview(record.message ?? "")}`,
+      `${printable(record.timestamp ?? "?")}  v${printable(record.appVersion ?? "?")}  ${hasLog ? "[log]" : "     "}  ${preview(record.message ?? "")}`,
     );
   }
 
   console.log(`\n${records.length} report${records.length === 1 ? "" : "s"}, ${withLog} with a log attached, ${(bytes / 1024).toFixed(1)} KB written to ${outDir}`);
-})().catch((err) => {
-  console.error("read failed:", err?.message || err);
-  process.exit(1);
-});
+}

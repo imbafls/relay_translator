@@ -4106,3 +4106,24 @@ no wordless final does, and a viewer test shows a wordless final changes
 nothing on a page without an interim, phone and overlay both - make the page
 render one and it goes red. The room still fans out whatever an older app
 sends, and its test now says why.
+
+**34 - Escapes into the maintainer's terminal.** `POST /feedback` writes into
+R2 for anyone who asks, and nothing it checked rejected a control character.
+`read-feedback.cjs`, the one supported way to read a report, JSON-parses the
+record - turning a stored escape back into a real ESC - and printed the
+version and a preview of the message to the terminal holding the wrangler
+login: OSC 52 writes the clipboard in Windows Terminal, cursor codes hide the
+reports around it, OSC 8 disguises a link. Closed at both ends, each red on
+its own: the Worker strips control characters on the way in (a message and a
+log keep their tabs and line breaks, a version keeps none), and the script
+prints every field through `printable()`, which shows a control character
+as text rather than obeying it - the records already stored are still dirty.
+The script had to become importable to be tested; requiring it used to run
+it, and the first red was a `process.exit` from inside the test. Then the
+check added in 31 earned its keep a day early: every `\u00XX` escape written
+for this change went into the files as the raw character, three files at
+once, and the byte guard is what would have stopped the commit. They were
+rewritten as `\x` escapes from character codes, and CLAUDE.md says which
+spelling survives - and the sentence saying so went in with the raw
+character in it too, and the gate failed on it. Written from character
+codes as well.

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+import * as path from "node:path";
 import worker from "../src/index";
 
 /**
@@ -326,3 +328,77 @@ describe("POST /feedback", () => {
     expect(puts[0].key).toContain(body.id as string);
   });
 });
+
+/**
+ * Terminal escape sequences, from anyone, into the maintainer's terminal.
+ *
+ * `POST /feedback` takes no token - it writes into R2 for whoever asks - and
+ * nothing it checked rejected a control character. `read-feedback.cjs`, the
+ * one supported way to read a report, JSON-parses the record back into real
+ * ESC and BEL bytes and prints the version and a preview of the message. So
+ * a report could write the maintainer's clipboard (OSC 52 in Windows
+ * Terminal), move the cursor to hide the reports around it, or dress a link
+ * up as another (OSC 8) - in the shell that holds a wrangler login.
+ *
+ * Closed at both ends: the Worker stores no control character a report did
+ * not need (a message keeps its line breaks and tabs), and the reader prints
+ * none - records already stored are still dirty.
+ */
+const ESC = "\x1b";
+const BEL = "\x07";
+const HOSTILE = `${ESC}]52;c;aGk=${BEL}${ESC}[1A${ESC}[2K${ESC}]8;;https://evil.example${ESC}\\`;
+/** C0 but tab, LF and CR; DEL; and C1 */
+const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/;
+
+describe("control characters in a feedback report", () => {
+  it("are not stored from the message, the version or the log", async () => {
+    const { env, puts } = envWith({ allow: true });
+
+    const res = await worker.fetch(
+      post({
+        message: `captions froze${HOSTILE}\nafter an hour\tor so`,
+        appVersion: `0.8.1${ESC}[2J`,
+        log: `boot\r\n${HOSTILE}ready\n`,
+      }),
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const record = JSON.parse(puts.find((p) => p.key.endsWith(".json"))!.value as string) as Record<string, string>;
+    expect(record.message, "the stored message still carries a terminal escape").not.toMatch(CONTROL);
+    expect(record.appVersion, "the stored version still carries a terminal escape").not.toMatch(CONTROL);
+    const log = puts.find((p) => p.key.endsWith(".log"))!.value as string;
+    expect(log, "the stored log still carries a terminal escape").not.toMatch(CONTROL);
+
+    // what a person wrote survives: the words, the line break, the tab
+    expect(record.message).toContain("captions froze");
+    expect(record.message).toContain("\nafter an hour\tor so");
+    expect(record.appVersion).toBe("0.8.1[2J");
+    expect(log).toContain("boot\r\n");
+  });
+
+  it("leave a version that was nothing else empty, and refused", async () => {
+    const { env, puts } = envWith({ allow: true });
+    const res = await worker.fetch(post({ message: "hi", appVersion: `${ESC}${BEL}` }), env);
+    expect(res.status).toBe(400);
+    expect(puts).toHaveLength(0);
+  });
+
+  it("are not printed by the script that reads the reports", () => {
+    const { printable, preview } = requireScript("read-feedback.cjs") as {
+      printable: (s: string) => string;
+      preview: (s: string) => string;
+    };
+    expect(printable(`0.8.1${HOSTILE}`), "the version is printed with its escapes intact").not.toMatch(CONTROL);
+    expect(preview(`captions froze${HOSTILE}`), "the message preview is printed with its escapes intact").not.toMatch(
+      CONTROL,
+    );
+    // and it still reads as what was sent
+    expect(preview("captions  froze\nafter an hour")).toBe("captions froze after an hour");
+  });
+});
+
+/** a script in `scripts/`, loaded without running it */
+function requireScript(name: string): unknown {
+  return createRequire(__filename)(path.join(__dirname, "..", "scripts", name));
+}

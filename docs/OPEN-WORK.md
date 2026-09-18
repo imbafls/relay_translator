@@ -817,6 +817,16 @@ fixed**, the last two on 2026-09-15.
   `packages/companion` now sends a subtitle only when it has words, the app's
   tee goes through it, and a viewer test holds the premise on both surfaces.
 
+- ~~**Anyone could put terminal escapes into the maintainer's terminal.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. `POST /feedback` takes
+  no token and rejected no control character, and `read-feedback.cjs` - the
+  one way to read a report - printed the version and a preview of the message
+  raw, JSON-parsed back into real ESC and BEL: OSC 52 to write the clipboard,
+  cursor codes to hide other reports, OSC 8 to disguise a link. The Worker
+  now strips control characters (a message and log keep tabs and line
+  breaks), and the script prints every field through `printable()`, since
+  records stored before this are still in the bucket.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

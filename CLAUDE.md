@@ -214,7 +214,9 @@ else if `updateFeedUrl` is set.
   file fails on any control byte but tab, LF and CR in a tracked text file:
   that is a backslash a shell or heredoc ate, and it once left a guard test
   that could not fail. Write anything containing `\` with the Write or Edit
-  tool, never through `node -e` or a heredoc.
+  tool, never through `node -e` or a heredoc - and spell a control character
+  `\x1b`, not `\u001b`: a `\u00XX` in a tool's text arrived as the raw
+  character itself, in three files at once, and this check is what said so.
 - **Tests live outside each package's `rootDir`,** so `pnpm -r typecheck` does
   not see them. They need `pnpm typecheck:test` or they rot untyped. CI runs
   both.
