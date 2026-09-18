@@ -65,7 +65,7 @@ function bridge(config: AppConfig) {
   return {
     getConfig: async () => current,
     setConfig: async (patch: Partial<AppConfig>) => {
-      if (setConfigFails) throw new Error("EADDRINUSE: port 3000 is already in use");
+      if (setConfigFails) throw new Error(setConfigMessage);
       calls.setConfig.push(patch);
       current = { ...current, ...patch };
       return current;
@@ -187,6 +187,8 @@ async function waitFor(cond: () => boolean, what: string, ms = 2000): Promise<vo
 let fakeDevices: { kind: string; deviceId: string; label: string; groupId: string }[] = [];
 /** make the main process refuse the save, the way a relay that cannot bind does */
 let setConfigFails = false;
+/** what that refusal says */
+let setConfigMessage = "EADDRINUSE: port 3000 is already in use";
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
 /** what a rotation did to the internet link, as main reports it */
@@ -298,6 +300,7 @@ beforeEach(() => {
 afterEach(() => {
   fakeDevices = [];
   setConfigFails = false;
+  setConfigMessage = "EADDRINUSE: port 3000 is already in use";
   claimFails = null;
   fakeModels = [];
   fakeRotation = { remote: "none" };
@@ -2137,6 +2140,129 @@ describe("typing a key in SETTINGS without saving it", () => {
  * the only way on, and SKIP turns translation off. The chain said KEY ? for
  * the rest of the run, because nothing re-checks a key that has not changed.
  */
+/**
+ * saveAndApply has returned whether the save landed since 13e744b, and only
+ * SETTINGS ever read it. Every setup button threw it away and moved on. The
+ * way a save fails here is real: a key is a relay setting, so saving one
+ * restarts the embedded relay, and when its port is held the restart fails
+ * and main puts the old key - on a fresh install, none - back. Setup then
+ * showed the step done (1 SPEECH, ticked), with the key gone, and the only
+ * word of it went to the LOG, whose button setup hides.
+ */
+describe("a setup step whose save fails", () => {
+  const text = (id: string): string => (document.getElementById(id) as HTMLElement).textContent || "";
+
+  const pasteKey = async (id: string, value: string, button: string): Promise<void> => {
+    const field = document.getElementById(id) as HTMLInputElement;
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitFor(() => !(document.getElementById(button) as HTMLButtonElement).disabled, `${button} to enable`);
+  };
+
+  const toStep2 = async (): Promise<void> => {
+    await bootWith({ setupDone: false });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep2"), "step 2");
+  };
+
+  it("stays on step 1 and says the key was not saved", async () => {
+    await bootWith({ setupDone: false });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    setConfigFails = true;
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(visible("obStep2"), "setup moved on past a save that failed").toBe(false);
+    expect(visible("obStep1")).toBe(true);
+    expect(visible("obSaveError"), "nothing on screen said the save failed").toBe(true);
+    expect(text("obSaveError")).toMatch(/COULD NOT SAVE/);
+    expect(text("obSaveError"), "the reason was not given").toMatch(/EADDRINUSE/);
+  });
+
+  it("stays on step 2 when the Gemini key does not save", async () => {
+    await toStep2();
+    await pasteKey("obGeminiKey", "gm-pasted", "obContinue2");
+    setConfigFails = true;
+    (document.getElementById("obContinue2") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(visible("obStep3"), "setup moved on past a save that failed").toBe(false);
+    expect(visible("obSaveError")).toBe(true);
+  });
+
+  it("stays on step 2 when SKIP does not save", async () => {
+    await toStep2();
+    setConfigFails = true;
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(visible("obStep3"), "setup moved on past a save that failed").toBe(false);
+    expect(visible("obSaveError")).toBe(true);
+  });
+
+  it("does not open the console, or call setup complete, when step 3 does not save", async () => {
+    await toStep2();
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep3"), "step 3");
+    setConfigFails = true;
+    (document.getElementById("obOpenConsole") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect((document.getElementById("app") as HTMLElement).dataset.view, "the console opened over a failed save").toBe(
+      "onboarding",
+    );
+    expect(document.getElementById("log")?.textContent || "").not.toMatch(/setup complete/);
+    expect(visible("obSaveError")).toBe(true);
+  });
+
+  it("gives the reason without Electron's wrapping", async () => {
+    await bootWith({ setupDone: false });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    setConfigFails = true;
+    setConfigMessage =
+      "Error invoking remote method 'config:set': Error: relay could not restart: listen EADDRINUSE: address already in use 0.0.0.0:8787";
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(text("obSaveError")).toMatch(/relay could not restart/i);
+    expect(text("obSaveError"), "the IPC plumbing reached the screen").not.toMatch(/remote method/i);
+  });
+
+  it("clears the message once the step saves", async () => {
+    await bootWith({ setupDone: false });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    setConfigFails = true;
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(60);
+    setConfigFails = false;
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep2"), "step 2 once the save works");
+
+    expect(visible("obSaveError"), "the failure outlived the save that fixed it").toBe(false);
+  });
+
+  it("does not greet a reopened setup with the last run's failure", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await waitFor(() => !(document.getElementById("obContinue1") as HTMLButtonElement).disabled, "step 1 ready");
+    setConfigFails = true;
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(60);
+    setConfigFails = false;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle(40);
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+
+    expect(visible("obSaveError"), "a closed setup's failure came back with it").toBe(false);
+  });
+});
+
 describe("a key that could not be checked at boot", () => {
   const text = (id: string): string => (document.getElementById(id) as HTMLElement).textContent || "";
   const checksOf = (key: string): number => calls.validated.filter((v) => v.key === key).length;

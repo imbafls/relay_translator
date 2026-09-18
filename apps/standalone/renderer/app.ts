@@ -1128,14 +1128,27 @@ function setSeg(id: string, value: string): void {
 }
 
 /** whether the save actually landed - callers used to assume it always did */
-async function saveAndApply(patch: Partial<AppConfig>, opts: { restart?: boolean } = {}): Promise<boolean> {
+/**
+ * What main said, without the wrapper Electron puts around an error thrown in
+ * an ipcMain.handle: "Error invoking remote method 'config:set': Error: ...".
+ */
+function ipcReason(err: unknown): string {
+  return String((err as Error)?.message || err).replace(/^Error invoking remote method '[^']*': (?:[A-Za-z]*Error: )?/, "");
+}
+
+async function saveAndApply(
+  patch: Partial<AppConfig>,
+  opts: { restart?: boolean; onFail?: (reason: string) => void } = {},
+): Promise<boolean> {
   try {
     config = await cr.setConfig(patch);
     syncControlsFromConfig();
     if (opts.restart) await restartIfLive();
     return true;
   } catch (err) {
-    log(`config save failed: ${String((err as Error)?.message || err)}`, "err");
+    const reason = ipcReason(err);
+    log(`config save failed: ${reason}`, "err");
+    opts.onFail?.(reason);
     return false;
   }
 }
@@ -2155,8 +2168,28 @@ function obSttChoice(): string {
 }
 
 /** (re)open setup at step 1 with the current values filled in */
+/**
+ * A setup step's save, which only moves setup on when it lands. SETTINGS
+ * reports a failed save in the LOG, but setup hides the footer that opens it,
+ * so the failure is said here instead. Moving on anyway marked the step done
+ * over a key main had just rolled back - a key is a relay setting, so saving
+ * one restarts the relay, and a held port fails that restart.
+ */
+async function obSave(patch: Partial<AppConfig>): Promise<boolean> {
+  const box = $("obSaveError");
+  const ok = await saveAndApply(patch, {
+    onFail: (reason) => {
+      box.textContent = `COULD NOT SAVE · ${reason}`;
+    },
+  });
+  box.hidden = ok;
+  return ok;
+}
+
 function openSetup(): void {
   obStep = 1;
+  // a failure belongs to the run of setup it happened in
+  $("obSaveError").hidden = true;
   obMode = isLocalStt(config.stt) ? "local" : "cloud";
   if (isLocalStt(config.stt)) obModel = config.stt;
   // a tier picked in a setup the user abandoned must not outlive it, or the
@@ -2912,15 +2945,15 @@ function bind(): void {
   $("obContinue1").onclick = async () => {
     const patch: Partial<AppConfig> = { stt: obSttChoice() };
     if (obMode === "cloud") patch.deepgramApiKey = inp("obDeepgramKey").value.trim();
-    await saveAndApply(patch);
+    if (!(await obSave(patch))) return;
     await obGoto(2);
   };
   $("obContinue2").onclick = async () => {
-    await saveAndApply({ geminiApiKey: inp("obGeminiKey").value.trim(), translationEnabled: true });
+    if (!(await obSave({ geminiApiKey: inp("obGeminiKey").value.trim(), translationEnabled: true }))) return;
     await obGoto(3);
   };
   $("obSkip2").onclick = async () => {
-    await saveAndApply({ translationEnabled: false });
+    if (!(await obSave({ translationEnabled: false }))) return;
     await obGoto(3);
   };
   sel("obAudioSource").onchange = () => renderOnboardingChain();
@@ -2935,7 +2968,7 @@ function bind(): void {
     // here: rerun setup to switch engine, lose the coach channel. A slot setup
     // does not show is not setup's to remove.
     const unshown = activeSources().slice(2);
-    await saveAndApply({ sources: [a, b, ...unshown].filter(Boolean), output: out, setupDone: true });
+    if (!(await obSave({ sources: [a, b, ...unshown].filter(Boolean), output: out, setupDone: true }))) return;
     $("translateToggle").hidden = false;
     setView("stage");
     log("setup complete - hit START SESSION when ready", "ok");

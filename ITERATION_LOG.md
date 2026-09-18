@@ -4375,3 +4375,19 @@ boot in the renderer harness re-imports the page, so every earlier boot's
 test's call log; the test that counts checks uses a key no other test does.
 Four mutations, each red: setup trusting the answer, no `online` re-check,
 an `online` re-check of every key, and "timed out" dropped from the helper.
+
+**53 - Setup ticked a step that did not save.** `saveAndApply` has
+returned whether the save landed since 13e744b, and only SETTINGS ever read
+it. All four setup buttons threw it away and moved on. The failure is a real
+one: a key is a relay setting, saving one restarts the embedded relay, and
+with 8787 held the restart fails and main writes the old key - on a fresh
+install, none - back. Setup showed 1 SPEECH ticked with the key gone, and
+said so only in the LOG, whose button setup hides. A step that cannot save
+now stays where it is with an amber COULD NOT SAVE line and main's reason,
+unwrapped from Electron's "Error invoking remote method" prefix (the log line
+loses it too). The line clears on the next good save and whenever setup
+reopens. Two of the seven tests passed before the fix only because the
+element did not exist yet; the mutations are what show they hold anything,
+and all eight - each button ignoring the result, no unwrapping, never
+clearing, reopening with it, no reason - turn a test red. Checked at the real
+964x761 in the harness: the line sits directly under the step's buttons.

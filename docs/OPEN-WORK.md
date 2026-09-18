@@ -976,6 +976,13 @@ fixed**, the last two on 2026-09-15.
   KEY ? all run. Setup now asks again about a key that could not be checked,
   and so does the network coming back.
 
+- ~~**Setup moved past a step whose save failed.**~~ Fixed 2026-09-18, found
+  by the 1.0 discovery pass. Saving a key restarts the relay; with its port
+  held the restart fails and main puts the old key back, but every setup
+  button ignored the failure, ticked the step and moved on with the key gone.
+  A step that cannot save now stays put and says why, on screen - setup
+  hides the LOG where SETTINGS reports it.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
