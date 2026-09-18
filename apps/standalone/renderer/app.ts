@@ -762,11 +762,25 @@ function setState(next: SessionState, error?: string, title?: string): void {
  */
 let startGeneration = 0;
 
+/**
+ * Why a START cannot start, or null. Asked before the session is prepared,
+ * because preparing it in the default link mode replaces the link - everyone
+ * reading is disconnected - and a START refused only afterwards had already
+ * done that for nothing. Asked again once main hands the config back, since
+ * that is the copy the session runs on.
+ */
+function startBlocker(): string | null {
+  if (sttIsLocal()) return modelReady(config.stt) ? null : `Download ${sttFull(config.stt)} first (02 TRANSCRIBE → DOWNLOAD).`;
+  return config.deepgramApiKey ? null : "Add a Deepgram key first (SETTINGS), or pick a local model under 02 TRANSCRIBE.";
+}
+
 async function startSession(opts: { rotateLink: boolean }): Promise<void> {
   if (session === "live" || session === "starting") return;
   const mine = ++startGeneration;
   setState("starting");
   try {
+    const blocked = startBlocker();
+    if (blocked) throw new Error(blocked);
     if (relayClient) {
       try {
         relayClient.disconnect();
@@ -788,11 +802,8 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     // later window inside capture.start(), not this one.
     if (mine !== startGeneration) return;
     config = prep.config;
-    if (sttIsLocal()) {
-      if (!modelReady(config.stt)) throw new Error(`Download ${sttFull(config.stt)} first (02 TRANSCRIBE → DOWNLOAD).`);
-    } else if (!config.deepgramApiKey) {
-      throw new Error("Add a Deepgram key first (SETTINGS), or pick a local model under 02 TRANSCRIBE.");
-    }
+    const stillBlocked = startBlocker();
+    if (stillBlocked) throw new Error(stillBlocked);
     clearStage();
     renderStageHeads();
 

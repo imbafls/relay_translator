@@ -40,6 +40,9 @@ interface Calls {
   claimed: (string | undefined)[];
   /** each time the viewer link was actually rotated */
   rotated: number[];
+  /** every runtime:prepare, with whether it asked main to rotate the link -
+   *  which main does in the default link mode, disconnecting everyone reading */
+  prepared: { rotate: boolean }[];
 }
 
 /** the status callback boot() registers, so a test can push a live relay in */
@@ -73,14 +76,17 @@ function bridge(config: AppConfig) {
     // mock left config undefined and renderIdle()'s config.stt read threw an
     // unhandled rejection once the preflight failed and setState("error", ...)
     // tried to redraw the stage.
-    prepareSession: async (opts?: { rotate?: boolean }) => ({
-      publisherUrl: "ws://127.0.0.1:0/publish",
-      viewerUrl: "",
-      obsUrl: "",
-      phoneUrl: "",
-      config: current,
-      rotation: opts?.rotate && current.linkMode === "unique" ? fakeRotation : undefined,
-    }),
+    prepareSession: async (opts?: { rotate?: boolean }) => {
+      calls.prepared.push({ rotate: !!opts?.rotate });
+      return {
+        publisherUrl: "ws://127.0.0.1:0/publish",
+        viewerUrl: "",
+        obsUrl: "",
+        phoneUrl: "",
+        config: current,
+        rotation: opts?.rotate && current.linkMode === "unique" ? fakeRotation : undefined,
+      };
+    },
     rotateLink: async () => {
       calls.rotated.push(Date.now());
       return { ...fakeRotation, url: undefined };
@@ -217,6 +223,7 @@ async function bootWith(config: Partial<AppConfig>, devices = fakeDevices): Prom
     opened: [],
     claimed: [],
     rotated: [],
+    prepared: [],
     exported: [],
     revealed: [],
     deleted: [],
@@ -1983,7 +1990,10 @@ describe("setting what viewers are told the stream is called", () => {
     // no settle(). status.session.state is not an independent signal - it is
     // this same renderer's own session report, echoed back by the main
     // process - so it cannot be what proves the lock.
-    await bootWith({ setupDone: true, brandName: "Omer's stream" });
+    //
+    // With a key: a START that cannot start now refuses before it reaches
+    // "starting" at all, so without one there is no session to lock for.
+    await bootWith({ setupDone: true, brandName: "Omer's stream", deepgramApiKey: "dg-key" });
     (document.getElementById("startStop") as HTMLButtonElement).click();
 
     expect((document.getElementById("brandNameInput") as HTMLInputElement).disabled).toBe(true);
@@ -3705,5 +3715,52 @@ describe("NEW when the internet link could not be replaced", () => {
     await settle(30);
 
     expect(logText(), "a STOP during the rotation swallowed the news that the old link still works").toMatch(/still works/i);
+  });
+});
+
+/**
+ * A START that was never going to start.
+ *
+ * In the default link mode START asks main to prepare the session with a new
+ * link, and main rotates it there - every phone reading the old one is
+ * disconnected. Main already refuses to rotate before its own relay check,
+ * because "nothing about a session that cannot start should spend the link".
+ * The renderer's half of that rule was never applied: it checked for a
+ * Deepgram key and a downloaded local model only after main had rotated, so
+ * a START with neither kicked everyone off and then refused.
+ */
+describe("a START that cannot start", () => {
+  const press = async (): Promise<void> => {
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await settle(40);
+  };
+  const logText = (): string => (document.getElementById("log") as HTMLElement).textContent || "";
+
+  it("does not replace the link when there is no Deepgram key", async () => {
+    await bootWith({ setupDone: true, linkMode: "unique", stt: "deepgram-nova-3", deepgramApiKey: "" });
+    await press();
+
+    expect(logText(), "the refusal never reached the log").toMatch(/Add a Deepgram key first/);
+    expect(
+      calls.prepared.filter((p) => p.rotate),
+      "the link was replaced - every phone disconnected - for a START that then refused",
+    ).toHaveLength(0);
+  });
+
+  it("does not replace the link for a local model that is not downloaded", async () => {
+    const local = STT_MODELS.find((m) => m.provider === "local")!;
+    await bootWith({ setupDone: true, linkMode: "unique", stt: local.id, deepgramApiKey: "" });
+    await press();
+
+    expect(logText()).toMatch(/first \(02 TRANSCRIBE/);
+    expect(calls.prepared.filter((p) => p.rotate)).toHaveLength(0);
+  });
+
+  // the check moved, it did not become a gate that also stops real starts
+  it("still replaces it for a START that can start", async () => {
+    await bootWith({ setupDone: true, linkMode: "unique", stt: "deepgram-nova-3", deepgramApiKey: "dg-key" });
+    await press();
+
+    expect(calls.prepared.filter((p) => p.rotate)).toHaveLength(1);
   });
 });

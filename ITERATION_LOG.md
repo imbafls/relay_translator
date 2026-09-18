@@ -3986,3 +3986,20 @@ errors, which is the point of typing the replies. Two adjacent shapes are
 carded rather than folded in: a START that cannot start - no key, no model -
 still replaces the link before refusing, and `claimHostedRoom` clears its
 timeout at the headers the same way this helper did.
+
+**27 - A START that could not start.** Carded by 26. In the default link
+mode, preparing a session is what rotates the link, and the renderer only
+checked for a Deepgram key or a downloaded model once main had done it - so
+START with neither disconnected every phone, then said "Add a Deepgram key
+first". Main has refused to rotate before its own relay check since
+`afd2156`, for this exact reason; the renderer's checks were the half that
+never moved. They now run before the session is prepared as well as after,
+against the config main hands back. The harness records each prepare and
+whether it asked for a rotation, and the test went red on the rotation, not
+the refusal - the refusal was always there, just late. One existing test
+depended on the old order: it pressed START with no key to watch the
+settings lock during "starting", a state such a START no longer reaches. It
+has a key now, which is what it was testing all along. The review looked at
+the one new window - the check now runs at the press rather than after an
+IPC round trip, and START is bound a few milliseconds before the model list
+loads - and found nothing that can start a session that early.

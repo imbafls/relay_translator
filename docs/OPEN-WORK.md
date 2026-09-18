@@ -747,6 +747,15 @@ fixed**, the last two on 2026-09-15.
   relays), the wording in one `rotationNotice` for the window and the tray, and
   a warning stays in 04 OUTPUT - the log is hidden on the stage, where NEW is.
 
+- ~~**A START that could not start still replaced the link.**~~ Fixed
+  2026-09-18, found while fixing the entry above. In the default link mode
+  preparing a session rotates the link, disconnecting everyone reading, and
+  the renderer checked for a Deepgram key or a downloaded model only after
+  that - so a START with neither kicked every phone off and then refused.
+  Main already refused to rotate before its own relay check, for exactly this
+  reason; the renderer's half of the rule now runs before the session is
+  prepared as well as after.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
