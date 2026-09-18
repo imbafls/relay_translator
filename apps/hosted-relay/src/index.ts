@@ -201,7 +201,38 @@ const ANON_CLAIMER = "anon";
  * one is the safe reading.
  */
 export function claimRateKey(request: Request): string {
-  return request.headers.get("CF-Connecting-IP")?.trim() || ANON_CLAIMER;
+  const ip = request.headers.get("CF-Connecting-IP")?.trim();
+  if (!ip) return ANON_CLAIMER;
+  return ip.includes(":") ? ipv6Subscriber(ip) : ip;
+}
+
+/**
+ * The /64 an IPv6 address belongs to, as one key.
+ *
+ * Keyed on the full address, one host sent every request from a different
+ * address in its own /64 - 2^64 of them, and a standard trick - and every
+ * request found an empty bucket. A /64 is the unit a single subscriber is
+ * handed, so it is the unit counted. An IPv4 address written as IPv6
+ * (`::ffff:a.b.c.d`) is that IPv4 address, so it cannot hold two buckets.
+ * Anything that does not parse is keyed as it came, which is where it was.
+ */
+function ipv6Subscriber(ip: string): string {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped?.[1]) return mapped[1];
+
+  const halves = ip.split("::");
+  if (halves.length > 2) return ip;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  // an embedded IPv4 tail fills two of the eight groups
+  const width = (groups: string[]): number => groups.reduce((n, g) => n + (g.includes(".") ? 2 : 1), 0);
+  const missing = 8 - width(head) - width(tail);
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return ip;
+
+  const groups = [...head, ...new Array<string>(halves.length === 2 ? missing : 0).fill("0"), ...tail];
+  const prefix = groups.slice(0, 4);
+  if (!prefix.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return ip;
+  return `${prefix.map((g) => parseInt(g, 16).toString(16)).join(":")}::/64`;
 }
 
 // ---------------------------------------------------------------------------

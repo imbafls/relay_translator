@@ -77,6 +77,10 @@ new_sqlite_classes = ["Room"]
 # state, deliberately - a counter up there would be per-isolate and per-colo,
 # which is to say not a limit. `period` may only be 10 or 60.
 #
+# "Address" here and below is an IPv4 address or an IPv6 /64 - see
+# claimRateKey in src/index.ts: one IPv6 host holds a whole /64, and keyed on
+# the full address it could change address per request and never be refused.
+#
 # Five a minute per address: a streamer claims one room, ever, and the desktop
 # app claims one on first run. Five leaves room for a retry and a second
 # machine without leaving room for a script.

@@ -4127,3 +4127,17 @@ rewritten as `\x` escapes from character codes, and CLAUDE.md says which
 spelling survives - and the sentence saying so went in with the raw
 character in it too, and the gate failed on it. Written from character
 codes as well.
+
+**35 - One host, a fresh bucket every time.** Both rate limits keyed on the
+full `CF-Connecting-IP`, and for IPv6 that is a 128-bit address in a /64 the
+host owns outright: send each request from a different one, a standard
+trick, and every request finds an empty bucket. That took the claim limit
+and - worse - the feedback limit, the only thing between the public and up
+to two R2 objects of ~1.5 MB each on a bucket that never expires. The key is
+now the /64, normalised so that `2001:0DB8:0001:0002::` and `2001:db8:1:2::`
+are one sender, and an IPv4 address written as IPv6 is keyed as the IPv4
+address so it cannot hold two buckets. Reverting the keying turns five tests
+red across both endpoints; dropping the IPv4-mapped case, the hextet
+normalisation, or the /64 cut each turns one. What is left - a sender spread
+across many networks, and a bucket with no expiry rule - is an account
+setting, not code, and is written down under Known limitations with why.

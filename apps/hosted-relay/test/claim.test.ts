@@ -99,3 +99,46 @@ describe("rate limiting POST /claim", () => {
     expect(claimRateKey(claim())).toBeTruthy();
   });
 });
+
+/**
+ * One host, a fresh bucket on every request.
+ *
+ * An ordinary IPv6 host holds a whole /64 - 2^64 addresses - and can send each
+ * request from a different one. Keyed on the full address, every request found
+ * an empty bucket and neither limiter ever refused anything: not /claim, and
+ * not /feedback, which writes up to ~1.5 MB into R2 per request on a bucket
+ * with no expiry. Cloudflare turns IPv6 on for proxied domains by default. A
+ * /64 is the unit a single subscriber is handed, so it is the unit to count.
+ */
+describe("the rate-limit key for an IPv6 caller", () => {
+  const key = (ip: string): string => claimRateKey(claim({ "CF-Connecting-IP": ip }));
+
+  it("is the same for every address in one /64", () => {
+    expect(key("2001:db8:1:2::1"), "one host got a fresh bucket by changing the end of its address").toBe(
+      key("2001:db8:1:2::ffff"),
+    );
+    expect(key("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe(key("2001:db8:1:2::1"));
+  });
+
+  it("is the same whichever way the address is written", () => {
+    expect(key("2001:0DB8:0001:0002:0000:0000:0000:0001")).toBe(key("2001:db8:1:2::1"));
+  });
+
+  it("still tells two /64s apart", () => {
+    expect(key("2001:db8:1:2::1")).not.toBe(key("2001:db8:1:3::1"));
+    expect(key("2001:db8::1")).not.toBe(key("2001:db9::1"));
+  });
+
+  it("leaves an IPv4 address as it is, however it is written", () => {
+    expect(key("203.0.113.7")).toBe("203.0.113.7");
+    expect(key("::ffff:203.0.113.7"), "an IPv4 caller written as IPv6 got a second bucket").toBe("203.0.113.7");
+  });
+
+  it("is what the claim limiter is actually handed", async () => {
+    const keys: string[] = [];
+    const h = envWith({ allow: true, onLimit: (k) => keys.push(k) });
+    await worker.fetch(claim({ "CF-Connecting-IP": "2001:db8:1:2::1" }), h.env);
+    await worker.fetch(claim({ "CF-Connecting-IP": "2001:db8:1:2::2" }), h.env);
+    expect(keys[0]).toBe(keys[1]);
+  });
+});

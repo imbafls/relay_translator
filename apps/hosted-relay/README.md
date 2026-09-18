@@ -309,6 +309,9 @@ day. `test/uplinkGone.test.ts` covers it.
 - **`POST /claim` is rate limited, but loosely - know what that buys.** A
   `[[ratelimits]]` binding, 5 per 60s keyed on `CF-Connecting-IP`, checked
   before any room id is minted so a refused claim wakes no Durable Object.
+  An IPv6 caller is counted by its /64 (`claimRateKey`): keyed on the full
+  address, one host could send every request from a fresh address in its own
+  subnet and never be refused, here or on `/feedback`.
 
   **Measured against the deployed service on 2026-09-06: the 25th sequential
   claim was the first to be refused.** That is the documented behaviour, not a

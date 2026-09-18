@@ -67,6 +67,13 @@ here.
 - **textrelay.cc has no mailbox.** Nothing the product ships sends mail or
   shows an address - problem reports go through `POST /feedback` into R2 - so
   the paid mailbox and DKIM are an owner task on the zone, not a release step.
+- **The feedback bucket keeps everything for ever.** `callout-relay-feedback`
+  has no R2 lifecycle rule, so reports accumulate until someone deletes them,
+  and a sender spread across many networks pays the per-address limit once per
+  network. One host no longer can - IPv6 is counted by /64 since 2026-09-18 -
+  and a report is capped at ~1.5 MB. **Why it does not hold 1.0:** an expiry
+  rule is an account setting on the bucket, the owner's to choose (how long a
+  report is worth keeping is a policy, not a default), not a code change.
 
 ---
 
@@ -826,6 +833,15 @@ fixed**, the last two on 2026-09-15.
   now strips control characters (a message and log keep tabs and line
   breaks), and the script prints every field through `printable()`, since
   records stored before this are still in the bucket.
+
+- ~~**One IPv6 host was never rate limited.**~~ Fixed 2026-09-18, found by the
+  1.0 discovery pass. Both limits keyed on the full `CF-Connecting-IP`, and an
+  ordinary IPv6 host holds a /64 - it could send every `/claim` and every
+  `/feedback` (two R2 objects, up to ~1.5 MB) from a fresh address and never
+  meet a full bucket. `claimRateKey` now counts an IPv6 caller by its /64,
+  however the address is written, and an IPv4 address written as IPv6 as the
+  IPv4 address. The bucket's lack of an expiry rule is under Known
+  limitations.
 
 ### Other
 

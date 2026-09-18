@@ -261,6 +261,24 @@ describe("POST /feedback", () => {
     expect(puts, "a refused report still cost an R2 write").toHaveLength(0);
   });
 
+  // the costly one: an accepted report is up to two R2 objects, ~1.5 MB, on a
+  // bucket that never expires - one IPv6 host must not get a bucket per address
+  it("counts every address in one IPv6 /64 as one sender", async () => {
+    const keys: string[] = [];
+    const { env } = envWith({ allow: true });
+    (env as unknown as { FEEDBACK_LIMIT: unknown }).FEEDBACK_LIMIT = {
+      limit: async ({ key }: { key: string }) => {
+        keys.push(key);
+        return { success: true };
+      },
+    };
+    for (const ip of ["2001:db8:1:2::1", "2001:db8:1:2::beef"]) {
+      await worker.fetch(post({ message: "hi", appVersion: "0.8.1" }, { "CF-Connecting-IP": ip }), env);
+    }
+    expect(keys).toHaveLength(2);
+    expect(keys[0], "each address in one /64 was handed its own feedback allowance").toBe(keys[1]);
+  });
+
   it("keeps working with no limiter bound, which is local dev", async () => {
     const { env } = envWith({});
     const res = await worker.fetch(post({ message: "hi", appVersion: "0.6.0" }), env);
