@@ -927,6 +927,13 @@ fixed**, the last two on 2026-09-15.
   on-air line, drawn the way it airs, and a quiet stretch no longer fades it.
   The phone page's preview is unchanged.
 
+- ~~**A screen reader re-read every partial.**~~ Fixed 2026-09-18, found by
+  the 1.0 discovery pass. The half-caption sat inside the polite live region
+  `#lines`, and each partial rebuilt its text, so VoiceOver and TalkBack
+  queued the whole sentence so far several times a second, with the
+  translation last. The half-caption is now `aria-hidden` - it is for eyes -
+  and the finished line, which arrives as a row of its own, is read as before.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

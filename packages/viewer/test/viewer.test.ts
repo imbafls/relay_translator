@@ -2437,3 +2437,46 @@ describe("the display preview on the overlay", () => {
     expect(previewRow()?.classList.contains("obs-live")).toBe(false);
   });
 });
+
+/**
+ * What a screen reader is handed, while somebody is still talking.
+ *
+ * `#lines` is a polite live region, and the half-caption sat inside it. Every
+ * partial rebuilds that row's text, which a screen reader hears as new text to
+ * read: "enemy", then "enemy pushing", then "enemy pushing mid" - the whole
+ * sentence so far, again, several times a second, queued faster than it can
+ * be spoken, and the translation the reader opened the link for comes last.
+ * The half-caption is for eyes; the finished line, a new row, is what is read.
+ */
+describe("a screen reader and the half-caption", () => {
+  /** the text a screen reader would take from #lines: nothing under aria-hidden */
+  const announced = (): string => {
+    const copy = $("lines").cloneNode(true) as HTMLElement;
+    for (const hidden of copy.querySelectorAll('[aria-hidden="true"]')) hidden.remove();
+    return copy.textContent?.replace(/\s+/g, " ").trim() || "";
+  };
+
+  it("is not read out on every partial", () => {
+    boot();
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    for (const words of ["enemy", "enemy pushing", "enemy pushing mid"]) {
+      push({ type: "partial", id: 1, source: words, channel: 0 });
+    }
+
+    expect(lineTexts().join(" "), "the half-caption was not on screen, so this proves nothing").toContain(
+      "enemy pushing mid",
+    );
+    expect(announced(), "every partial was handed to the screen reader as new text").not.toContain("enemy");
+  });
+
+  it("still reads the finished line and its translation", () => {
+    boot();
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "partial", id: 1, source: "enemy pushing", channel: 0 });
+    push({ type: "subtitle", id: 1, source: "enemy pushing mid", final: true, channel: 0 });
+    push({ type: "subtitle", id: 1, source: "enemy pushing mid", target: "địch đẩy giữa", final: true, channel: 0 });
+
+    expect(announced()).toContain("enemy pushing mid");
+    expect(announced()).toContain("địch đẩy giữa");
+  });
+});

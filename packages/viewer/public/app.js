@@ -561,6 +561,11 @@
     if (!interim) {
       interim = born(makeRowEl(stamp(), "", "", msg.speaker, msg.color));
       interim.classList.add("interim");
+      // For eyes only. #lines is a polite live region and every partial below
+      // rebuilds this row's text, so a screen reader re-read the whole sentence
+      // so far on each one, queued faster than it could be spoken, with the
+      // translation last. The finished line arrives as a row of its own.
+      interim.setAttribute("aria-hidden", "true");
       interim.querySelector(".tgt").remove();
       linesEl.appendChild(interim);
       interims.set(ch, interim);

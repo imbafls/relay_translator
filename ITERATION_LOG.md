@@ -4285,3 +4285,15 @@ broadcast. Chromium on a fresh overlay: the sample line at the overlay's
 replaced the body's contents and kept its classes, so an overlay booted by
 an earlier test left `obs` on the next phone page. `boot()` resets them now,
 and the other 135 viewer tests pass with it, so none had been leaning on it.
+
+**46 - The sentence so far, again and again.** `#lines` is a polite live
+region, the page's lang marking was added for screen-reader users, and the
+open half-caption sat inside the region. Each partial clears the row's text
+and appends it anew, which a screen reader takes as new text: "enemy",
+"enemy pushing", "enemy pushing mid", queued faster than it can be spoken,
+and the translation a reader opened the link for arriving last. The
+half-caption is now `aria-hidden`. That is safe only because the finished
+line is never the half-caption promoted in place on this page - it is a row
+of its own, appended - and the second test holds that the finished line and
+its translation are still what a screen reader is handed. Nothing on screen
+changes.
