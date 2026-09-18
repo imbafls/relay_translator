@@ -102,6 +102,13 @@ function bridge(config: AppConfig) {
     validateKey: async (provider: "deepgram" | "gemini", key: string) => {
       calls.validateKey.push(provider);
       calls.validated.push({ provider, key });
+      const slow = slowNextCheck;
+      slowNextCheck = null;
+      if (slow) {
+        await slow.gate;
+        return slow.answer;
+      }
+      if (rejectedKeys.includes(key)) return { valid: false, detail: "key rejected" };
       return { valid: true };
     },
     checkForUpdate: async () => undefined,
@@ -193,6 +200,13 @@ let readRelayLogGate: Promise<void> | null = null;
 let releaseReadRelayLogGate: (() => void) | null = null;
 /** when set, cr.appVersion() rejects instead of answering - a local IPC hiccup */
 let appVersionFails = false;
+/** keys cr.validateKey() turns down as rejected; every other key is valid */
+let rejectedKeys: string[] = [];
+/**
+ * When set, the next cr.validateKey() call waits for `gate` and then answers
+ * `answer`: one slow check, so that a later check can overtake it.
+ */
+let slowNextCheck: { gate: Promise<void>; answer: { valid: false; detail: string } } | null = null;
 /** what cr.listTranscripts() answers, newest first */
 let fakeSaved: TranscriptSummary[] = [];
 /** what cr.readTranscript(id) answers, by id */
@@ -283,6 +297,8 @@ afterEach(() => {
   readRelayLogGate = null;
   releaseReadRelayLogGate = null;
   appVersionFails = false;
+  rejectedKeys = [];
+  slowNextCheck = null;
   fakeSaved = [];
   fakeSavedBodies = {};
   for (const t of timers) clearInterval(t);
@@ -335,8 +351,15 @@ describe("setup reopening on keys that are already saved", () => {
    * The cause was a verdict cache keyed by provider rather than by the string
    * it was earned for, so the verdict for the newly typed key was read back
    * against the old saved one and used to suppress the re-check.
+   *
+   * What has to hold is what the user sees: setup shows the saved key's own
+   * verdict. This used to assert a re-check instead, which was the only way to
+   * get that verdict while one slot held both keys' - now the saved key keeps
+   * the verdict it earned at boot, so the saved key here is one the provider
+   * turns down and the typed one is good, and the old bug reads VALID.
    */
-  it("re-checks the saved key rather than trusting a verdict for a different string", async () => {
+  it("shows the saved key's own verdict, not the one earned by a different string", async () => {
+    rejectedKeys = ["dg-saved-earlier"];
     await bootWith({ setupDone: true, deepgramApiKey: "dg-saved-earlier" });
     (document.getElementById("settingsBtn") as HTMLButtonElement).click();
     await settle();
@@ -349,23 +372,16 @@ describe("setup reopening on keys that are already saved", () => {
       () => calls.validated.some((v) => v.key === "dg-freshly-pasted"),
       "the check for the typed key",
     );
+    await settle(40);
 
     // reopen setup without saving: the field refills from the saved config, so
-    // the cached verdict belongs to a string that is no longer in play
-    // boot may already have validated the saved key, so only entries recorded
-    // AFTER this click count - otherwise the assertion is satisfied by history
-    const before = calls.validated.length;
+    // the verdict that counts is the saved string's, whether kept or re-earned
     (document.getElementById("settingsSetup") as HTMLButtonElement).click();
-    // the saved key itself must be re-validated. Counting calls is not enough:
-    // a second debounce of the typed key would satisfy a count and prove
-    // nothing, which is how the first version of this test passed against the
-    // very bug it was written for.
+    await settle(40);
+    expect((document.getElementById("obDeepgramKey") as HTMLInputElement).value).toBe("dg-saved-earlier");
     await waitFor(
-      () =>
-        calls.validated
-          .slice(before)
-          .some((v) => v.provider === "deepgram" && v.key === "dg-saved-earlier"),
-      "the saved key to be re-checked instead of reusing the other key's verdict",
+      () => /REJECTED/.test(document.getElementById("obDgStatus")?.textContent || ""),
+      "setup to show the saved key as rejected rather than borrowing the typed key's VALID",
     );
   });
 
@@ -1969,6 +1985,136 @@ describe("a revealed key does not stay revealed", () => {
     for (const id of ["deepgramApiKey", "geminiApiKey", "publisherToken"]) {
       expect(field(id).type, `${id} was left in plain text`).toBe("password");
     }
+  });
+});
+
+/**
+ * Two checks shared one verdict per provider: the boot check of the SAVED key,
+ * which is what the chain's KEY OK / KEY INVALID reads, and the debounced check
+ * of whatever is typed into SETTINGS. The typed check overwrote the saved one,
+ * the chain then found no verdict for the saved key - and "no verdict" renders
+ * as KEY OK. CLEAR did the same by deleting the slot outright.
+ *
+ * So a saved key the provider had turned down came back from SETTINGS reading
+ * KEY OK, having been neither changed nor checked again, and the first sign of
+ * it was a session that produced nothing.
+ */
+describe("typing a key in SETTINGS without saving it", () => {
+  const text = (id: string): string => (document.getElementById(id) as HTMLElement).textContent || "";
+
+  const typeInto = async (id: string, value: string): Promise<void> => {
+    const field = document.getElementById(id) as HTMLInputElement;
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  const leaveSettings = async (): Promise<void> => {
+    (document.getElementById("settingsBack") as HTMLButtonElement).click();
+    await settle(40);
+  };
+
+  it("leaves the saved Deepgram key's own verdict on the chain", async () => {
+    rejectedKeys = ["dg-turned-down"];
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-turned-down" });
+    await waitFor(() => /KEY INVALID/.test(text("metaStt")), "the boot check to reject the saved key");
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    await typeInto("deepgramApiKey", "dg-typed-not-saved");
+    await waitFor(() => calls.validated.some((v) => v.key === "dg-typed-not-saved"), "the typed key's check");
+    await settle(40);
+    await leaveSettings();
+
+    expect(text("metaStt"), "the chain calls a rejected saved key OK").toMatch(/KEY INVALID/);
+  });
+
+  it("leaves the saved Gemini key's own verdict on the chain", async () => {
+    rejectedKeys = ["gm-turned-down"];
+    await bootWith({ setupDone: true, geminiApiKey: "gm-turned-down", translationEnabled: true });
+    await waitFor(() => /KEY INVALID/.test(text("gmKeyState")), "the boot check to reject the saved key");
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    await typeInto("geminiApiKey", "gm-typed-not-saved");
+    await waitFor(() => calls.validated.some((v) => v.key === "gm-typed-not-saved"), "the typed key's check");
+    await settle(40);
+    await leaveSettings();
+
+    expect(text("gmKeyState"), "the chain calls a rejected saved key OK").toMatch(/KEY INVALID/);
+  });
+
+  it("keeps the verdict when CLEAR empties the field", async () => {
+    rejectedKeys = ["dg-turned-down"];
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-turned-down" });
+    await waitFor(() => /KEY INVALID/.test(text("metaStt")), "the boot check to reject the saved key");
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.querySelector('[data-clear="deepgramApiKey"]') as HTMLButtonElement).click();
+    // past the 500 ms debounce, so the empty field has had its turn
+    await settle(700);
+    await leaveSettings();
+
+    expect(text("metaStt"), "CLEAR wiped the saved key's verdict").toMatch(/KEY INVALID/);
+  });
+
+  it("keeps it however many keys are tried before leaving", async () => {
+    rejectedKeys = ["dg-turned-down"];
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-turned-down" });
+    await waitFor(() => /KEY INVALID/.test(text("metaStt")), "the boot check to reject the saved key");
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    // more strings than the verdict cache keeps, each checked in turn
+    for (let i = 0; i < 10; i++) {
+      await typeInto("deepgramApiKey", `dg-attempt-${i}`);
+      await waitFor(() => calls.validated.some((v) => v.key === `dg-attempt-${i}`), `attempt ${i}'s check`);
+    }
+    await settle(40);
+    await leaveSettings();
+
+    expect(text("metaStt"), "the saved key's verdict was evicted by the attempts").toMatch(/KEY INVALID/);
+  });
+
+  /**
+   * One string can be checked twice at once - the boot check still out when
+   * the same key is typed or pasted again. The newer check owns the verdict:
+   * an older answer arriving late (a network blip at boot) must not replace
+   * the fresher one.
+   */
+  it("lets the newest check of a string decide, not the slowest", async () => {
+    let release!: () => void;
+    slowNextCheck = {
+      gate: new Promise<void>((r) => (release = r)),
+      answer: { valid: false, detail: "no connection" },
+    };
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    await waitFor(() => calls.validated.some((v) => v.key === "dg-saved"), "the slow boot check to go out");
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    await typeInto("deepgramApiKey", "dg-saved");
+    await waitFor(
+      () => calls.validated.filter((v) => v.key === "dg-saved").length === 2,
+      "the second check of the same key",
+    );
+    await settle(40);
+    release();
+    await settle(40);
+    await leaveSettings();
+
+    expect(text("metaStt"), "the late boot answer replaced the newer one").toMatch(/KEY OK/);
+  });
+
+  it("still shows the typed key's own verdict while it is in the field", async () => {
+    rejectedKeys = ["dg-typed-bad"];
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved-good" });
+    await waitFor(() => /KEY OK/.test(text("metaStt")), "the boot check of the saved key");
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    await typeInto("deepgramApiKey", "dg-typed-bad");
+    await waitFor(() => /INVALID/.test(text("dgStatus")), "the typed key's verdict beside the field");
   });
 });
 

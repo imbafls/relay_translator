@@ -112,18 +112,39 @@ let feedbackPreviewToken = 0;
  * string the user had just typed over, showed the old key as VALID, and wrote
  * it back on CONTINUE. `verdictFor` makes a verdict for a different string
  * count as no verdict at all, which is what re-runs the check.
+ *
+ * More than one string per provider, because two checks run side by side: the
+ * boot check of the SAVED key, which the chain's KEY OK / KEY INVALID reads,
+ * and the check of whatever is typed into SETTINGS. With one slot the typed
+ * key's verdict evicted the saved key's, and the chain read the resulting "no
+ * verdict" as KEY OK - a key the provider had turned down came back from
+ * SETTINGS looking fine.
  */
-const keyCheck: {
-  deepgram?: { key: string; result: KeyValidation | "checking" };
-  gemini?: { key: string; result: KeyValidation | "checking" };
-} = {};
+type Verdict = { result: KeyValidation | "checking" };
+const keyCheck: Record<"deepgram" | "gemini", Map<string, Verdict>> = {
+  deepgram: new Map(),
+  gemini: new Map(),
+};
+/** plenty for a session of pasting keys; the saved key's verdict is never the one dropped */
+const KEY_VERDICTS_KEPT = 8;
 
 function verdictFor(
   provider: "deepgram" | "gemini",
   key: string | undefined,
 ): KeyValidation | "checking" | undefined {
-  const cached = keyCheck[provider];
-  return cached && key && cached.key === key ? cached.result : undefined;
+  return key ? keyCheck[provider].get(key)?.result : undefined;
+}
+
+function rememberVerdict(provider: "deepgram" | "gemini", key: string, verdict: Verdict): void {
+  const kept = keyCheck[provider];
+  // re-inserting moves the key to the newest end, which is what eviction reads
+  kept.delete(key);
+  kept.set(key, verdict);
+  const saved = provider === "deepgram" ? config.deepgramApiKey : config.geminiApiKey;
+  for (const old of kept.keys()) {
+    if (kept.size <= KEY_VERDICTS_KEPT) break;
+    if (old !== saved && old !== key) kept.delete(old);
+  }
 }
 let update: UpdateStatus | null = null;
 /** local STT models on disk / downloading (from the main process) */
@@ -1114,18 +1135,17 @@ async function saveAndApply(patch: Partial<AppConfig>, opts: { restart?: boolean
 // ---------------------------------------------------------------------------
 
 async function checkKey(provider: "deepgram" | "gemini", key: string): Promise<KeyValidation> {
-  if (!key) {
-    delete keyCheck[provider];
-    return { valid: false, detail: "empty" };
-  }
-  keyCheck[provider] = { key, result: "checking" };
+  // an empty field has no verdict to earn, and it must not take away the one
+  // the saved key already has: CLEAR in SETTINGS is not a save
+  if (!key) return { valid: false, detail: "empty" };
+  const pending: Verdict = { result: "checking" };
+  rememberVerdict(provider, key, pending);
   renderChain();
   const res = await cr.validateKey(provider, key);
-  // the field can have moved on while this was in flight; the onboarding
-  // checks already guard for that, and this one has to as well or a slow
-  // verdict lands on top of a newer key
-  if (keyCheck[provider]?.key !== key) return res;
-  keyCheck[provider] = { key, result: res };
+  // a later check of the same string may have started while this one was in
+  // flight; the newest check owns the verdict, so a slow answer is dropped
+  if (keyCheck[provider].get(key) !== pending) return res;
+  rememberVerdict(provider, key, { result: res });
   renderChain();
   if (view === "settings") renderKeyStatuses();
   return res;
@@ -2461,7 +2481,7 @@ const obCheckDeepgram = debounce(async () => {
   const res = await cr.validateKey("deepgram", key);
   if (inp("obDeepgramKey").value.trim() !== key) return;
   obDeepgram = res;
-  keyCheck.deepgram = { key, result: res };
+  rememberVerdict("deepgram", key, { result: res });
   // Only if setup is still what the user is looking at. This check is debounced
   // 500 ms and then awaits a round trip, and renderOnboarding has no view guard
   // - it calls renderOnboardingChain, which greys every block, hides the
@@ -2485,7 +2505,7 @@ const obCheckGemini = debounce(async () => {
   const res = await cr.validateKey("gemini", key);
   if (inp("obGeminiKey").value.trim() !== key) return;
   obGemini = res;
-  keyCheck.gemini = { key, result: res };
+  rememberVerdict("gemini", key, { result: res });
   renderObKeyStatus();
 }, 500);
 

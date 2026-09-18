@@ -4342,3 +4342,18 @@ reads the log again whenever it opens with the box ticked, which keeps the
 preview-is-the-payload promise and makes it current. The test's first draft
 asserted on the preview after sending, which a delivered send clears; it
 asserts on it before sending now, and on what was sent after.
+
+**51 - KEY OK for a key that was turned down.** The chain's KEY OK /
+KEY INVALID reads the verdict of the saved key's boot check. The check of
+whatever is typed into SETTINGS wrote to the same single slot per provider,
+so typing a key and leaving without saving - or pressing CLEAR - threw the
+saved key's KEY INVALID away, and the chain reads "no verdict" as KEY OK.
+Verdicts are now kept per string (a few per provider, the saved key's never
+evicted), and CLEAR no longer deletes anything. That changed one older test:
+it asserted that reopening setup re-checks the saved key, which was the only
+way to get the saved key's verdict while one slot held both. It asserts what
+the user sees instead - setup shows the saved key's own verdict - with a
+saved key that is rejected and a typed one that is good, so the original bug
+reads VALID. Five mutations, each turning its test red: the verdict ignoring
+the string, CLEAR clearing, eviction not sparing the saved key, one slot
+again, and a slow answer overwriting a newer check of the same string.

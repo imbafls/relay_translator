@@ -962,6 +962,13 @@ fixed**, the last two on 2026-09-15.
   whenever it opens with the box ticked, so the preview is still exactly
   what is sent.
 
+- ~~**A key typed in SETTINGS made a rejected saved key read KEY OK.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. The saved key's check
+  and the typed key's check shared one verdict per provider, so typing (or
+  CLEAR) evicted the saved key's KEY INVALID and the chain read the empty
+  slot as OK. Verdicts are now kept per string, and the saved key's is never
+  the one let go.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
