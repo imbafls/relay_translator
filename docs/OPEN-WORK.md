@@ -1038,6 +1038,12 @@ fixed**, the last two on 2026-09-15.
   failure back to step 2. What a save or a step change comes back with now
   belongs to the run and the step it was made in.
 
+- ~~**DOM tests fetched from another project's dev server's port.**~~ Fixed
+  2026-09-18, found by an independent review. vitest puts happy-dom's page on
+  `http://localhost:3000` and happy-dom fetched every stylesheet and iframe a
+  page links to - from whatever listens on 3000, which here is another
+  project. Loading is off now and the page sits on the discard port.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

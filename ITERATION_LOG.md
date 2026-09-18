@@ -4592,3 +4592,21 @@ gone, and `obGoto` does too - it awaits the device list on the way to step 3
 mutations, `obGoto` ignoring the run survived: nothing held the device read.
 A knob now holds `enumerateDevices`, and a fourth test reopens setup while
 step 3 is reading devices; it goes red without that check.
+
+**64 - The noise was a request.** Every renderer run for weeks printed
+ECONNREFUSED to localhost:3000, and it read as noise. It was happy-dom doing
+what it is for: vitest hands it `http://localhost:3000` unless told
+otherwise, and it fetches the stylesheets and iframes a page links to - the
+renderer's style.css and fonts.css among them. It failed only because nothing
+was listening. On this machine 3000 is another project's dev server, and with
+it up the tests would have loaded that project's CSS into these pages; any
+test reading a computed style would have been testing someone else's
+stylesheet, depending on what else happened to be running. `vitest.config.mts`
+now turns loading off for happy-dom and puts the page on the discard port.
+The guard serves a real ephemeral port and counts: before, the page fetched
+/style.css and /frame.html; after, only the probe the test makes itself,
+which proves the server would have seen a request. Three of four mutations
+go red. The fourth, script loading, survives on purpose - happy-dom 20
+refuses script files by default, which the first red run showed - and the
+config says so rather than letting the setting read as load-bearing. The DOM
+files now run without a single ECONNREFUSED line. 105 test files.
