@@ -4449,3 +4449,27 @@ reopened setup, and the next test's Escape closed that test's setup.
 Removing the listener patch's own-property copy by `delete` broke 30-odd
 tests at once, because the global window carries `addEventListener` as its
 own property; it is put back exactly as found. Three mutations, each red.
+
+**56 - The triage rule read three sections of six.** Phase 2 ends when no
+open item is left without a fix or a Known-limitations line, and
+`openWorkCurrent.test.ts` is what holds that. The Known limitations intro
+says the test "fails if an open item is left anywhere in this file". It
+checked three sections by name - Known limitations, Blocked, Not blocked - so
+open work under any new `##` heading, or above the first one, would have sat
+there unseen: a sentence claiming a check that was only partly written, which
+is lesson 3. The rule now finds every section itself, the preamble included,
+and knows four kinds by heading; a `Closed by ...` section is the one
+addition, because its entries are finished work written as prose. Anything
+else may hold no live entry. A fixture with an open item in the preamble and
+under a heading nobody named goes red against a stub that reads nothing, as
+does the check that it read more than four sections; two mutations - a new
+heading kind waved through, the preamble not checked - each turn it red. The
+first draft of this went through a bash heredoc and came out with a real CR,
+LF and backspace where `\r`, `\n` and `\b` belonged, and the first
+mutation's "8 passed" was a mutation that had not applied - the same
+backslash trap, which the memory for this repo already names. Both redone
+with files written by the editor, and the mutation re-run until it said it
+had applied. The last card the release card still owed. Every open item in
+OPEN-WORK is now either struck through or in Known limitations, all 42
+discovery cards are Done, and the three Backlog cards are owner-only and
+named there. Phase 2 is finished.

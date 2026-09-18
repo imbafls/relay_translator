@@ -48,6 +48,38 @@ function liveEntries(text: string): string[] {
   return out;
 }
 
+/**
+ * The `## ` sections holding live entries that no triage rule looks at.
+ *
+ * The rule below checks three sections by name, so open work under any other
+ * heading - a new `## Found after 1.0`, say - would sit there unseen by it.
+ * Every section is one of four kinds, told apart by heading: the release's
+ * known limitations (live entries are the point), `Blocked` (live by design,
+ * each B<n> named in the limitations), `Not blocked` (nothing may be live),
+ * and a `Closed by ...` record, whose entries are finished work written as
+ * prose rather than struck. Anything else, the text before the first heading
+ * included, may hold no live entry at all. The sections are found, not listed.
+ */
+function triage(text: string): { seen: string[]; untriaged: { heading: string; live: string[] }[] } {
+  const sections: { heading: string; body: string[] }[] = [{ heading: "(before the first ## heading)", body: [] }];
+  for (const line of text.split(/\r?\n/)) {
+    if (/^## /.test(line)) sections.push({ heading: line.slice(3).trim(), body: [] });
+    else sections[sections.length - 1]!.body.push(line);
+  }
+  const triaged = (heading: string): boolean =>
+    /^Known limitations in 1\.0\b/.test(heading) ||
+    /^Blocked\b/.test(heading) ||
+    /^Not blocked\b/.test(heading) ||
+    /^Closed by\b/.test(heading);
+  return {
+    seen: sections.map((s) => s.heading),
+    untriaged: sections
+      .filter((s) => !triaged(s.heading))
+      .map((s) => ({ heading: s.heading, live: liveEntries(s.body.join("\n")).map((e) => e.split("\n")[0] ?? "") }))
+      .filter((s) => s.live.length > 0),
+  };
+}
+
 describe("the entry splitter", () => {
   it("keeps a live entry with its continuation and drops a struck one", () => {
     const sample = [
@@ -177,6 +209,38 @@ describe("what the backlog still calls open", () => {
       .split(/\r?\n/)
       .filter((l) => l.startsWith("|") && !/^\|\s*Rank\b/.test(l) && !/^\|[-\s|]+\|$/.test(l));
     expect(rows, "audit findings still in the Still open table rather than fixed or named").toEqual([]);
+  });
+
+  it("has no section the triage rule does not know that holds open work", () => {
+    const { seen, untriaged } = triage(doc());
+    // six today; fewer than five means the splitter found no headings at all
+    expect(seen.length, "the triage read no sections").toBeGreaterThan(4);
+    expect(untriaged, "open entries under a heading no triage rule checks").toEqual([]);
+  });
+
+  it("finds open work under a heading it has never seen, and before the first one", () => {
+    const fixture = [
+      "# Open work",
+      "",
+      "- **Left in the preamble.** Nobody triaged this.",
+      "",
+      "## Known limitations in 1.0",
+      "",
+      "- **A named limitation.** Allowed.",
+      "",
+      "## Closed by v9.9.9",
+      "",
+      "- **Finished work, as prose.** Allowed.",
+      "",
+      "## Found after 1.0",
+      "",
+      "- ~~**Done already.**~~ Struck, so not open.",
+      "- **A new open item.** Under a heading the rule never named.",
+    ].join("\n");
+    const { untriaged } = triage(fixture);
+
+    expect(untriaged.map((u) => u.heading)).toEqual(["(before the first ## heading)", "Found after 1.0"]);
+    expect(untriaged[1]?.live).toEqual(["- **A new open item.** Under a heading the rule never named."]);
   });
 
   it("found entries to check, so the two assertions above mean something", () => {
