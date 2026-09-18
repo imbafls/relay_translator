@@ -3871,3 +3871,22 @@ landing page's inline attributes, where that page keeps most of its styling.
 All four closed; a pattern that matches nothing now turns the self-check red.
 And the regex edit itself went through the shell first and lost its
 backslashes, which is exactly the trap the memory file warns about.
+
+**21 - Two voices and one line.** The OBS overlay shows one line. With the
+original on screen, any open interim took it - right for one voice, whose
+next sentence always begins after the last one ends, and wrong for two: a
+teammate's callout that finished while the streamer was mid-sentence lost the
+line to the streamer's older interim at once, and the callout and its
+translation were never on the broadcast. The dissenting skeptic was right that
+the callout's own partials did show; the reproduction was fixed to send them,
+and it still went red on the finished line. The code's own rule is recency, so
+an interim now takes the line only if it began after the newest finished line.
+Review found that rule unfinished twice. With no hand-back, one voice's 15-18 s
+segment on the local engines would leave the audible speaker uncaptioned that
+long, and the idle fade could not help because every hidden partial reset it;
+so a finished line holds for 3 s to be read, again from when its translation
+lands, and the voice still talking takes it back on its next partial. And the
+birth time belonged to the element rather than the sentence, so a sentence
+typed into a reused interim counted as old. A second look at the hold found a
+"not coming" message restarting it and dragging a stale line back; it no
+longer does. Seven parts, each removed in turn, each turning a test red.

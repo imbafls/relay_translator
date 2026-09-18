@@ -684,6 +684,17 @@ fixed**, the last two on 2026-09-15.
   `<style>` and `style=""` the package serves for a dynamic viewport unit
   with nothing under it.
 
+- ~~**With two voices talking over each other, the second one's finished line
+  never reached the OBS overlay.**~~ Fixed 2026-09-18, found by the 1.0
+  discovery pass. The overlay shows one line, and any open interim took it -
+  so the moment a teammate's callout finished while the streamer was
+  mid-sentence, the streamer's older interim took the line back, and the
+  callout and its translation were never on the broadcast. An interim now
+  takes the line only if it began after the newest finished line, or once that
+  line has had 3 s to be read (again from when its translation lands). The
+  hold came from review: without it, one voice's 15-18 s local-engine segment
+  would have left the person the audience can hear uncaptioned that long.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

@@ -342,6 +342,25 @@
    */
   const letGo = new Set();
   const LET_GO_KEPT = 256;
+  /**
+   * When each row and interim was built, in order - which is what the overlay's
+   * one line is chosen by. See markOverlayLine.
+   */
+  const bornAt = new WeakMap();
+  let births = 0;
+  const born = (el) => {
+    bornAt.set(el, ++births);
+    return el;
+  };
+  /** when each finished row last got something new to read: built, or translated */
+  const shownAt = new WeakMap();
+  /**
+   * How long a finished line holds the overlay against a voice that was
+   * already talking before it finished - long enough to read a short callout
+   * and its translation, short enough that the voice still talking is only
+   * briefly off air. See markOverlayLine.
+   */
+  const HOLD_FOR_READING_MS = 3000;
 
   function stamp() {
     const d = new Date();
@@ -474,8 +493,21 @@
     // asked for it, and the two come apart: `applyStyle` stands `no-src` down
     // on a stream with no translation to put in the original's place. So this
     // reads the class that decides it rather than the setting behind it.
+    //
+    // And only an interim opened after the newest finished line. With one voice
+    // that is every interim - the next sentence starts after the last one ends -
+    // but with two, one voice finishes while the other is mid-sentence, and
+    // letting the older interim win took the finished line and its translation
+    // off the broadcast the moment they arrived, never to be shown.
+    //
+    // Not for ever, though. On the local engines one voice's segment runs 15-18
+    // s, and a finished line holding the overlay that long leaves the person
+    // the audience can hear with no caption. Once it has had its time to be
+    // read, the voice still talking takes the line back on its next partial.
     if (!document.body.classList.contains("no-src")) {
-      for (const el of interims.values()) target = el;
+      const since = target ? bornAt.get(target) || 0 : 0;
+      const read = !target || Date.now() - (shownAt.get(target) || 0) >= HOLD_FOR_READING_MS;
+      for (const el of interims.values()) if (read || (bornAt.get(el) || 0) > since) target = el;
     }
     for (const el of linesEl.querySelectorAll(".row")) el.classList.toggle("obs-live", el === target);
     resetFade();
@@ -514,8 +546,11 @@
     if (!msg.source || rows.has(msg.id)) return;
     const ch = msg.channel || 0;
     let interim = interims.get(ch);
+    // a sentence the page did not see finish carries its channel's element into
+    // the next one; that next sentence is being said now, so it counts from now
+    if (interim && interim.dataset.id !== String(msg.id)) born(interim);
     if (!interim) {
-      interim = makeRowEl(stamp(), "", "", msg.speaker, msg.color);
+      interim = born(makeRowEl(stamp(), "", "", msg.speaker, msg.color));
       interim.classList.add("interim");
       interim.querySelector(".tgt").remove();
       linesEl.appendChild(interim);
@@ -606,7 +641,8 @@
       // exists to release the reserved id and retire the interim above -
       // rendering it would leave a blank row where the half-caption was.
       if (!msg.source && !msg.target) return;
-      el = makeRowEl(stamp(), msg.source, msg.target, msg.speaker, msg.color);
+      el = born(makeRowEl(stamp(), msg.source, msg.target, msg.speaker, msg.color));
+      shownAt.set(el, Date.now());
       rows.set(msg.id, el);
       linesEl.appendChild(el);
     }
@@ -621,6 +657,10 @@
       // put a lone "…" on air over the words that were said.
       el.classList.toggle("untranslated", msg.target === "");
       el.classList.toggle("has-tgt", msg.target !== "");
+      // the translation is what an audience that needs it reads, so it gets its
+      // own time on the overlay - but "not coming" leaves nothing new to read,
+      // and arriving long after its line it would only pull that line back
+      if (msg.target !== "") shownAt.set(el, Date.now());
     }
     if (msg.latency) {
       const total = (msg.latency.stt || 0) + (msg.latency.translate || 0);

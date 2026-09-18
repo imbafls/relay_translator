@@ -1982,3 +1982,125 @@ describe("a viewport unit an old browser does not know", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * Two people talking over each other, on an overlay that shows one line.
+ *
+ * The overlay's one line was the newest finished row - unless ANY channel had
+ * an interim open, in which case the most recently opened interim took it.
+ * With one voice that is right: the interim is the next sentence, begun after
+ * the last one finished. With two it is not. YOU is mid-sentence; a teammate's
+ * callout on the other channel starts, types live (its interim is newer, so it
+ * wins) and finishes - and the moment it finishes, YOU's older interim takes
+ * the line back. The teammate's finished line, and the translation patched
+ * onto it, were never on the broadcast at all. Talking over each other is
+ * what game comms are.
+ *
+ * The rule the code already stated - the most recent thing is the one to show
+ * - applied to finished lines too: an interim takes the line only if it was
+ * opened after the newest finished line.
+ */
+describe("two voices on an overlay that shows one line", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const overlay = (): void => {
+    vi.useFakeTimers();
+    boot("?obs=1");
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+  };
+  const onAir = (): string => document.querySelector("#lines .row.obs-live")?.textContent ?? "";
+
+  it("puts the other voice's finished line and its translation on air", () => {
+    overlay();
+    push({ type: "partial", id: 1, source: "I am still", channel: 0, speaker: "YOU" });
+    push({ type: "partial", id: 2, source: "enemy", channel: 1, speaker: "CHAT" });
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", final: true, channel: 1, speaker: "CHAT" });
+    expect(onAir(), "the teammate's line finished and the overlay went back to a sentence begun before it").toContain(
+      "enemy behind the box",
+    );
+
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", target: "dich sau hop", final: true, channel: 1, speaker: "CHAT" });
+    expect(onAir(), "its translation never reached the broadcast").toContain("dich sau hop");
+  });
+
+  it("hands the line on when the first voice finishes or starts again", () => {
+    overlay();
+    push({ type: "partial", id: 1, source: "I am still", channel: 0, speaker: "YOU" });
+    push({ type: "partial", id: 2, source: "enemy", channel: 1, speaker: "CHAT" });
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", final: true, channel: 1, speaker: "CHAT" });
+
+    push({ type: "subtitle", id: 1, source: "I am still rotating", final: true, channel: 0, speaker: "YOU" });
+    expect(onAir(), "the newest finished line is not on air").toContain("I am still rotating");
+
+    push({ type: "partial", id: 3, source: "going A", channel: 0, speaker: "YOU" });
+    expect(onAir(), "a sentence begun after the last one finished is not live").toContain("going A");
+  });
+
+  /**
+   * And it has to give the line back. On the local engines one voice's segment
+   * runs 15-18 s, so a callout that finished inside it would hold the overlay
+   * the whole time while the person the audience can hear had no caption - the
+   * "nothing until the whole message is done" complaint this line was built
+   * to answer. A finished line gets its air - from when it lands, and again
+   * from when its translation does - and then the voice still talking takes it
+   * back on its next partial.
+   */
+  it("gives the line back to the voice still talking once the finished one has had its air", () => {
+    overlay();
+    push({ type: "partial", id: 1, source: "I am still", channel: 0, speaker: "YOU" });
+    push({ type: "partial", id: 2, source: "enemy", channel: 1, speaker: "CHAT" });
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", final: true, channel: 1, speaker: "CHAT" });
+
+    vi.advanceTimersByTime(2_500);
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", target: "dich sau hop", final: true, channel: 1, speaker: "CHAT" });
+    vi.advanceTimersByTime(1_000);
+    push({ type: "partial", id: 1, source: "I am still rotating", channel: 0, speaker: "YOU" });
+    expect(onAir(), "the translation that just landed was taken off air before anyone could read it").toContain(
+      "dich sau hop",
+    );
+
+    vi.advanceTimersByTime(3_000);
+    push({ type: "partial", id: 1, source: "I am still rotating to B", channel: 0, speaker: "YOU" });
+    expect(
+      onAir(),
+      "the finished line kept the overlay while the voice still talking had no caption",
+    ).toContain("I am still rotating to B");
+  });
+
+  // "not coming" arrives long after its line - every retry has run out - and
+  // leaves nothing new to read, so it must not pull the line back on air
+  it("does not take the line back for a translation that is not coming", () => {
+    overlay();
+    push({ type: "partial", id: 1, source: "I am still", channel: 0, speaker: "YOU" });
+    push({ type: "partial", id: 2, source: "enemy", channel: 1, speaker: "CHAT" });
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", final: true, channel: 1, speaker: "CHAT" });
+    vi.advanceTimersByTime(3_500);
+    push({ type: "partial", id: 1, source: "I am still rotating", channel: 0, speaker: "YOU" });
+    expect(onAir()).toContain("I am still rotating");
+
+    vi.advanceTimersByTime(10_000);
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", target: "", final: true, channel: 1, speaker: "CHAT" });
+    push({ type: "partial", id: 1, source: "I am still rotating to B", channel: 0, speaker: "YOU" });
+
+    expect(onAir(), "a translation that is not coming put an old line back on air over the voice talking").toContain(
+      "I am still rotating to B",
+    );
+  });
+
+  // an interim element carries a channel from one sentence to the next when the
+  // page never saw the final in between (a reconnect, a rebuild): the NEW
+  // sentence is what is being said now, whatever element it types into
+  it("counts a new sentence from when it began, even typed into an old line", () => {
+    overlay();
+    push({ type: "partial", id: 1, source: "I am still", channel: 0, speaker: "YOU" });
+    push({ type: "partial", id: 2, source: "enemy", channel: 1, speaker: "CHAT" });
+    push({ type: "subtitle", id: 2, source: "enemy behind the box", final: true, channel: 1, speaker: "CHAT" });
+    // id 1's final was missed; id 3 is a sentence begun after CHAT's line
+    push({ type: "partial", id: 3, source: "going B", channel: 0, speaker: "YOU" });
+
+    expect(onAir(), "a sentence begun after the finished line was held off air as if it were older").toContain("going B");
+  });
+});
