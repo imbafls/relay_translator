@@ -1178,7 +1178,47 @@ async function checkKey(provider: "deepgram" | "gemini", key: string): Promise<K
   rememberVerdict(provider, key, { result: res });
   renderChain();
   if (view === "settings") renderKeyStatuses();
+  scheduleRecheck(provider, key, res);
   return res;
+}
+
+/**
+ * A saved key that could not be checked is asked about again on its own
+ * clock. The online event is the fast path, but it is Chromium's view of the
+ * network adapter, not of the internet: it never fires for a PC whose adapter
+ * came up before DHCP, DNS or a VPN did, and one that fires while the boot
+ * check is still out finds nothing to re-ask. Either way the chain said KEY ?
+ * for the rest of the run. 30 s, doubling to 5 min, until an answer that says
+ * something about the key - which a rejection does, so it is never retried.
+ */
+const RECHECK_FIRST_MS = 30_000;
+const RECHECK_MAX_MS = 5 * 60_000;
+const recheck: Record<"deepgram" | "gemini", { timer?: ReturnType<typeof setTimeout>; delay: number }> = {
+  deepgram: { delay: RECHECK_FIRST_MS },
+  gemini: { delay: RECHECK_FIRST_MS },
+};
+
+function savedKey(provider: "deepgram" | "gemini"): string | undefined {
+  return provider === "deepgram" ? config.deepgramApiKey : config.geminiApiKey;
+}
+
+function scheduleRecheck(provider: "deepgram" | "gemini", key: string, res: KeyValidation): void {
+  // only the saved key's readout can get stuck; a typed one is re-asked by typing
+  if (key !== savedKey(provider)) return;
+  const r = recheck[provider];
+  if (r.timer) clearTimeout(r.timer);
+  r.timer = undefined;
+  if (!couldNotCheck(res)) {
+    r.delay = RECHECK_FIRST_MS;
+    return;
+  }
+  const delay = r.delay;
+  r.delay = Math.min(delay * 2, RECHECK_MAX_MS);
+  r.timer = setTimeout(() => {
+    r.timer = undefined;
+    const now = savedKey(provider);
+    if (now && couldNotCheck(verdictFor(provider, now))) void checkKey(provider, now);
+  }, delay);
 }
 
 function keyStateLabel(provider: "deepgram" | "gemini"): { text: string; cls: string } {

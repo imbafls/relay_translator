@@ -1056,6 +1056,13 @@ fixed**, the last two on 2026-09-15.
   in whatever test came later; once the harness cancelled leftovers, nothing
   ran them. Each has a fake-timer test now, before and after its deadline.
 
+- ~~**KEY ? for the whole run when the online event never came.**~~ Fixed
+  2026-09-18, found by an independent review. Chromium's online event follows
+  the network adapter, not the internet, so it never fires for an adapter up
+  before DNS or a VPN, and one during the boot check was skipped. A saved key
+  that could not be checked is now asked about again on its own clock - 30 s,
+  doubling to 5 min - and never one the provider actually rejected.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

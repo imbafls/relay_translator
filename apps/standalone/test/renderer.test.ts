@@ -150,6 +150,10 @@ function bridge(config: AppConfig) {
         unreachableOnce = unreachableOnce.filter((k) => k !== key);
         return { valid: false, detail: unreachableDetail };
       }
+      if ((unreachableTimes[key] ?? 0) > 0) {
+        unreachableTimes[key]! -= 1;
+        return { valid: false, detail: unreachableDetail };
+      }
       if (rejectedKeys.includes(key)) return { valid: false, detail: "key rejected" };
       return { valid: true };
     },
@@ -256,6 +260,8 @@ let rejectedKeys: string[] = [];
 let unreachableOnce: string[] = [];
 /** how that first check fails: main answers "no connection" or, after 8 s, "timed out" */
 let unreachableDetail = "no connection";
+/** keys whose next N checks cannot reach the provider, by key */
+let unreachableTimes: Record<string, number> = {};
 /**
  * When set, the next cr.validateKey() call waits for `gate` and then answers
  * `answer`: one slow check, so that a later check can overtake it.
@@ -405,6 +411,7 @@ afterEach(() => {
   rejectedKeys = [];
   unreachableOnce = [];
   unreachableDetail = "no connection";
+  unreachableTimes = {};
   slowNextCheck = null;
   fakeSaved = [];
   fakeSavedBodies = {};
@@ -2820,6 +2827,97 @@ describe("a key that could not be checked at boot", () => {
     await settle(60);
 
     expect(text("obGmStatus"), "the late, older answer replaced the newer one").toMatch(/^VALID/);
+  });
+
+  /**
+   * The online event is Chromium's view of the network adapter, not of the
+   * internet: it never fires for a PC whose adapter was up before DHCP, DNS or
+   * a VPN was, and one that fires while the boot check is still out is
+   * skipped. Either way the chain said KEY ? for the rest of the run. A key
+   * that could not be checked is asked about again on its own clock - 30 s,
+   * doubling to 5 min - until something answers.
+   *
+   * Fake timers that also move with real time, since boot itself waits on
+   * real ones; the jumps are what the test controls.
+   */
+  it("asks again on its own when the network comes back without saying so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      unreachableOnce = ["dg-saved"];
+      await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+      await waitFor(() => /KEY \?/.test(text("metaStt")), "the boot check to fail to connect");
+
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      await waitFor(() => /KEY OK/.test(text("metaStt")), "the key to be asked about again, with no online event");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs off while it still cannot reach the provider, and stops once it can", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      unreachableTimes = { "dg-saved": 3 };
+      await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+      await waitFor(() => checksOf("dg-saved") === 1, "the boot check");
+
+      await vi.advanceTimersByTimeAsync(31_000); // the first retry, 30 s on
+      expect(checksOf("dg-saved")).toBe(2);
+      await vi.advanceTimersByTimeAsync(31_000); // 60 s after that, not 30
+      expect(checksOf("dg-saved"), "the second retry did not back off").toBe(2);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(checksOf("dg-saved")).toBe(3);
+      await vi.advanceTimersByTimeAsync(121_000); // 120 s after that - and it answers
+      expect(checksOf("dg-saved")).toBe(4);
+      await waitFor(() => /KEY OK/.test(text("metaStt")), "the fourth check to land");
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(checksOf("dg-saved"), "it went on asking about a key that had answered").toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts back at 30 s for the next outage, not where the last one left off", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      unreachableTimes = { "dg-saved": 2 };
+      await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+      await waitFor(() => checksOf("dg-saved") === 1, "the boot check");
+      await vi.advanceTimersByTimeAsync(31_000); // fails again
+      await vi.advanceTimersByTimeAsync(61_000); // answers
+      await waitFor(() => /KEY OK/.test(text("metaStt")), "the key to answer");
+      const before = checksOf("dg-saved");
+
+      // a second outage, met by a fresh check of the same saved key
+      unreachableTimes = { "dg-saved": 1 };
+      (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(50);
+      const field = document.getElementById("deepgramApiKey") as HTMLInputElement;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(600);
+      await waitFor(() => checksOf("dg-saved") === before + 1, "the fresh check to fail to connect");
+
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(checksOf("dg-saved"), "the retry kept the last outage's long delay").toBe(before + 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never asks again on its own about a key the provider turned down", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      rejectedKeys = ["dg-rejected-by-the-provider"];
+      await bootWith({ setupDone: true, deepgramApiKey: "dg-rejected-by-the-provider" });
+      await waitFor(() => /KEY INVALID/.test(text("metaStt")), "the boot check to reject the key");
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(checksOf("dg-rejected-by-the-provider"), "a real rejection was sent to the provider again").toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not ask again about a key the provider actually turned down", async () => {

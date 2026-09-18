@@ -4638,3 +4638,29 @@ just before it, back just after. Driven with synchronous clicks, since a
 which for coverage of working code is expected and proves nothing by itself;
 five mutations are what does - each timer removed, and the reveal time
 halved, which both 20 s tests catch on their "hid itself early" line.
+
+**67 - Not waiting for an event that may never come.** The `online` event is
+Chromium's view of the network adapter. It does not fire for a PC whose
+adapter came up before DHCP, DNS or a VPN did - the internet arrives later
+and nothing says so - and one that fires while the boot check is still out
+finds nothing to re-ask, since "checking" is not could-not-check. The chain
+then said KEY ? for the rest of the run. A saved key whose check could not
+reach the provider is now asked about again on its own clock: 30 s, doubling
+to 5 min, reset by any answer that says something about the key, and never
+armed for a rejection. The `online` event stays as the fast path. Testing it
+needed fake timers across `bootWith`, whose `settle()` hangs under plain
+ones; `shouldAdvanceTime` keeps fake time moving with real time and still
+lets a test jump, and boot, the precondition waits and the jumps all worked
+first time. Two tests red first; the back-off reset got a test of its own
+before the mutations ran, and four mutations - no retry, no back-off, no
+reset, retrying rejections - each turn one red.
+
+The first full gate run went red in a file this change does not touch:
+`apps/hosted-relay/test/routes.test.ts`, "rejects anything malformed rather
+than guessing", with `p1_9654440879671251_...` parsing as a publisher. The
+cause is in the test, not the Worker: its "malformed" case is the room id
+upper-cased, and a random 16-hex-digit id with no letter in it - this one -
+upper-cases to itself and stays valid. That is 0.625^16, about one run in
+1,850, and it has been there since the hosted relay landed. The rerun was
+green; the flake is carded as a release risk, since CI runs this suite on the
+tag, and is the next unit rather than a rider on this one.
