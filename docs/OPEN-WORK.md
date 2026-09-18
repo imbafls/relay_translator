@@ -843,6 +843,14 @@ fixed**, the last two on 2026-09-15.
   IPv4 address. The bucket's lack of an expiry rule is under Known
   limitations.
 
+- ~~**RUN SETUP AGAIN deleted a third audio source.**~~ Fixed 2026-09-18,
+  found by the 1.0 discovery pass. Setup's last step has two source pickers
+  and OPEN CONSOLE saved exactly those two as the whole list, so rerunning
+  setup to switch engine silently dropped the third. It now keeps any slot
+  setup does not show. Testing it turned up a gap between the test DOM and
+  Chromium: an option marked selected before it is appended is honoured by
+  one and not the other, so `fillSelect` now sets the value outright.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

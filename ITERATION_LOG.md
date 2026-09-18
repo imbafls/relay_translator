@@ -4141,3 +4141,18 @@ red across both endpoints; dropping the IPv4-mapped case, the hextet
 normalisation, or the /64 cut each turns one. What is left - a sender spread
 across many networks, and a bucket with no expiry rule - is an account
 setting, not code, and is written down under Known limitations with why.
+
+**36 - Rerun setup, lose a channel.** Setup's last step was written before a
+third source slot existed and shows two pickers; OPEN CONSOLE saved exactly
+those two as the whole list. A streamer running mic, chat mix and coach who
+reran setup to switch speech engine lost the coach channel, with nothing on
+screen saying so - the config store already refuses to let a writer that
+knows two slots delete a third through the legacy pair, but this list write
+had no such care. It now keeps any slot setup does not show. The first red
+was not the one expected: the second slot read back as the first. The
+pickers are filled by marking the chosen option selected before appending
+it, which Chromium honours (checked in the real renderer) and the test DOM
+does not, on a picker refilled in place. The app was right and the test was
+reading a world that does not exist, so `fillSelect` now sets the value
+outright - a no-op in Chromium - with its own test, and only then did the
+setup test go red for the reason it was written for.

@@ -2858,7 +2858,12 @@ function bind(): void {
     const out = (($("obOutputSeg").querySelector("button.active") as HTMLElement | null)?.dataset.value as OutputTarget) || "phone";
     const a = sel("obAudioSource").value || config.audioSource;
     const b = sel("obAudioSource2").value;
-    await saveAndApply({ sources: [a, b].filter(Boolean), output: out, setupDone: true });
+    // Setup shows two pickers - it predates a third slot - and saving just
+    // those two as the whole list deleted a third source the user never saw
+    // here: rerun setup to switch engine, lose the coach channel. A slot setup
+    // does not show is not setup's to remove.
+    const unshown = activeSources().slice(2);
+    await saveAndApply({ sources: [a, b, ...unshown].filter(Boolean), output: out, setupDone: true });
     $("translateToggle").hidden = false;
     setView("stage");
     log("setup complete - hit START SESSION when ready", "ok");

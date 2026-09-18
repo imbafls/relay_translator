@@ -49,6 +49,11 @@ export function fillSelect(box: HTMLSelectElement, entries: { value: string; lab
     if (v === value) opt.selected = true;
     box.appendChild(opt);
   }
+  // Said outright as well. Chromium honours an option marked selected before
+  // it is appended; the DOM the tests run in does not, and picked another
+  // option of a picker refilled in place - so a test read the wrong source.
+  // With no match the first option stays, as it always has.
+  if (entries.some((e) => e.value === value)) box.value = value;
 }
 
 /** size a text-styled <select> to its selected option (Chrome pads selects for the arrow) */

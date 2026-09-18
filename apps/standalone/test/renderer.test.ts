@@ -1439,6 +1439,58 @@ describe("a key check that lands after setup has closed", () => {
   });
 });
 
+/**
+ * RUN SETUP AGAIN, with three sources.
+ *
+ * Setup's last step has two source pickers - it was written before a third
+ * slot existed - and OPEN CONSOLE saved exactly those two as the whole list.
+ * A streamer running mic, chat mix and coach who reran setup to switch speech
+ * engine lost the coach channel, with nothing on screen saying so. The config
+ * store already refuses to let a writer that knows two slots delete a third
+ * through the legacy pair; this list write had no such care.
+ */
+describe("running setup again with a third source", () => {
+  const devices = [
+    { kind: "audioinput", deviceId: "mic-1", label: "Headset", groupId: "g1" },
+    { kind: "audioinput", deviceId: "mix-1", label: "Discord mix", groupId: "g2" },
+  ];
+  const finishSetup = async (): Promise<Partial<AppConfig> | undefined> => {
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("obOpenConsole") as HTMLButtonElement).click();
+    await settle(40);
+    return calls.setConfig.filter((p) => p.sources).pop();
+  };
+
+  it("keeps the source setup never showed", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key", sources: ["default-mic", "mic-1", "mix-1"] }, devices);
+    await settle(40);
+
+    const saved = await finishSetup();
+
+    expect(saved?.sources, "finishing setup deleted the third source it never showed").toEqual([
+      "default-mic",
+      "mic-1",
+      "mix-1",
+    ]);
+  });
+
+  // the two slots setup does show are still setup's to change
+  it("still saves what was changed in the two it shows", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key", sources: ["default-mic", "mic-1", "mix-1"] }, devices);
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await settle(40);
+    const second = document.getElementById("obAudioSource2") as HTMLSelectElement;
+    second.value = "system-loopback";
+    second.dispatchEvent(new Event("change"));
+    (document.getElementById("obOpenConsole") as HTMLButtonElement).click();
+    await settle(40);
+
+    expect(calls.setConfig.filter((p) => p.sources).pop()?.sources).toEqual(["default-mic", "system-loopback", "mix-1"]);
+  });
+});
+
 describe("the idle panel over a stage that still has captions on it", () => {
   /**
    * Audit finding 32. `#idle` is absolutely positioned and has no background,

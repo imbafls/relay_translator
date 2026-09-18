@@ -127,6 +127,27 @@ describe("filling a select", () => {
     ]);
     expect(box.value).toBe("vi");
   });
+
+  // A picker on the page, refilled in place - how every one of the app's is
+  // used. Marking an option selected before it is appended is honoured by
+  // Chromium but not by the DOM these tests run in, which picked the wrong
+  // option: a renderer test of RUN SETUP AGAIN read the second source as the
+  // first. Setting the value outright means both agree.
+  it("selects the one asked for when refilled in place on the page", () => {
+    const box = document.createElement("select");
+    document.body.appendChild(box);
+    const entries = ["", "default-mic", "system-loopback", "mic-1", "mix-1"].map((v) => ({ value: v, label: v || "none" }));
+    fillSelect(box, entries, "system-loopback");
+    fillSelect(box, entries, "mic-1");
+    expect(box.value, "the picker shows a different option from the one it was filled with").toBe("mic-1");
+  });
+
+  it("falls back to the first option when nothing matches, as it always did", () => {
+    const box = document.createElement("select");
+    document.body.appendChild(box);
+    fillSelect(box, [{ value: "", label: "none" }, { value: "a", label: "a" }], "gone-device");
+    expect(box.value).toBe("");
+  });
 });
 
 describe("sizing a select to the option it shows", () => {
