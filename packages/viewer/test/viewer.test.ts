@@ -44,6 +44,25 @@ function detachAll(): void {
   }
 }
 
+/**
+ * Every timer armed since the last page ended. A real page lives as long as
+ * its tab and never stops its own clock; a page here ends at teardown, and its
+ * timers have to end with it - see "tearing a page down" at the bottom.
+ */
+const armed: unknown[] = [];
+for (const name of ["setTimeout", "setInterval"] as const) {
+  const real = window[name].bind(window) as (handler: TimerHandler, ms?: number, ...args: unknown[]) => number;
+  (window as unknown as Record<string, unknown>)[name] = (handler: TimerHandler, ms?: number, ...args: unknown[]) => {
+    const id = real(handler, ms, ...args);
+    armed.push(id);
+    return id;
+  };
+}
+
+function disarmAll(): void {
+  for (const id of armed.splice(0)) window.clearTimeout(id as number);
+}
+
 /** deliver a message the way the relay would */
 function push(msg: Record<string, unknown>): void {
   socket.onmessage?.({ data: JSON.stringify(msg) });
@@ -78,6 +97,8 @@ function boot(search = ""): void {
   // null element from inside teardown. It survived locally on timing alone and
   // failed on CI.
   detachAll();
+  // and the earlier page's clock, which would otherwise tick into this one
+  disarmAll();
   const created: FakeSocket[] = [];
   class FakeWebSocket {
     static readonly CONNECTING = 0;
@@ -109,14 +130,18 @@ function boot(search = ""): void {
   socket = created[0];
 }
 
-beforeEach(() => boot());
-
-afterEach(() => {
+/** what afterEach does, named so a test can hold it to its job */
+function teardown(): void {
   // onopen is scheduled, so without this it fires into a cleared page and
   // reports an error that belongs to the teardown rather than the test
   detachAll();
+  disarmAll();
   document.body.innerHTML = "";
-});
+}
+
+beforeEach(() => boot());
+
+afterEach(() => teardown());
 
 describe("connecting", () => {
   it("opens a viewer socket carrying the token from the path", () => {
@@ -1593,5 +1618,32 @@ describe("a link rotated out from under an internet viewer", () => {
       "4401 is the relay not knowing the token - which can be a rotation, a restart or a link that was " +
         "never valid, and the page must not pick one",
     ).toBe("The session was stopped, or a new link was made.");
+  });
+});
+
+/**
+ * A page that has been torn down must stop.
+ *
+ * Every boot evaluates app.js afresh, and app.js starts its clock with a
+ * `setInterval(tick, 1000)` that a real page never needs to clear - it lives
+ * as long as the tab. Here it outlived its markup: one interval per test,
+ * nearly ninety of them by the end of this file, none ever stopped. Run alone
+ * the file finishes inside a second and not one of them fires; run in the full
+ * suite it is slower than that, and each tick that landed between a teardown
+ * and the next boot looked up `#hudClock` in an empty body and threw. Vitest
+ * counted eleven of those as unhandled errors, and a suite with every test
+ * green exited 1.
+ */
+describe("tearing a page down", () => {
+  it("stops its clock, so it cannot write into whatever page comes next", async () => {
+    teardown();
+    document.body.innerHTML = '<span id="hudClock">untouched</span>';
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    expect(
+      $("hudClock").textContent,
+      "a page that was torn down kept ticking and wrote its clock into markup it no longer owns",
+    ).toBe("untouched");
   });
 });
