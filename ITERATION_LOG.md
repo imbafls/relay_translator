@@ -4694,3 +4694,21 @@ source guard beside the restart one, as main.ts does not run under test.
 Six mutations, three a side, each red. The harness bridge never pushes a
 status, so the chip is not screenshotted here; Phase 3's packaged launch with
 8787 held is where it will be seen for real.
+
+**70 - Phase 3.1: the 1.0.0 entry.** 168 commits since v0.8.1, read subject
+by subject, and the bodies of every one whose user-facing effect the subject
+did not make plain - a changelog line that overstates a fix is a stale claim
+shipped to every user at once. Grouped into eighteen lines for the person
+streaming: setup that cannot trap them, the relay saying when it is down, key
+checks that tell a network blip from a bad key, links that are only replaced
+when they can be and that viewers are told about, connections that notice
+they are dead, translations that say when they are not coming, the overlay
+with the original hidden, the viewer page, sources, live-session safety,
+transcripts and exports, model downloads, the keyboard and screen-reader
+work, feedback, and a keyless self-hosted relay no longer making things up.
+Two wordings changed on reading the commits: the phone reconnects "as soon as
+it notices", not "within seconds" (the heartbeat takes two missed rounds),
+and a rejected key is "never asked about again on its own", since the user
+can still retype it. Repo-internal work - guards, harness, the app.ts split,
+docs - is left out, as the file's own header asks. `changelog.test.ts` and
+`versions.test.ts` pass, and `release-notes.mjs 1.0.0` renders it.

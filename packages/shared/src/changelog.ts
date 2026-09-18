@@ -28,6 +28,85 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.0.0",
+    date: "2026-09-18",
+    headline: "1.0: the app says what is wrong, and setup can no longer strand you",
+    changes: [
+      {
+        kind: "fixed",
+        text: "Setup can no longer strand you on its first step. If another program holds the port the app's own relay listens on, saving your Deepgram key used to fail, put the key back to nothing and send you round step 1 again and again, with the setting that fixes it out of reach. The key is now kept and setup moves on. A step that really could not save stays where it is and says why, just under its buttons, instead of ticking itself done with your key gone.",
+      },
+      {
+        kind: "added",
+        text: "When the app's own relay cannot start - most often because another program is using its port - 04 OUTPUT now says LOCAL RELAY DOWN, names the port that is taken and tells you to change LOCAL PORT in SETTINGS. The reason goes into the LOG as well, and a START that cannot run names it. Before, the first sign was START failing with a vague local relay not ready.",
+      },
+      {
+        kind: "fixed",
+        text: "A key check that could not reach Deepgram or Gemini is no longer read as a rejected key. No network yet when the PC started, a rate limit, a provider down for a minute: each of these used to show KEY INVALID, grey out CONTINUE in setup and stay that way for the rest of the run. They now read KEY ?, and the key is asked about again by itself - soon, then less often - until the provider answers. A key the provider really does reject is never asked about again on its own.",
+      },
+      {
+        kind: "fixed",
+        text: "Typing a key into SETTINGS and leaving without saving it no longer changes what the console says about the key you did save, and GET AN ADDRESS no longer throws away a key you had pasted but not saved yet.",
+      },
+      {
+        kind: "fixed",
+        text: "NEW and START only replace your viewer link when they can. A START that cannot start no longer spends the link first, NEW no longer says the old link is dead when the relay kept it, a FIXED link stays fixed, and the link in the footer follows OUTPUT when you change it.",
+      },
+      {
+        kind: "fixed",
+        text: "A phone or browser still holding a link you have replaced now says so straight away, instead of trying to reconnect to a link that no longer exists - on the internet link as well as on your own network.",
+      },
+      {
+        kind: "fixed",
+        text: "Connections that die without saying so are noticed. A phone whose connection has quietly dropped - mobile data, a locked screen, a change of network - reconnects as soon as it notices, instead of sitting on the last caption for a minute or more. The app's connection to textrelay.cc does the same, and a stream whose app vanished without closing is ended for its viewers instead of looking live.",
+      },
+      {
+        kind: "fixed",
+        text: "The number of people watching stays right while the stream runs, not only after it ends, and your console no longer says ON AIR after the stream has ended for good.",
+      },
+      {
+        kind: "fixed",
+        text: "When a line's translation is not coming - quota spent, a revoked key, the provider refusing - your stage and every viewer now say so, instead of leaving an ellipsis under the line for good. A translation that arrives late no longer brings back a line that has gone, or takes over a line that is still being spoken.",
+      },
+      {
+        kind: "fixed",
+        text: "The OBS overlay works properly with the original hidden, which is how you caption for an audience that does not read your language. It no longer empties itself between lines, keeps who is speaking on screen, shows a second voice's finished line before handing back, and keeps the last line when a half-said one comes to nothing. Its DISPLAY preview shows a line the way it will air.",
+      },
+      {
+        kind: "fixed",
+        text: "The viewer page can no longer hide both columns and leave a blank page, keeps its full height in older phone browsers, and its controls are big enough to hit with a thumb. Internet viewers are no longer left on OFF AIR when the relay address was saved with a / at the end, and the running time they see is right even when their phone's clock is not.",
+      },
+      {
+        kind: "fixed",
+        text: "Audio sources keep their names and colours when one is unplugged or removed. Changing a colour no longer resets sources that are switched off, RUN SETUP AGAIN no longer deletes a third source it does not show, and the message when a device disconnects names the right one.",
+      },
+      {
+        kind: "fixed",
+        text: "Clicking a speech model during a live session no longer ends the broadcast, the model list no longer rebuilds itself under your cursor while a model downloads, and STOP pressed while a session is still starting keeps it stopped.",
+      },
+      {
+        kind: "fixed",
+        text: "Silence no longer fills your stage with blank rows, and a viewer's page starts clean when your app restarts instead of mixing in lines from before. An exported .SRT no longer shows several lines at once when callouts come quickly, and DELETE in SAVED can no longer land on a different session from the one you armed it on.",
+      },
+      {
+        kind: "fixed",
+        text: "Model downloads are checked harder. A file that arrives short, or the right size with the wrong contents, is refused rather than installed, a damaged model is no longer shown as ready, and the three models that come from Hugging Face are pinned to one exact version.",
+      },
+      {
+        kind: "added",
+        text: "The app is easier to use without a mouse, or without looking. The console can be driven from the keyboard, including showing the viewer link; a screen reader now says when a session goes live or fails to; translated lines are marked with their language so they are read in the right voice; the pulsing dots stop for anyone whose system asks for less motion; and the viewer's display settings all have names and a visible focus ring. Speaker tags are readable in the Light theme.",
+      },
+      {
+        kind: "fixed",
+        text: "SEND FEEDBACK with INCLUDE MY LOG reads the log again whenever SETTINGS opens, so a report sent after going back to make the failure happen carries that failure, and it keeps the details that make a failure report useful.",
+      },
+      {
+        kind: "fixed",
+        text: "If you run your own relay without a Deepgram or Gemini key, it no longer makes up captions or translations to fill the gap. Without a Deepgram key your app shows ON AIR · NO SPEECH; without a Gemini key viewers get the original only.",
+      },
+    ],
+  },
+  {
     version: "0.8.1",
     date: "2026-09-15",
     headline: "Silence stops talking, and a bad download tries again",
