@@ -4270,3 +4270,18 @@ test clicks all four themes on both surfaces and requires the active label
 to be a real colour different from its fill; only OBS clear on the overlay
 failed before, and removing the new property brings that back. In Chromium,
 on a fresh overlay: black on cream, page background still transparent.
+
+**45 - Styling the overlay blind.** In OBS the overlay is styled from its
+Interact window, and while DISPLAY is open the preview row is the only thing
+on screen to judge the result by. The overlay draws nothing but the row
+marked as on air - `body.obs .row` is `display: none` - and the preview's row
+never carried the mark, so every change to size, font, colour or alignment
+happened against an empty box, usually before anyone had spoken, which is
+exactly when an overlay is set up. On the overlay the preview is now the
+on-air line, drawn the way it airs, and the idle fade that takes a stale
+line off the broadcast no longer blanks the preview, which is not the
+broadcast. Chromium on a fresh overlay: the sample line at the overlay's
+46px. The phone test's first red was the harness, not the page: `boot()`
+replaced the body's contents and kept its classes, so an overlay booted by
+an earlier test left `obs` on the next phone page. `boot()` resets them now,
+and the other 135 viewer tests pass with it, so none had been leaning on it.

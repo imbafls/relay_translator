@@ -372,6 +372,9 @@ body.obs .display-body, body.obs #display { background: var(--bgc); }
    overlay - the phone stack is a transcript. */
 body.obs .row.obs-live { transition: opacity .6s ease; }
 body.obs.idle .row.obs-live { opacity: 0; }
+/* ...except the preview in DISPLAY, which is feedback for the streamer and not
+   the broadcast: a quiet stretch must not blank what they are adjusting */
+body.obs.idle .preview .row.obs-live { opacity: 1; }
 
 /* the hold only means anything on the overlay, so the control only appears there */
 .obs-only { display: none; }

@@ -919,6 +919,14 @@ fixed**, the last two on 2026-09-15.
   active button on all four themes on both surfaces, and Chromium draws it
   black on cream.
 
+- ~~**On the overlay, the DISPLAY preview was always empty.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. The overlay draws only the row
+  marked as on air, and the preview's row never was, so every change a
+  streamer made in OBS's Interact window - size, font, colour, alignment -
+  happened against an empty box. On the overlay the preview is now the
+  on-air line, drawn the way it airs, and a quiet stretch no longer fades it.
+  The phone page's preview is unchanged.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

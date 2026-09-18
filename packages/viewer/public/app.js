@@ -281,14 +281,20 @@
 
   function renderPreview() {
     const box = $("previewRow");
-    const latest = linesEl.querySelector(".row.latest");
+    // On the overlay the line to preview is the one on air - and the overlay
+    // draws nothing but a row marked as on air, so the preview is marked too.
+    // It was not, and every change made in OBS's Interact window happened
+    // against an empty box, usually before anyone had spoken.
+    const source = (obs && linesEl.querySelector(".row.obs-live")) || linesEl.querySelector(".row.latest");
     box.innerHTML = "";
-    if (latest) {
-      box.appendChild(latest.cloneNode(true));
-      return;
+    let row;
+    if (source) {
+      row = /** @type {HTMLElement} */ (source.cloneNode(true));
+    } else {
+      row = makeRowEl("45:21", "He's one shot, behind the box", "Nó còn một viên, sau cái hộp");
+      row.classList.add("latest", "has-tgt");
     }
-    const row = makeRowEl("45:21", "He's one shot, behind the box", "Nó còn một viên, sau cái hộp");
-    row.classList.add("latest", "has-tgt");
+    if (obs) row.classList.add("obs-live");
     box.appendChild(row);
   }
 

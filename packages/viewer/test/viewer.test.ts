@@ -86,6 +86,10 @@ const lineTexts = (): string[] =>
 function boot(search = ""): void {
   // the token comes out of the path, so the page has to believe it is there
   window.history.pushState({}, "", `/watch/test-token${search}`);
+  // A fresh page has a bare <body>. Setting innerHTML below does not touch the
+  // body's own classes, so without this an overlay booted by an earlier test
+  // left `obs` (and `idle`, `light`, ...) on the next page, phone or not.
+  document.body.className = "";
 
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   // the shipped markup, minus its own script tags: app.js is evaluated below
@@ -2378,4 +2382,58 @@ describe("the active theme button", () => {
       expect(unreadable, "the active theme's label cannot be read").toEqual([]);
     });
   }
+});
+
+/**
+ * The preview in DISPLAY, on the overlay.
+ *
+ * In OBS the only way to style the overlay is its Interact window, and while
+ * DISPLAY is open the preview row is the only feedback on screen. The overlay
+ * draws only the row marked as on air, and the preview's row never was - so
+ * every change to size, font, colour or alignment happened against an empty
+ * box, usually before anyone had spoken, which is when an overlay is set up.
+ * On the overlay the preview is now the on-air line, drawn the way it airs.
+ */
+describe("the display preview on the overlay", () => {
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+  afterEach(() => {
+    document.head.querySelector("style[data-test]")?.remove();
+    localStorage.clear();
+  });
+  const withCss = (search: string): void => {
+    boot(search);
+    const style = document.createElement("style");
+    style.dataset.test = "1";
+    style.textContent = css;
+    document.head.appendChild(style);
+  };
+  const previewRow = (): HTMLElement | null => document.querySelector("#previewRow .row");
+
+  it("shows something before any caption has arrived", () => {
+    withCss("?obs=1");
+    $("openDisplay").click();
+    expect(previewRow(), "the preview built no row").not.toBeNull();
+    expect(getComputedStyle(previewRow()!).display, "the overlay hid its own preview").not.toBe("none");
+  });
+
+  it("is drawn the way the line airs", () => {
+    withCss("?obs=1");
+    $("openDisplay").click();
+    expect(previewRow()?.classList.contains("obs-live")).toBe(true);
+  });
+
+  // the overlay fades its line after the hold; the preview is not the broadcast
+  it("stays visible through a quiet stretch", () => {
+    withCss("?obs=1");
+    document.body.classList.add("idle");
+    $("openDisplay").click();
+    expect(getComputedStyle(previewRow()!).opacity).not.toBe("0");
+  });
+
+  it("leaves the phone page's preview as it was", () => {
+    withCss("");
+    $("openDisplay").click();
+    expect(getComputedStyle(previewRow()!).display).not.toBe("none");
+    expect(previewRow()?.classList.contains("obs-live")).toBe(false);
+  });
 });
