@@ -3939,3 +3939,21 @@ not - so it now pushes as main does, and the mutation goes red. A line
 refreshing the row's pick handler in place was taken out rather than kept:
 every caller's handler behaves the same across renders, so it was a claim
 nothing could check.
+
+**25 - One slash.** `wss://host/` is what an address bar hands you. The app's
+own check accepts it and the phone link, the claim and the link rotation all
+strip the slash - but the uplink appended `/ws/uplink` as it was, and
+`//ws/uplink` reaches no relay: the Node one reads it as a protocol-relative
+url and drops the socket, the Worker routes it to not-found. The client
+retried for ever while viewers sat on OFF AIR under a panel reading SET. The
+concatenation moved unchanged into a shared helper first, so the tests could
+show the helper itself building `//ws/uplink` and a real relay never
+accepting it, and only then was it fixed. The review caught the fix going too
+far: taking every trailing slash made `wss://host//` connect while the claim
+and the phone link, which take one, refused it - UPLINK OK beside a footer
+quietly handing out the LAN link. One slash now, and a test that the uplink
+reaches the relay for exactly the addresses the claim accepts. It also found
+the hosted README quoting the old concatenation, beside a row saying the
+client retries a 4409 it has not retried for a long time; both corrected.
+And the regex went through the shell once more and lost its backslash; the
+Edit tool is the rule for those now, not a lesson re-learned per iteration.

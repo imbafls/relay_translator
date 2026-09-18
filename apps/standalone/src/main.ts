@@ -34,6 +34,7 @@ import {
   redactLog,
   relayRollbackPatch,
   validPublicBaseUrl,
+  uplinkUrlFor,
   validTranscriptDir,
   viewerLinkFor,
 } from "@callout-relay/shared";
@@ -266,7 +267,7 @@ function startUplink(): void {
     uplinkState = "off";
     return;
   }
-  const url = `${cfg.relayUrl}/ws/uplink?token=${encodeURIComponent(cfg.publisherToken)}`;
+  const url = uplinkUrlFor(cfg.relayUrl, cfg.publisherToken);
   uplink = new UplinkClient(url, {
     onState: (state, detail) => {
       uplinkState = state === "idle" ? "off" : state;

@@ -83,9 +83,9 @@ Verified against the real client:
 
 | Client | Service |
 | --- | --- |
-| stops retrying on close `4401` (`uplinkClient.ts:119`) | 4401 on a bad secret, sent **after** upgrading — an HTTP rejection would be retried forever |
-| retries other close codes | `4409` when a second publisher takes the room |
-| `${relayUrl}/ws/uplink?token=…` (`main.ts:186`) | `/ws/uplink?token=` |
+| stops retrying on close `4401` (`uplinkClient.ts`) | 4401 on a bad secret, sent **after** upgrading — an HTTP rejection would be retried forever |
+| stops on `4409` too, as "replaced by another machine" | `4409` when a second publisher takes the room |
+| `uplinkUrlFor(relayUrl, token)` (`packages/shared`) - one trailing slash taken off | `/ws/uplink?token=` |
 | `Authorization: Bearer <publisherToken>` → `{viewerToken}` (`main.ts:213`) | same, Bearer first, query fallback |
 | `/health` → `{ok, live, viewers}` | same payload; `docs/OPEN-WORK.md` diagnoses production with exactly those fields |
 

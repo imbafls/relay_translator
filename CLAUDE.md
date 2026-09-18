@@ -121,7 +121,7 @@ All verified against `package.json` at v0.8.1.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | vitest, the whole suite. **99 files**, ~40 s. The count is guarded: `handoff.test.ts` fails if this line and the tree disagree. It used to quote a test total too, and that drifted twice in two days - once inside the very commit that corrected it - because no cheap check can hold it. A number nothing can verify is worse than no number. |
+| `pnpm test` | vitest, the whole suite. **100 files**, ~40 s. The count is guarded: `handoff.test.ts` fails if this line and the tree disagree. It used to quote a test total too, and that drifted twice in two days - once inside the very commit that corrected it - because no cheap check can hold it. A number nothing can verify is worse than no number. |
 | `pnpm test:watch` | vitest in watch mode. |
 | `pnpm typecheck:test` | `tsc -p tsconfig.test.json --noEmit`. **Separate on purpose** — see gotchas. |
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
@@ -276,7 +276,7 @@ documentation and config — `versions.test.ts`, `workflows.test.ts`,
 guard non-source facts.
 
 **No mocking of the core relay or the translation state machine.** Verified:
-`vi.mock` appears in **zero** of the 99 test files. The relay tests stand up a
+`vi.mock` appears in **zero** of the 100 test files. The relay tests stand up a
 real `startRelay` on an ephemeral port and talk to it over real WebSockets; the
 renderer and viewer tests run under happy-dom against the real markup. Keep it
 that way — mocking the thing under test is what the audit found hiding several

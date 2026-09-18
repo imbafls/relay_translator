@@ -222,6 +222,25 @@ export function claimUrlFor(relayUrl: string | undefined): string | undefined {
   return `${scheme}://${host}/claim`;
 }
 
+/**
+ * The socket the uplink dials on a relay, given the address the app stores.
+ *
+ * The trailing slash comes off first. `wss://host/` is what an address bar
+ * hands you, the app's own check accepts it, and every other use of the
+ * address already strips it - but the uplink appended its path as it was, and
+ * `//ws/uplink` reached no relay: the Node one reads it as a protocol-relative
+ * url and drops the socket, the Worker routes it to not-found, and the client
+ * retried for ever while every internet viewer sat on OFF AIR.
+ *
+ * ONE slash, the same one `claimUrlFor` and the app's `httpOriginOfRelayUrl`
+ * accept. Taking every slash made `wss://host//` connect the uplink while those
+ * two refused it - UPLINK OK beside a footer handing out the LAN link. An
+ * address should work everywhere or visibly nowhere.
+ */
+export function uplinkUrlFor(relayUrl: string, publisherToken: string): string {
+  return `${relayUrl.replace(/\/$/, "")}/ws/uplink?token=${encodeURIComponent(publisherToken)}`;
+}
+
 /** what POST /claim answers with: one room, two tokens */
 export interface RoomClaim {
   publisherToken: string;

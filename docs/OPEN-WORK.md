@@ -720,6 +720,15 @@ fixed**, the last two on 2026-09-15.
   drops a click whose pressed element was removed. A push that only moves a
   percentage now moves it in place.
 
+- ~~**A relay address ending in "/" left internet viewers on OFF AIR for
+  good.**~~ Fixed 2026-09-18, found twice by the 1.0 discovery pass. The app
+  accepts `wss://host/` and every other use of it strips the slash, but the
+  uplink appended `/ws/uplink` as it was and dialled `//ws/uplink`, which no
+  relay accepts - retried for ever under a SETTINGS panel reading SET. The
+  address is now built by `uplinkUrlFor` in `packages/shared`, taking off the
+  same one slash the claim and the phone link accept, so an address works
+  everywhere or visibly nowhere.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
