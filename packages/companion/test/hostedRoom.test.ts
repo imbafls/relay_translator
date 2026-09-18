@@ -32,6 +32,8 @@ async function serve(handler: http.RequestListener): Promise<string> {
 }
 
 afterEach(async () => {
+  // a stalled answer holds its connection open, and close() waits for it
+  server?.closeAllConnections();
   if (server) await new Promise<void>((r) => server!.close(() => r()));
   server = null;
 });
@@ -103,6 +105,34 @@ describe("claiming a room so the user does not have to", () => {
     await expect(claimHostedRoom("https://relay.supr.systems")).rejects.toThrow(/ws:\/\/ or wss:\/\//i);
     await expect(claimHostedRoom("relay.supr.systems")).rejects.toThrow(/ws:\/\/ or wss:\/\//i);
   });
+});
+
+/**
+ * A relay that stops answering, and the button waiting on it.
+ *
+ * GET AN ADDRESS disables itself while it waits. The timeout used to be
+ * cleared the moment the headers arrived, so a relay or a proxy that sent
+ * `200` and then stalled part-way through the body left the button waiting on
+ * a read with no deadline at all - for as long as the socket lived.
+ * `rotateLink.ts` had the same shape and the same fix.
+ */
+describe("a relay that stops answering", () => {
+  it("is given up on within the time it was given", async () => {
+    const relayUrl = await serve(() => undefined);
+    const began = Date.now();
+    await expect(claimHostedRoom(relayUrl, { timeoutMs: 150 })).rejects.toThrow(/did not answer in time/);
+    expect(Date.now() - began).toBeLessThan(3000);
+  });
+
+  it("is given up on when it stalls part-way through its answer", async () => {
+    const relayUrl = await serve((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.write('{"publisherToken":');
+    });
+    const began = Date.now();
+    await expect(claimHostedRoom(relayUrl, { timeoutMs: 150 })).rejects.toThrow(/did not answer in time/);
+    expect(Date.now() - began, "the answer's body was read with no deadline").toBeLessThan(3000);
+  }, 5000);
 });
 
 describe("where a claim is sent", () => {

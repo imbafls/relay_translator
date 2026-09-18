@@ -885,6 +885,14 @@ fixed**, the last two on 2026-09-15.
   could show - until the next caption, or for good with "hide after" at
   never. It now chooses again whenever it retires one.
 
+- ~~**GET AN ADDRESS waited with no deadline once headers arrived.**~~ Fixed
+  2026-09-18, found by the review of the NEW fix. `claimHostedRoom` cleared
+  its timeout when the headers came in, so a relay or proxy that sent `200`
+  and stalled mid-body held the button indefinitely. The deadline now runs to
+  the last byte, and a body cut off by it says the relay did not answer in
+  time rather than that the address is wrong - the shape `rotateLink.ts` got
+  in the same pass.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

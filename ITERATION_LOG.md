@@ -4213,3 +4213,17 @@ Found by the review of the two-voice fix and carded then; one call, made only
 when a half-caption was actually retired, so the earlier guarantee that a
 wordless final with no half-caption changes nothing still holds - and its
 test still passes beside this one, which went red first.
+
+**41 - The claim's deadline, all the way to the end.** Carded in 26, when
+the same hole was closed in `rotateLink.ts`: `claimHostedRoom` cleared its
+timeout in the `finally` right after `fetch` resolved - that is, when the
+headers arrived - so a relay or proxy that sent `200` and stalled part-way
+through the body left GET AN ADDRESS disabled on a read with no deadline.
+The claim tests had no timeout case at all. They have two now: a relay that
+never answers (which passed, the part that always worked) and one that
+stalls mid-body, which hung until the test's own five-second limit before
+the fix. The deadline now runs to the last byte, and a body cut short by it
+says the relay did not answer in time; without that check the same stall is
+reported as a wrong address, and a mutation shows the test knows the
+difference. The teardown learned to drop open connections, because a
+stalled answer is exactly what `close()` waits on.
