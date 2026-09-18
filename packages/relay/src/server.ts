@@ -459,6 +459,17 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
     // told has to be what the session will actually do
     currentTranslates = willTranslate(cfg, { mockGemini, geminiApiKey: opts.geminiApiKey });
     currentBrand = { brandName: cfg.brandName, brandColor: cfg.brandColor };
+    // What this session says to viewers is only theirs while they are still
+    // holding its rows. A session is stopped, not silenced: its last line's
+    // translation may still be in flight and a local model's flush final lands
+    // seconds after close - which is what lets the last thing said before STOP
+    // arrive. But once a session numbering from zero has taken over, the epoch
+    // has moved and every viewer has cleared; a late line from this one carries
+    // no epoch of its own, so it would land at the top of the fresh transcript
+    // and take the row the new session's id needs. A rebuild that carried the
+    // numbering over keeps the epoch, and so keeps its late output. The saved
+    // transcript is fed from toPublisher below, not from here, and loses nothing.
+    const builtUnder = segEpoch;
     const session = new PublisherSession(cfg, {
       deepgramApiKey: opts.deepgramApiKey,
       geminiApiKey: opts.geminiApiKey,
@@ -469,7 +480,10 @@ export function startRelay(opts: RelayOptions = {}): Promise<RelayHandle> {
       idleBillingStopMinutes: opts.idleBillingStopMinutes,
       geminiStats,
       sttStats,
-      toViewers,
+      toViewers: (msg) => {
+        if (segEpoch !== builtUnder) return;
+        toViewers(msg);
+      },
       toPublisher: (msg) => {
         // ahead of the socket check, not behind it: a translation that
         // resolves after the publisher has gone still belongs in the record

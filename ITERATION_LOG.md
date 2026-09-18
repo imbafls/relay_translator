@@ -3759,3 +3759,23 @@ red. The pre-commit review found the tests one-sided: nothing held that the
 CURRENT start's failure still reaches ERROR, so a catch that swallowed every
 failure passed all 286 app tests. A fourth test now holds that side, and was
 watched red against exactly that over-broad catch.
+
+**15 - What a replaced session says after the viewers have moved on.** A
+settings change while live opens a new publisher socket; the relay builds a
+session numbering from zero, mints a new epoch, and every viewer clears. The
+old session is stopped, not silenced - its last translation or a local model's
+flush final lands seconds later with no epoch of its own - and the page could
+not tell it from the new session's lines. Fixed at the relay rather than the
+page, because the page has nothing to tell them apart by and the relay reaches
+the OBS overlay and the hosted room in the same move: each session remembers
+the epoch it was built under, and its viewer output stops once that has moved.
+The gate is the epoch, not the session object, and two tests hold that choice
+from either side - after a plain STOP nothing moves the epoch and the last
+words still arrive; after a same-socket rebuild the epoch and the rows survive.
+Making every rebuild mint an epoch turns the second red; removing the gate
+turns the first. The review caught my third test claiming more than it showed
+- a late final with no partial takes the new session's first id, a
+pre-existing collision the app cannot reach because it says hello only on
+open - so the test now finishes a line the viewer is actually showing. And it
+asked for proof of the comment's "the saved transcript loses nothing"; that is
+asserted now, and gating the transcript tap the same way turns it red.

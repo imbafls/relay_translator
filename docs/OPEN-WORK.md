@@ -624,6 +624,18 @@ fixed**, the last two on 2026-09-15.
   wait, on success and on failure. The same gap let START, STOP and START
   build two publishers; the first is no longer built.
 
+- ~~**A restarted session's late output landed in the transcript viewers had
+  just cleared.**~~ Fixed 2026-09-18, found by the 1.0 discovery pass. A
+  settings change while live opens a new publisher socket, the relay mints a
+  new epoch and viewers clear; the old session's last translation or a local
+  model's flush final then arrived with no epoch of its own, came back as the
+  newest line and held the row the new session's id needed. `buildSession()`
+  in `packages/relay/src/server.ts` now drops a session's viewer output once
+  the epoch has moved - at the source, so OBS and the hosted room are covered
+  too. After a plain STOP nothing moves the epoch, so the last words still
+  arrive, and the saved transcript is fed from the publisher path and keeps
+  everything (`packages/relay/test/lateOutputAfterRestart.test.ts`).
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
