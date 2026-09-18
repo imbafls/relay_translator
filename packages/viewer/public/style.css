@@ -159,11 +159,15 @@ body.no-tgt .row .tgt { display: none; }
 body.no-tgt .row .src { font-size: calc(var(--size) * 1.11); color: inherit; }
 body.no-tgt .row.latest .src { font-size: calc(var(--size) * 1.33); font-weight: 600; color: var(--fg); }
 body.no-tgt .row.latest .ts { padding-top: 8px; }
-body.no-src .row .src { display: none; }
+/* the original's words, not who said them: the speaker tag is drawn inside
+   .src, and hiding all of it left two voices' lines looking the same */
+body.no-src .row .src .txt, body.no-src .row .src .cursor { display: none; }
+/* standing alone, the tag has nothing after it to keep its distance from */
+body.no-src .row .src .who { margin-right: 0; }
 /* a line whose translation is not coming: no placeholder, and its original
    stays on screen even where the reader hid originals - it is all there is */
 .row.untranslated .tgt { display: none; }
-body.no-src .row.untranslated .src { display: block; }
+body.no-src .row.untranslated .src .txt { display: inline; }
 body.no-src .row .tgt { margin-top: 0; }
 body.no-src .row.interim { display: none; }
 body.center .row { text-align: center; }

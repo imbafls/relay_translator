@@ -1732,7 +1732,12 @@ describe("a line whose translation is not coming", () => {
     push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
   };
 
-  const shown = (el: Element | null | undefined): boolean => !!el && getComputedStyle(el).display !== "none";
+  // an element's own display is not the answer when an ancestor can hide it
+  const shown = (el: Element | null | undefined): boolean => {
+    if (!el) return false;
+    for (let e: Element | null = el; e; e = e.parentElement) if (getComputedStyle(e).display === "none") return false;
+    return true;
+  };
 
   it("puts the words that were said on air, not a placeholder", () => {
     overlayHidingTheOriginal();
@@ -1742,7 +1747,7 @@ describe("a line whose translation is not coming", () => {
     const row = document.querySelector("#lines .row.obs-live");
     expect(row, "nothing is on air at all").not.toBeNull();
     expect(
-      shown(row?.querySelector(".src")),
+      shown(row?.querySelector(".src .txt")),
       "the original is still hidden under a translation that is never coming, so the caption on air says nothing",
     ).toBe(true);
     expect(
@@ -1784,8 +1789,8 @@ describe("a line whose translation is not coming", () => {
 
     const row = document.querySelector("#lines .row.obs-live");
     // unchanged behaviour: a translation that is coming is waited for, and the
-    // original stays hidden as the reader asked
-    expect(shown(row?.querySelector(".src"))).toBe(false);
+    // original's words stay hidden as the reader asked
+    expect(shown(row?.querySelector(".src .txt"))).toBe(false);
     expect(row?.querySelector(".tgt")?.textContent).toBe("…");
   });
 });
@@ -2103,4 +2108,70 @@ describe("two voices on an overlay that shows one line", () => {
 
     expect(onAir(), "a sentence begun after the finished line was held off air as if it were older").toContain("going B");
   });
+});
+
+/**
+ * Who said it, with the original hidden.
+ *
+ * The speaker tag is drawn inside the original's element, and "Show original"
+ * off hid that whole element - so on a translated stream with two sources, the
+ * setting a reader who does not know the streamer's language reaches for first
+ * took every YOU and CHAT off the page with it, and on the overlay a streamer
+ * captioning for an international audience lost them too. Lines from different
+ * people looked identical. DESIGN.md: "when two sources are on, every caption
+ * row carries a condensed uppercase .who label ... Phone viewer and OBS overlay
+ * use the same tag".
+ *
+ * The setting hides the original's words, not who said them. Loaded with the
+ * real stylesheet, because what is on screen is the stylesheet's call.
+ */
+describe("who said it, with the original hidden", () => {
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+  // happy-dom reports an element's own display, not whether an ancestor hides
+  // it - and hidden-by-its-parent is exactly the failure here - so walk up
+  const shown = (el: Element | null | undefined): boolean => {
+    if (!el) return false;
+    for (let e: Element | null = el; e; e = e.parentElement) if (getComputedStyle(e).display === "none") return false;
+    return true;
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+    document.head.querySelector("style[data-test]")?.remove();
+  });
+
+  const page = (search: string): void => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify({ showSource: false }));
+    boot(search);
+    const style = document.createElement("style");
+    style.dataset.test = "1";
+    style.textContent = css;
+    document.head.appendChild(style);
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    push({ type: "subtitle", id: 1, source: "go left", target: "di trai", final: true, channel: 1, speaker: "CHAT", color: "#7fb6d9" });
+  };
+
+  for (const [where, search] of [
+    ["the phone page", ""],
+    ["the overlay", "?obs=1"],
+  ] as const) {
+    it(`keeps the speaker on ${where}, and still hides the original's words`, () => {
+      page(search);
+      expect(document.body.classList.contains("no-src"), "the original is not hidden, so this proves nothing").toBe(true);
+      const row = document.querySelector("#lines .row");
+      const who = row?.querySelector(".who");
+
+      expect(who?.textContent).toBe("CHAT");
+      expect(shown(who), `hiding the original took the speaker off ${where}, so two people's lines look the same`).toBe(
+        true,
+      );
+      expect(shown(row?.querySelector(".src .txt")), "the words the reader asked to hide are on screen").toBe(false);
+      expect(shown(row?.querySelector(".tgt")), "the translation is not on screen").toBe(true);
+      // on a line of its own, a trailing margin only pushes a centred tag off centre
+      expect(who && getComputedStyle(who).marginRight).toBe("0px");
+    });
+  }
 });

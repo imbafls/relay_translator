@@ -695,6 +695,14 @@ fixed**, the last two on 2026-09-15.
   hold came from review: without it, one voice's 15-18 s local-engine segment
   would have left the person the audience can hear uncaptioned that long.
 
+- ~~**With "Show original" off, every speaker tag disappeared.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. The tag is drawn inside the
+  original's element and the setting hid that whole element, so on a
+  translated two-source stream - phone page and overlay - two people's lines
+  looked the same, against DESIGN.md's "every caption row carries" the tag.
+  The setting now hides the original's words, not who said them. Seen in a
+  real browser on both surfaces against the mock relay.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

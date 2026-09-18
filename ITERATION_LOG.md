@@ -3890,3 +3890,18 @@ birth time belonged to the element rather than the sentence, so a sentence
 typed into a reused interim counted as old. A second look at the hold found a
 "not coming" message restarting it and dragging a stale line back; it no
 longer does. Seven parts, each removed in turn, each turning a test red.
+
+**22 - Who said it.** The speaker tag is drawn inside the original's element,
+and "Show original" off hid that whole element - so the setting a reader who
+does not know the streamer's language reaches for first took every YOU and
+CHAT with it, on the phone page and on the overlay. The fix is CSS: hide the
+original's words and cursor, not the element. The test loads the real
+stylesheet, and its first run passed for a reason that proved nothing:
+happy-dom reports an element's own `display`, not whether an ancestor hides
+it, and hidden-by-its-parent is exactly this bug. With a visibility check that
+walks up the tree it went red on both surfaces. Two assertions from iteration
+18 had the same blind spot and now check the original's words, which is what
+they always meant. Seen in a real browser against the mock relay with a
+scratch two-channel publisher - YOU and CHAT in their colours above each
+translation on the phone, the tag stacked over the line on the overlay - and
+the review's one nit, a trailing margin nudging a centred tag, is gone too.
