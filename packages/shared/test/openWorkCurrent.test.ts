@@ -131,6 +131,54 @@ describe("what the backlog still calls open", () => {
     ).toEqual([]);
   });
 
+  /**
+   * A release ships with its open items either fixed or named.
+   *
+   * 1.0 was cut against exactly that rule: every item still open was fixed,
+   * struck through, or written into `## Known limitations in 1.0` with the
+   * reason it does not block the release. That section is what a user-facing
+   * README draws from, so an open item left anywhere else is a limitation the
+   * release shipped with and nobody said.
+   *
+   * Held structurally rather than by matching titles: open work may live under
+   * `## Blocked`, where each `### B<n>` must be named in the limitations, or in
+   * the limitations section itself. `## Not blocked` holds none - no live
+   * bullet, no row left in its "Still open" table - because anything there is
+   * either done or has been triaged out of it.
+   */
+  it("leaves nothing open that the release neither fixed nor named as a known limitation", () => {
+    const text = doc();
+    const section = (heading: RegExp): string | undefined => {
+      const lines = text.split(/\r?\n/);
+      const at = lines.findIndex((l) => heading.test(l));
+      if (at < 0) return undefined;
+      const end = lines.findIndex((l, i) => i > at && /^## /.test(l));
+      return lines.slice(at + 1, end < 0 ? undefined : end).join("\n");
+    };
+
+    const known = section(/^## Known limitations in 1\.0\b/);
+    expect(known, "OPEN-WORK.md has no `## Known limitations in 1.0` section").toBeDefined();
+    expect(liveEntries(known ?? "").length, "the known limitations section lists nothing").toBeGreaterThan(0);
+
+    const blocked = section(/^## Blocked\b/);
+    expect(blocked, "the Blocked section is gone, so nothing here checked it").toBeDefined();
+    const ids = [...(blocked ?? "").matchAll(/^### (B\d+)\b/gm)].map((m) => m[1] ?? "");
+    const unnamed = ids.filter((id) => !new RegExp(`\\b${id}\\b`).test(known ?? ""));
+    expect(unnamed, "blocked items the release does not name as a known limitation").toEqual([]);
+
+    const notBlocked = section(/^## Not blocked\b/);
+    expect(notBlocked, "the Not blocked section is gone, so nothing here checked it").toBeDefined();
+    const loose = liveEntries(notBlocked ?? "").map((e) => e.split("\n")[0]);
+    expect(loose, "open entries under Not blocked that are neither struck through nor moved to the limitations").toEqual(
+      [],
+    );
+    const stillOpen = (notBlocked ?? "").split(/^### /m).find((s) => s.startsWith("Still open")) ?? "";
+    const rows = stillOpen
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith("|") && !/^\|\s*Rank\b/.test(l) && !/^\|[-\s|]+\|$/.test(l));
+    expect(rows, "audit findings still in the Still open table rather than fixed or named").toEqual([]);
+  });
+
   it("found entries to check, so the two assertions above mean something", () => {
     const live = liveEntries(doc());
     expect(live.length).toBeGreaterThan(3);

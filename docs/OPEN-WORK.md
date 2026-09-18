@@ -17,6 +17,59 @@ the audit's stated grouping; it is a reading aid, not a quote.
 
 ---
 
+## Known limitations in 1.0
+
+What 1.0 ships with, knowingly, and why none of it holds the release. Every
+other open item was fixed before 1.0 was cut; `openWorkCurrent.test.ts` fails
+if an open item is left anywhere in this file without either a fix or a line
+here.
+
+- **Updates are not code-signed (B4).** It needs a purchased certificate and an
+  identity check, not a code change; until then an update is checked against
+  the sha512 in the release's own `latest.yml`, and `isAllowedUpdateFeed()`
+  refuses any feed that is not `https:` or loopback. Full entry under Blocked.
+- **An archive model download may still fail on one reporting machine (B6).**
+  It has never been reproduced here, where every archive model installs, and
+  0.8.1 already pinned each archive to a SHA-256 and retries a failed attempt in
+  a fresh folder - the fix that fits the report - so what remains is waiting for
+  the instrumented error from that machine, which cloud speech does not need.
+  Full entry under Blocked.
+- **With a local model, STOP can take longer than it needs to (audit finding
+  17 (part), low).** The close is still posted behind the queued audio on the
+  same port, in `packages/relay/src/localSttWorker.ts`. With the deadline scaled
+  to the worker going quiet, that costs a slower STOP rather than a lost
+  caption; moving it out of band means changing the protocol on both sides, and
+  the worker half needs sherpa-onnx to exercise at all. **Why it does not hold
+  1.0:** nothing is lost - the last thing said still arrives - and a protocol
+  change on both sides of the worker is the wrong thing to land in a release.
+- **Nothing says what a second or third capture source costs until the money is
+  already going out.** Deepgram bills every channel, so three sources is three
+  times the per-minute spend: `packages/relay/src/session.ts` adds
+  `seconds * channels` to the cloud counter and nothing at all to it for a
+  local model. The app does show the spend - `metaStt` under `02 TRANSCRIBE`
+  and the `EST` readout in `apps/standalone/renderer/app.ts` - but both only
+  once a session is running, which is after the decision. The pickers that
+  triple it are in `01 SOURCE`, three blocks earlier and minutes earlier, and
+  they say nothing.
+  What is wanted is a rate next to those pickers, shown only for a cloud model:
+  local STT is free, and a cost hint over a local model would be worse than no
+  hint at all. The exact wording is the owner's call, since it is the first
+  place in the product that would quote a price.
+  `packages/relay/test/billingPerChannel.test.ts` pins the multiplier this
+  entry quotes - three sources bill three times one, a local model bills the
+  cloud counter zero - so the number cannot rot between now and someone acting
+  on it. Written down here 2026-09-15: it had been the single open item on an
+  otherwise-finished multi-source feature, which is exactly how it stayed
+  invisible for nine days.
+  **Why it does not hold 1.0:** the spend is on screen the moment a session
+  runs, the multiplier is pinned by that test, and the first price the product
+  ever quotes is the owner's wording to choose, not a release's.
+- **textrelay.cc has no mailbox.** Nothing the product ships sends mail or
+  shows an address - problem reports go through `POST /feedback` into R2 - so
+  the paid mailbox and DKIM are an owner task on the zone, not a release step.
+
+---
+
 ## Closed by retiring the VPS
 
 The first three blockers in the previous version of this file were all "SSH into
@@ -364,9 +417,9 @@ Plus the nine fixed in turns 31–41 — see `ITERATION_LOG.md`.
 
 ### Still open
 
-| Rank | Band | Finding | Primary location |
-|------|------|---------|------------------|
-| 17 (part) | low | The close is still posted behind the queued audio on the same port. With the deadline scaled to the worker going quiet, that costs a slower STOP rather than a lost caption; moving it out of band means changing the protocol on both sides, and the worker half needs sherpa-onnx to exercise at all. | `packages/relay/src/localSttWorker.ts` |
+None. The one part of an audit finding left open - 17, the close queued
+behind audio - moved to `## Known limitations in 1.0` at the top of this file
+when 1.0 was cut.
 
 Each entry in the audit carries a reproduced failure scenario and a suggested
 fix — read the numbered section there before starting.
@@ -593,22 +646,3 @@ fixed**, the last two on 2026-09-15.
   Found 2026-09-15 while guarding the file's *other* quoted block; that one, the
   `startUplink()` gate, does match its source and `handoff.test.ts` now holds it
   there.
-- **Nothing says what a second or third capture source costs until the money is
-  already going out.** Deepgram bills every channel, so three sources is three
-  times the per-minute spend: `packages/relay/src/session.ts` adds
-  `seconds * channels` to the cloud counter and nothing at all to it for a
-  local model. The app does show the spend - `metaStt` under `02 TRANSCRIBE`
-  and the `EST` readout in `apps/standalone/renderer/app.ts` - but both only
-  once a session is running, which is after the decision. The pickers that
-  triple it are in `01 SOURCE`, three blocks earlier and minutes earlier, and
-  they say nothing.
-  What is wanted is a rate next to those pickers, shown only for a cloud model:
-  local STT is free, and a cost hint over a local model would be worse than no
-  hint at all. The exact wording is the owner's call, since it is the first
-  place in the product that would quote a price.
-  `packages/relay/test/billingPerChannel.test.ts` pins the multiplier this
-  entry quotes - three sources bill three times one, a local model bills the
-  cloud counter zero - so the number cannot rot between now and someone acting
-  on it. Written down here 2026-09-15: it had been the single open item on an
-  otherwise-finished multi-source feature, which is exactly how it stayed
-  invisible for nine days.

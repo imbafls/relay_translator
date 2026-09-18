@@ -3671,3 +3671,18 @@ held two entries to the code this way; a third asks `room.ts` for both halves
 of the sweep and then refuses a live entry, in either document, that calls
 the phantom viewer open. Red with both entries live, still red on the README
 once the backlog alone was struck, green with both closed.
+
+**7 - What 1.0 ships with, named.** `docs/OPEN-WORK.md` now opens with
+`## Known limitations in 1.0`: code signing (B4), the one machine's archive
+download (B6), the slower STOP a local model can give (the open part of audit
+finding 17), the missing cost hint beside the source pickers, and the
+textrelay.cc mailbox - each with the reason it does not hold the release. The
+cost-hint entry and the finding-17 row moved there whole rather than being
+copied, so there is one record of each. Nothing the product ships names a
+textrelay.cc address, which is what makes the mailbox a limitation rather than
+a blocker. The rule the section exists to satisfy is now a test: an open item
+may live under Blocked, where each `### B<n>` has to be named in the
+limitations, or in the limitations themselves, and nowhere else. Built up in
+stages so every half was seen failing - no section at all, then B6 left out,
+then the cost hint still loose under Other, then finding 17 still in its table
+- before it went green.
