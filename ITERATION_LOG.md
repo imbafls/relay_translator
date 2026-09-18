@@ -4801,3 +4801,57 @@ launch A opened on the 1.0.0 what's-new panel, served `/watch/<token>` and
 wrote a transcript at app version 1.0.0 from a session on the relay's
 stand-in engine. The real config.json was byte-identical after both. This
 commit is the one to tag.
+
+## 1.0 - how it shipped
+
+v1.0.0 is tagged on `44a2c0f` ("Release v1.0.0"), 173 commits after v0.8.1,
+all written by this run and the improvement loop before it. What was done, in
+the order the release handoff asked for it:
+
+- **Phase 1** landed the one change that was in flight, closed the polish-loop
+  card and finished the renderer split.
+- **Phase 2** cleared the backlog: every open item fixed test-first or named
+  under `## Known limitations in 1.0` with the reason it does not hold the
+  release. A discovery pass over the viewer page, the renderer and the Worker
+  produced 42 cards, all done; an independent review of the last fixes before
+  Phase 3 produced 12 more, two of them P1 - a regression that trapped a fresh
+  install in setup when its relay port was taken, and tests a heredoc had
+  quietly weakened - all done, plus two flaky tests found on the way and
+  fixed at the cause. `openWorkCurrent.test.ts` now reads every section of
+  the backlog and holds the rule.
+- **Phase 3** wrote the 1.0.0 changelog (eighteen lines, from every commit
+  since v0.8.1), the README's known limitations (held to the backlog's), and
+  a HANDOFF.md with five stale facts corrected. The packaged app was run as a
+  user would, twice, on scratch data dirs: the first candidate turned up two
+  LOG lines that read wrong, so the Release commit waited for their fix, and
+  the second passed - setup, the relay-down chip, the what's-new panel, the
+  viewer page and a saved transcript, with the real config untouched.
+- **Phase 4**, authorised for this loop only: origin had nothing this run did
+  not write (`0 171`); master pushed and read back; the annotated tag pushed
+  and read back; the Release workflow green first time (run 35375814130:
+  linux-relay, windows, publish) and CI green; the release published with all
+  seven assets and its notes replaced by the changelog prose; the hosted
+  relay deployed from the tag (Worker version 099bc01c) and verified -
+  verify-deploy 15/15, verify-isolation 9/9 - with both landing pages and
+  their icons served.
+
+The suite at release: 105 test files, 1738 tests, the six-step gate green,
+nothing mocked.
+
+**What 1.0 leaves, knowingly** - each in `docs/OPEN-WORK.md` and the README:
+updates are not code-signed (B4, a purchase); an archive model download can
+fail on one reporting machine (B6, waiting on its instrumented error); a local
+model's STOP can be slower than it needs to be; extra capture sources
+multiply cloud speech cost with no hint beside the pickers (the wording is the
+owner's); textrelay.cc has no mailbox; feedback reports have no expiry. The
+three owner-only board cards - code signing, the mailbox, and finding 17 -
+stay in Backlog.
+
+**Worth knowing next time.** The retired `apps/streamdeck` leftovers on this
+machine broke electron-builder's native rebuild; they were moved to that
+session's scratchpad, and a dangling hoisted link to them removed. `pnpm
+dist:app -- ...` passes the `--` through literally. Any script that writes
+code containing a backslash goes through the editor, never a heredoc - the
+one that did left three tests testing less than they said from iteration 52
+to 58, and it took an independent reviewer to see it. GitHub moves `ubuntu-latest` to Ubuntu 26 on
+2026-10-19, so the next release's linux-relay job runs on a new image.
