@@ -4026,3 +4026,19 @@ over a half-open socket, or one that was never live; each has a guard now.
 Twenty mutations to `room.ts`, each red, and two to the contract.
 It refuted two findings as well: a deploy briefly reads as OFF AIR only if a
 viewer beats the uplink back, and that is true while it lasts.
+
+**29 - The footer followed OUTPUT once.** Which link the footer shows - and
+COPY copies - was set from OUTPUT in `bind()`, once, at startup. A user who
+picked OBS in setup therefore began their first session with COPY handing
+their browser source the phone page: the opaque one with the bar, which is
+audit finding 20 again, fixed by a restart nobody would think to try. The
+reverse too: switch 04 OUTPUT to Phone and COPY kept the overlay. It now
+follows OUTPUT whenever OUTPUT changes, from `syncControlsFromConfig`, the one
+place every config change passes through; a pick in the footer's own switch
+stands until OUTPUT moves. The third test guards the other direction - a fix
+that simply re-derived the link on every save would have stamped over that
+pick - and each of the four parts, removed, turns one of them red. Editing
+the neighbouring describe turned up a guard there that cannot fail: a shell
+once turned the `\b` around `hidden` in its regex into backspace bytes, so it
+passes whatever the markup says. Carded, with a repo-wide check for stray
+control bytes to go with it, rather than folded into this commit.

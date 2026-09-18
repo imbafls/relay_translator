@@ -768,6 +768,14 @@ fixed**, the last two on 2026-09-15.
   alarm. `apps/hosted-relay/README.md` has the cost; `uplinkGone.test.ts` and
   `viewerPing.test.ts` hold it.
 
+- ~~**The footer's link ignored OUTPUT after boot.**~~ Fixed 2026-09-18, found
+  by the 1.0 discovery pass. Which link the footer shows, and COPY copies, was
+  worked out from OUTPUT once at startup - so a user who picked OBS in setup
+  started their first session with COPY handing their OBS browser source the
+  phone page, audit finding 20 again, until a restart. It now follows OUTPUT
+  whenever OUTPUT changes, and a pick made in the footer's own switch stands
+  until then.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

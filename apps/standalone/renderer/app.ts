@@ -79,8 +79,10 @@ let sessionErrorTitle: string | undefined;
 let sessionStart: number | undefined;
 let view: View = "stage";
 let syncing = false;
-/** which link the footer shows when output = both */
+/** which link the footer shows and COPY copies; the PHONE/OBS switch beside it */
 let linkChoice: "phone" | "obs" = "phone";
+/** the OUTPUT the footer last followed - see `followOutput()` */
+let footerFollows: AppConfig["output"] | undefined;
 /**
  * The exact redacted log text currently shown in #feedbackPreview, or
  * undefined when INCLUDE MY LOG is off, or when there is nothing to show (a
@@ -998,6 +1000,7 @@ function syncControlsFromConfig(): void {
   refitSelects();
   setSeg("outputSeg", config.output || "phone");
   setSeg("obOutputSeg", config.output || "phone");
+  followOutput();
   setSeg("linkModeSeg", config.linkMode);
   $("badgesToggle").classList.toggle("on", config.showLatency !== false);
   $("filterToggle").classList.toggle("on", config.profanityFilter !== false);
@@ -1006,6 +1009,25 @@ function syncControlsFromConfig(): void {
   renderChain();
   renderFooter();
   renderIdle();
+}
+
+/**
+ * Point the footer's link at what OUTPUT says, whenever OUTPUT changes.
+ *
+ * This ran once, at boot. So OBS picked in setup, or 04 OUTPUT switched
+ * either way, left the footer on the other link until a restart - and COPY,
+ * the primary button, put the phone page into an OBS browser source or the
+ * transparent overlay onto a friend's phone. Only a change moves it: the
+ * switch beside the link is there so either one can be reached on any
+ * output, and a pick made there stands through every save that leaves OUTPUT
+ * alone. "Both" has no single answer, so it leaves the pick as it is.
+ */
+function followOutput(): void {
+  const output = config.output || "phone";
+  if (output === footerFollows) return;
+  footerFollows = output;
+  if (output === "obs") linkChoice = "obs";
+  else if (output === "phone") linkChoice = "phone";
 }
 
 /**
@@ -2571,8 +2593,6 @@ function bind(): void {
     linkChoice = v as "phone" | "obs";
     renderFooter();
   });
-  // an OBS-only user should still open on the OBS link; they can switch either way
-  if (config?.output === "obs") linkChoice = "obs";
   $("settingsBtn").onclick = () => setView(view === "settings" ? "stage" : "settings");
   $("wnClose").onclick = () => {
     $("whatsnew").hidden = true;

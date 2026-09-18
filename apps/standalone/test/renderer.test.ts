@@ -917,6 +917,82 @@ describe("reaching the OBS overlay link", () => {
   });
 });
 
+/**
+ * Which of the two links the footer shows was worked out from OUTPUT once, at
+ * boot. So a user who picked OBS in setup started their first session with the
+ * footer on PHONE, and COPY - the primary button - put the phone page into
+ * their OBS browser source: the opaque page with the bar, the audit finding 20
+ * failure again, on every OBS user's first night. Only a restart fixed it. It
+ * has to follow OUTPUT whenever OUTPUT changes.
+ */
+describe("the footer's link, when OUTPUT changes", () => {
+  // a fixed link is shown before any session, which is when an OBS user copies
+  // it into a browser source; otherwise COPY waits for START
+  const relayUp = async (): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok?obs=1",
+        remoteViewerUrl: "https://textrelay.cc/watch/tok",
+        uplinkState: "connected",
+        viewers: 0,
+        remoteViewers: 0,
+      },
+      usage: undefined,
+    });
+    await settle(30);
+  };
+  const picked = (id: string): string | undefined =>
+    (document.querySelector(`#${id} button.active`) as HTMLElement | null)?.dataset.value;
+  const copied = async (): Promise<string | undefined> => {
+    (document.getElementById("copyLink") as HTMLButtonElement).click();
+    await settle(30);
+    return calls.clipboard[calls.clipboard.length - 1];
+  };
+  const click = async (seg: string, value: string): Promise<void> => {
+    (document.querySelector(`#${seg} button[data-value="${value}"]`) as HTMLButtonElement).click();
+    await settle(30);
+  };
+
+  it("follows setup's OBS pick into the first session", async () => {
+    await bootWith({ setupDone: false, output: "phone", linkMode: "fixed" });
+    await click("obOutputSeg", "obs");
+    (document.getElementById("obOpenConsole") as HTMLButtonElement).click();
+    await settle(30);
+    await relayUp();
+
+    expect(picked("linkSeg"), "the footer is still on PHONE after setup picked OBS").toBe("obs");
+    expect(await copied(), "COPY handed an OBS user the phone page for their browser source").toMatch(/\?obs=1$/);
+  });
+
+  it("follows 04 OUTPUT when it changes, either way", async () => {
+    await bootWith({ setupDone: true, output: "obs", linkMode: "fixed" });
+    await relayUp();
+    expect(picked("linkSeg")).toBe("obs");
+
+    await click("outputSeg", "phone");
+    expect(picked("linkSeg"), "switching OUTPUT to Phone left the footer on the OBS overlay").toBe("phone");
+    expect(await copied(), "COPY handed a friend's phone the transparent overlay").toBe("https://textrelay.cc/watch/tok");
+
+    await click("outputSeg", "obs");
+    expect(picked("linkSeg")).toBe("obs");
+  });
+
+  // the switcher is there so either link can be reached on any output: a pick
+  // made there stands until OUTPUT itself changes
+  it("keeps a pick made in the footer when OUTPUT does not change", async () => {
+    await bootWith({ setupDone: true, output: "phone", linkMode: "fixed" });
+    await relayUp();
+    await click("linkSeg", "obs");
+
+    await click("outputSeg", "phone");
+
+    expect(picked("linkSeg"), "a save that changed nothing about OUTPUT undid the footer pick").toBe("obs");
+    expect(await copied()).toMatch(/\?obs=1$/);
+  });
+});
+
 describe("the Deepgram key status", () => {
   /**
    * fieldStatus took required=true unconditionally, so a user running speech
