@@ -313,6 +313,30 @@ describe("what the backlog still calls open", () => {
     expect(strays).toEqual(["- **A loose open bullet.** Under Blocked but under no item.", "### C1 — A blocked item with no B-number"]);
   });
 
+  /**
+   * The backlog's limitations section is written for whoever works on the
+   * repo; the README's is the same list for whoever installs the app, and it
+   * is the one a user reads. Kept to the same length, so a limitation added to
+   * one and not the other - or fixed in one and still claimed in the other -
+   * fails here rather than shipping.
+   */
+  it("gives the README the same known limitations the backlog names", () => {
+    const sectionOf = (text: string): string | undefined => {
+      const lines = text.split(/\r?\n/);
+      const at = lines.findIndex((l) => /^## Known limitations in 1\.0\b/.test(l));
+      if (at < 0) return undefined;
+      const end = lines.findIndex((l, i) => i > at && /^## /.test(l));
+      return lines.slice(at + 1, end < 0 ? undefined : end).join("\n");
+    };
+    const readme = sectionOf(fs.readFileSync(path.join(root, "README.md"), "utf8"));
+    const backlog = sectionOf(doc());
+    expect(readme, "README.md has no `## Known limitations in 1.0` section").toBeDefined();
+    expect(liveEntries(backlog ?? "").length, "the backlog's section lists nothing to compare").toBeGreaterThan(0);
+    expect(liveEntries(readme ?? "").length, "README.md and OPEN-WORK.md list a different number of limitations").toBe(
+      liveEntries(backlog ?? "").length,
+    );
+  });
+
   it("found entries to check, so the two assertions above mean something", () => {
     const live = liveEntries(doc());
     expect(live.length).toBeGreaterThan(3);

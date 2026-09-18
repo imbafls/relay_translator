@@ -442,6 +442,31 @@ it is worth keeping that way.
 - **Kicked viewers** - someone opened the same link on another device, or the
   link was rotated. Send them the fresh link.
 
+## Known limitations in 1.0
+
+What 1.0 ships with, knowingly. `docs/OPEN-WORK.md` has the detail behind each
+one, and a test keeps the two lists the same length.
+
+- **Updates are not code-signed.** Windows SmartScreen may warn the first time
+  the installer runs, and an update is checked only against the SHA-512 in the
+  release's own `latest.yml`. The app refuses any update feed that is not
+  `https:` or on this PC. Signing needs a purchased certificate.
+- **An archive model download can fail on some PCs.** On one reporting
+  machine the larger single-archive models stop partway. Every download is
+  fingerprint-checked and retried, but the cause is not confirmed. Cloud speech
+  is not affected. If it happens to you, send SEND FEEDBACK with INCLUDE MY LOG
+  ticked - the log says exactly how it failed.
+- **With a local model, STOP can take a moment longer than it needs to.** The
+  last thing said still arrives; nothing is lost.
+- **A second or third capture source multiplies the cost of cloud speech.**
+  Deepgram bills every channel, so three sources cost three times one. The
+  spend shows under `02 TRANSCRIBE` and in `EST` once a session is running,
+  but not next to the source pickers. Local models cost nothing either way.
+- **textrelay.cc has no mailbox.** Problem reports go through SEND FEEDBACK,
+  not email.
+- **Problem reports are kept until someone deletes them.** A report sent with
+  SEND FEEDBACK is stored with no expiry date.
+
 ## The other docs
 
 - `docs/GUIDE.md` - the user guide. Start there if you are setting this up for

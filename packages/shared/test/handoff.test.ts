@@ -683,3 +683,38 @@ describe("the viewer's URL parameters", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * The hosted relay's two verify scripts are run after every deploy, and the
+ * docs that give the commands quote how many checks each makes - so that a run
+ * that prints fewer PASS lines is noticed. HANDOFF.md said 14 for
+ * verify-deploy.cjs for a week after a fifteenth was added, and a reader
+ * counting PASS lines against it would have taken a green run for a short one.
+ * The count is read off the script, not written down here.
+ */
+describe("the check counts the docs quote for the verify scripts", () => {
+  const SCRIPTS = ["verify-deploy.cjs", "verify-isolation.cjs"] as const;
+  const QUOTING = ["HANDOFF.md", "CLAUDE.md", "README.md", "apps/hosted-relay/README.md"] as const;
+  const checksIn = (name: string): number =>
+    (read(`apps/hosted-relay/scripts/${name}`).match(/^\s*ok\(/gm) ?? []).length;
+
+  it("counts some checks in each script, so the comparison means something", () => {
+    for (const name of SCRIPTS) expect(checksIn(name), `${name} has no ok( checks to count`).toBeGreaterThan(5);
+  });
+
+  it("finds the counts quoted, so the comparison is made at all", () => {
+    const quoted = QUOTING.flatMap((doc) => read(doc).match(/verify-(?:deploy|isolation)\.cjs[^\n]*#\s*\d+ checks/g) ?? []);
+    expect(quoted.length, "no doc quotes a check count any more").toBeGreaterThan(1);
+  });
+
+  it("quotes the number each script actually makes", () => {
+    const wrong: string[] = [];
+    for (const doc of QUOTING) {
+      for (const m of read(doc).matchAll(/(verify-(?:deploy|isolation)\.cjs)[^\n]*#\s*(\d+) checks/g)) {
+        const actual = checksIn(m[1]!);
+        if (Number(m[2]) !== actual) wrong.push(`${doc}: ${m[1]} quoted as ${m[2]}, makes ${actual}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+});

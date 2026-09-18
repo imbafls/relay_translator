@@ -1,16 +1,19 @@
 # Handoff — Callout Relay
 
-Rewritten 2026-09-10 at v0.8.0. The version before this described the repo at
-v0.5.1, a hardening branch that merged long ago, and a VPS that no longer
-exists; everything below has been checked against the tree again. Read
+Rewritten 2026-09-10 at v0.8.0, and brought up to date for 1.0 on 2026-09-18.
+The version before the rewrite described the repo at v0.5.1, a hardening branch
+that merged long ago, and a VPS that no longer exists; everything below was
+checked against the tree again for 1.0. Read
 `CLAUDE.md` first - it is the orientation document - then `README.md` for the
 product and `DESIGN.md` for the UI spec. `docs/OPEN-WORK.md` is the backlog.
 
 ## Where things stand
 
-Latest **release** is v0.8.0: saved transcripts, plus everything written for
-0.7.0, which was never released on its own. `master` is linear - the repo
-merges by **rebase**, so don't add merge commits.
+Releases are the `v*` tags, and `packages/shared/src/changelog.ts` says what
+each one changed for the person streaming, newest first - which is why this
+page no longer names the latest one: that sentence sat at v0.8.0 after 0.8.1
+shipped. `master` is linear - the repo merges by **rebase**, so don't add merge
+commits.
 
 The remote relay is the Cloudflare Worker in `apps/hosted-relay`, answering on
 `textrelay.cc` and `relay.supr.systems` with one Durable Object per streamer.
@@ -23,6 +26,10 @@ what was looked at, what it turned out to be, and how it was proved.
 `docs/OPEN-WORK.md` records which of its findings are closed and by what.
 
 ### What still needs a person
+
+Everything 1.0 ships with knowingly is listed under `## Known limitations in
+1.0` in `docs/OPEN-WORK.md`, and again for users in `README.md`. These two are
+the ones that need someone other than a developer:
 
 - **Code signing (B4).** `win.publisherName` plus a certificate. Without it
   electron-updater's signature check returns early, so an update is verified
@@ -46,7 +53,8 @@ node scripts/check-renderer-ids.mjs && pnpm smoke
 `pnpm test` is vitest over `<package>/test/`. `pnpm typecheck:test` is separate
 because the tests live outside every package's `rootDir` and `pnpm -r typecheck`
 cannot see them — it has caught things `pnpm test` alone did not. CI and the
-release workflow run all five; a tag can no longer publish with the suite red.
+release workflow run all six steps; a tag can no longer publish with the suite
+red.
 
 `pnpm --filter @callout-relay/shared build` is not optional: `packages/shared`
 is consumed as built `dist/`, so a stale build shows up as phantom "has no
@@ -67,8 +75,9 @@ server builds on Linux too.
 
 ## How to verify UI work — this matters
 
-**The browser harness lies about window size.** `dist/harness` is a plain
-browser tab; the real Electron window is **964×761**, and a re-entered setup
+**The browser harness lies about window size.** `scripts/renderer-harness.mjs`
+(port 8791) serves the built renderer in a plain browser tab with a stand-in
+bridge; the real Electron window is **964×761**, and a re-entered setup
 adds a `✕ CLOSE SETUP` row. A pane that fit at 980×800 in the harness showed
 half a row with CONTINUE off-screen in the real app.
 
@@ -88,7 +97,8 @@ CALLOUT_RELAY_DATA="$(cygpath -m "$LOCALAPPDATA")/Temp/cr-verify" "apps/standalo
 Notes that cost real time to learn:
 
 - Handlers fire on hidden elements, so
-  `document.getElementById('keysSetup').click()` opens setup without navigating.
+  `document.getElementById('settingsSetup').click()` opens setup without
+  navigating.
 - Only one instance runs: an already-running app makes a second one exit 0
   immediately and the debug port refuse. Kill it first. A scratch
   `CALLOUT_RELAY_DATA` does not get round this - the lock is Electron's own,
@@ -228,7 +238,7 @@ both relay servers and `SHA256SUMS.txt`, under GitHub's generated notes.
 node scripts/release-notes.mjs 0.8.1 | gh release edit v0.8.1 --notes-file -
 # the hosted relay: textrelay.cc and relay.supr.systems in one deploy
 pnpm deploy:hosted
-node apps/hosted-relay/scripts/verify-deploy.cjs    https://textrelay.cc   # 14 checks
+node apps/hosted-relay/scripts/verify-deploy.cjs    https://textrelay.cc   # 15 checks
 node apps/hosted-relay/scripts/verify-isolation.cjs https://textrelay.cc   #  9 checks
 ```
 

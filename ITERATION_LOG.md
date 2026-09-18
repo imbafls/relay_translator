@@ -4712,3 +4712,21 @@ and a rejected key is "never asked about again on its own", since the user
 can still retype it. Repo-internal work - guards, harness, the app.ts split,
 docs - is left out, as the file's own header asks. `changelog.test.ts` and
 `versions.test.ts` pass, and `release-notes.mjs 1.0.0` renders it.
+
+**71 - Phase 3.2: the docs, minus the version number.** `versions.test.ts`
+holds the version CLAUDE.md states to the one the packages carry, so that
+sentence - and the release examples beside it - change in the Release commit,
+with the bump. Everything else is here. The README gets `## Known limitations
+in 1.0`: the six items OPEN-WORK names, written for someone who installs the
+app, and a test holding the two lists to the same length (red with no
+section, red again with one entry dropped). HANDOFF.md had five stale facts:
+it named v0.8.0 as the latest release a week after 0.8.1 shipped - it now
+points at the tags and the changelog instead of naming one, since that
+sentence is the kind that goes stale by itself; it sent a verifier to
+`dist/harness`, which moved to `scripts/renderer-harness.mjs`; its CDP recipe
+clicked `keysSetup`, an id renamed to `settingsSetup` with the SETTINGS
+rework; it said CI runs "all five" steps of a six-step gate; and it quoted
+`verify-deploy.cjs` as 14 checks after df33ed9 made it 15, which updated the
+hosted README and not this page. That last one now has a guard: every doc that
+quotes a verify script's check count is held to the number of `ok(` checks
+in the script, counted, not written down - red on HANDOFF's 14.
