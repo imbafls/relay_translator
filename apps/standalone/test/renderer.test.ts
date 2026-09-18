@@ -65,6 +65,7 @@ function bridge(config: AppConfig) {
   return {
     getConfig: async () => current,
     setConfig: async (patch: Partial<AppConfig>) => {
+      if (setConfigGate) await setConfigGate;
       if (setConfigFails) throw new Error(setConfigMessage);
       calls.setConfig.push(patch);
       current = { ...current, ...patch };
@@ -189,6 +190,8 @@ let fakeDevices: { kind: string; deviceId: string; label: string; groupId: strin
 let setConfigFails = false;
 /** what that refusal says */
 let setConfigMessage = "EADDRINUSE: port 3000 is already in use";
+/** when set, cr.setConfig() waits for it - a save that restarts the relay is not instant */
+let setConfigGate: Promise<void> | null = null;
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
 /** what a rotation did to the internet link, as main reports it */
@@ -301,6 +304,7 @@ afterEach(() => {
   fakeDevices = [];
   setConfigFails = false;
   setConfigMessage = "EADDRINUSE: port 3000 is already in use";
+  setConfigGate = null;
   claimFails = null;
   fakeModels = [];
   fakeRotation = { remote: "none" };
@@ -2260,6 +2264,84 @@ describe("a setup step whose save fails", () => {
     await settle(40);
 
     expect(visible("obSaveError"), "a closed setup's failure came back with it").toBe(false);
+  });
+});
+
+/**
+ * A setup step's save is a round trip, and a changed key is a relay setting,
+ * so main restarts the relay before it answers. A reopened setup can be left
+ * with Escape or CLOSE SETUP in that gap, and when the save came back the step
+ * change repainted - setup's version of the chain strip, drawn over the live
+ * console: every block greyed, the pickers, the meter and the translate toggle
+ * hidden, dashes for values. The late key verdict was fixed for exactly this
+ * a while ago; this is the sibling path.
+ */
+describe("leaving setup while a step is still saving", () => {
+  const held = (): (() => void) => {
+    let release!: () => void;
+    setConfigGate = new Promise<void>((r) => (release = r));
+    return release;
+  };
+
+  const reopenSetup = async (): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+    await waitFor(() => !(document.getElementById("obContinue1") as HTMLButtonElement).disabled, "step 1 ready");
+  };
+
+  const escape = async (): Promise<void> => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle(40);
+  };
+
+  const consoleIntact = (): void => {
+    expect((document.getElementById("app") as HTMLElement).dataset.view).toBe("stage");
+    expect(
+      (document.getElementById("translateToggle") as HTMLElement).hidden,
+      "setup's chain was drawn over the console: the translate toggle is gone",
+    ).toBe(false);
+    expect(
+      document.querySelectorAll("#chain .placeholder").length,
+      "the console's blocks were greyed into setup placeholders",
+    ).toBe(0);
+  };
+
+  it("does not paint setup over the console when step 1's save lands late", async () => {
+    await reopenSetup();
+    const release = held();
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(20);
+    await escape();
+    release();
+    await settle(60);
+
+    consoleIntact();
+  });
+
+  it("nor when a SKIP on step 2 lands late", async () => {
+    await reopenSetup();
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep2"), "step 2");
+    const release = held();
+    (document.getElementById("obSkip2") as HTMLButtonElement).click();
+    await settle(20);
+    await escape();
+    release();
+    await settle(60);
+
+    consoleIntact();
+  });
+
+  it("still moves on to the next step when the user stays", async () => {
+    await reopenSetup();
+    const release = held();
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(20);
+    release();
+
+    await waitFor(() => visible("obStep2"), "step 2 once the save lands");
   });
 });
 

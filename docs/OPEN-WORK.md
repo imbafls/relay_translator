@@ -983,6 +983,12 @@ fixed**, the last two on 2026-09-15.
   A step that cannot save now stays put and says why, on screen - setup
   hides the LOG where SETTINGS reports it.
 
+- ~~**Leaving setup while a step saved drew setup over the console.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. A reopened setup can be
+  closed while CONTINUE or SKIP is still saving, and the late step change
+  repainted setup's chain strip over the live console - greyed blocks, no
+  translate toggle. The step change now draws only while setup is showing.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

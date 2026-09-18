@@ -4391,3 +4391,35 @@ element did not exist yet; the mutations are what show they hold anything,
 and all eight - each button ignoring the result, no unwrapping, never
 clearing, reopening with it, no reason - turn a test red. Checked at the real
 964x761 in the harness: the line sits directly under the step's buttons.
+
+**54 - Setup drawn over the console.** The last card from the discovery
+pass, and the sibling of a fix already made: a late key verdict used to
+repaint setup's chain strip over the live console, and `obCheckDeepgram`
+learned to check the view. `obGoto` never did, and every setup button
+reaches it after a save round trip - one that restarts the relay when a key
+changed. Close a reopened setup in that gap and the save's return greyed
+every console block, hid the pickers and the translate toggle, and put
+dashes in for values. `obGoto` now draws only while setup is on screen;
+`openSetup` starts over at step 1, so nothing is lost. One of the three
+verifiers refuted the SKIP half, on the grounds that in the real app the
+device refresh on the way to step 3 provokes a status push that repaints the
+console soon after - true, and a flash of the wrong screen is still wrong,
+so the SKIP test stays. Both red without the guard; a third test holds that
+a user who stays still moves on. Replayed in the harness with a delayed
+`setConfig` and Escape mid-save: the console came through intact.
+
+The first full gate run went red once, in a test this change does not touch:
+"shows the configured name, and clears it by sending an explicit empty
+string" in `renderer.test.ts`. The renderer file alone then passed three
+times and the full suite four times running. Its assertion message was not
+kept, which is a lesson in itself. The second assertion cannot lose a race
+(the handler calls `setConfig` synchronously), so the likely one is the
+first: the field not yet holding the configured name when the fixed
+`settle()` at the end of `bootWith` returns on a loaded machine - every
+renderer test shares that wait. CI runs this suite on the release tag, so
+it is a card, not a shrug. And a correction to the last three iterations:
+they wrote each card's `evidence` as a string where the board keeps an
+array, which stops `board.html` rendering the card, and overwrote the
+discovery-pass line it held. Repaired from each card's own detail, and the
+board helper now refuses a card whose `evidence`, `subItems` or `tags`
+is not an array - it refused the broken board first.

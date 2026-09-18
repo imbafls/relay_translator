@@ -2560,7 +2560,12 @@ const obCheckGemini = debounce(async () => {
 async function obGoto(step: 1 | 2 | 3): Promise<void> {
   obStep = step;
   if (step === 3) await refreshDevices();
-  renderOnboarding();
+  // Callers get here after a save round trip, and a reopened setup can be left
+  // with Escape or CLOSE SETUP while it is out. renderOnboarding has no view
+  // guard - it draws setup's chain over the live console, the same repaint
+  // obCheckDeepgram already refuses to make - and openSetup starts over at
+  // step 1 anyway, so there is nothing to draw once the user has gone.
+  if (view === "onboarding") renderOnboarding();
 }
 
 // ---------------------------------------------------------------------------
