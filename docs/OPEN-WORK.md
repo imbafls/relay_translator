@@ -955,6 +955,13 @@ fixed**, the last two on 2026-09-15.
   not saved vanished behind the dots and SAVE wrote the old one. It now
   refreshes only the relay address and publish key it changed.
 
+- ~~**INCLUDE MY LOG sent the log as it was when the box was ticked.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. Somebody who ticked it, went
+  back to reproduce the failure and returned to send, sent a log that ended
+  before the failure the report described. SETTINGS now reads the log again
+  whenever it opens with the box ticked, so the preview is still exactly
+  what is sent.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

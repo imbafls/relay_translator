@@ -2642,6 +2642,31 @@ describe("sending a feedback report", () => {
     expect(ids.every((id) => groupOf(id) === "app"), `not all in data-group="app": ${where.join("  ")}`).toBe(true);
   });
 
+  // Ticking INCLUDE MY LOG read the log once. A user who ticked it, went back
+  // to reproduce the failure and came back to send, sent a log that ended
+  // before the failure the report was about - and the preview scrolls from
+  // the top, so nothing on screen said the tail was stale.
+  it("sends the log as it is when SETTINGS is opened again, not as it was when the box was ticked", async () => {
+    fakeRelayLog = "[info] first line";
+    await bootWith({ setupDone: true });
+    await openSettings();
+    includeLogEl().click();
+    await settle(40);
+
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click(); // back to the stage
+    await settle(20);
+    fakeRelayLog = "[info] first line\n[error] start failed: EADDRINUSE";
+    await openSettings();
+    expect(previewEl().textContent, "the preview still shows the log from when the box was ticked").toContain(
+      "EADDRINUSE",
+    );
+    type("it would not start");
+    sendBtn().click();
+    await settle(40);
+
+    expect(lastPayload().log, "the report's log ends before the failure it describes").toContain("EADDRINUSE");
+  });
+
   it("redacts a secret out of the log before it is ever shown on screen", async () => {
     fakeRelayLog = `[info] connected to wss://textrelay.cc/ws?token=${SECRET}\n[info] deepgram key ${SECRET} accepted`;
     await bootWith({ setupDone: true });

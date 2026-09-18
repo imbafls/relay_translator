@@ -4331,3 +4331,14 @@ dots, and SAVE wrote the old key (or none) and reported success. It now
 fills in the two fields it changed and redraws the reach status, and
 nothing else. The existing test that the claim puts its room into ADVANCED
 holds the first half; the new one types a key, claims, and saves.
+
+**50 - A log that stopped before the failure.** INCLUDE MY LOG reads
+`relay.log` when the box is ticked, and the preview is by design exactly the
+string that is sent. But the natural order is: tick it, go back, make the
+failure happen, come back, send - and the log sent was the one from the
+tick, ending before the failure the report was about. The preview box
+scrolls from the top, so the stale tail showed nothing wrong. SETTINGS now
+reads the log again whenever it opens with the box ticked, which keeps the
+preview-is-the-payload promise and makes it current. The test's first draft
+asserted on the preview after sending, which a delivered send clears; it
+asserts on it before sending now, and on what was sent after.

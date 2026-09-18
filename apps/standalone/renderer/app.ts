@@ -489,7 +489,14 @@ function setView(next: View): void {
   // a key revealed the last time this panel was open must not still be revealed
   // when it is opened again, which is the shape the accident takes
   hideSecrets();
-  if (next === "settings") renderSettings();
+  if (next === "settings") {
+    renderSettings();
+    // The log to attach is read again whenever SETTINGS opens with the box
+    // ticked. It used to be read once, when ticked, so somebody who went back
+    // to reproduce the failure sent a log that ended before it - and the
+    // preview scrolls from the top, so nothing showed the tail was stale.
+    if ($("feedbackIncludeLog").classList.contains("on")) void refreshFeedbackPreview();
+  }
   if (next === "saved") void openSaved();
   if (next === "onboarding") renderOnboarding();
   else renderChain();
