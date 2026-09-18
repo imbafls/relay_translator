@@ -4190,3 +4190,15 @@ there is, its row is often trimmed by the time it lands, and the stage turns
 the channel's half-caption into any line it holds no row for - so it would
 have put the stale line back over the sentence being spoken. That half is
 fixed here, with its own red; the real-translation half stays on its card.
+
+**39 - The rest of the late translation.** 38 covered a "not coming" for a
+trimmed line; a real translation does the same thing. Gemini retrying puts a
+translation 5-22 s behind its line, the stage holds twelve rows, and a line
+the stage has no row for takes over the channel's half-caption - so the old
+sentence came back as the newest caption and the one being spoken vanished.
+The viewer page solved it with a set of ids it let go of; the stage now keeps
+its own, filled in its own `trimRows`, bounded at 256, and cleared with the
+stage. The clearing is not decoration: ids restart with every session, and a
+test that stops and starts again goes red without it, as does one that never
+fills the set. A translation for a line the stage never received - a
+reconnect across its source - still builds, and a test holds that too.

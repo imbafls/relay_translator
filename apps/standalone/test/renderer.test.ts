@@ -3916,7 +3916,7 @@ describe("a START that cannot start", () => {
  * relay now sends it here too; the stage takes the placeholder down, and the
  * log does not print an empty translation line for it.
  */
-describe("a translation that is not coming, on the desktop stage", () => {
+describe("a translation arriving late on the desktop stage", () => {
   type Seg = { id: number; source: string; target?: string; channel?: number };
   let hooks: { onSubtitle?: (seg: Seg) => void; onPartial?: (seg: Seg) => void };
 
@@ -3988,5 +3988,61 @@ describe("a translation that is not coming, on the desktop stage", () => {
       "a late 'not coming' took over the sentence being spoken",
     ).toBe("half a sentence");
     expect(stage()).not.toContain("line 1");
+  });
+
+  // The same shape with a real translation: Gemini retried for a while, the
+  // line was trimmed meanwhile, and its translation rebuilt it from the
+  // channel's half-caption - the old sentence back on stage, the one being
+  // spoken gone. The viewer page remembers the lines it let go of; so does
+  // the stage now.
+  it("does not let a late translation take over the half-caption being spoken", async () => {
+    await goLive();
+    for (let id = 1; id <= 13; id++) hooks.onSubtitle!({ id, source: `line ${id}`, channel: 0 });
+    hooks.onPartial!({ id: 14, source: "half a sentence", channel: 0 });
+    await settle(30);
+    const stage = (): string[] =>
+      [...document.querySelectorAll("#lines .row:not(.interim) .src .text")].map((e) => e.textContent || "");
+    expect(stage(), "line 1 was not trimmed, so this proves nothing").not.toContain("line 1");
+
+    hooks.onSubtitle!({ id: 1, source: "line 1", target: "dòng 1", channel: 0 });
+    await settle(30);
+
+    expect(
+      document.querySelector("#lines .row.interim .src .text")?.textContent,
+      "a late translation took over the sentence being spoken",
+    ).toBe("half a sentence");
+    expect(stage(), "the trimmed line came back as the newest caption").not.toContain("line 1");
+  });
+
+  // ids restart with every session, so what the last one let go of must not
+  // silence the same id in the next
+  it("forgets the lines it let go of when a new session starts", async () => {
+    await goLive();
+    for (let id = 1; id <= 13; id++) hooks.onSubtitle!({ id, source: `line ${id}`, channel: 0 });
+    await settle(30);
+    const button = document.getElementById("startStop") as HTMLButtonElement;
+    button.click();
+    await settle(30);
+    button.click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the second session to go live");
+
+    hooks.onSubtitle!({ id: 1, source: "a new first line", target: "dòng mới", channel: 0 });
+    await settle(30);
+
+    expect(
+      [...document.querySelectorAll("#lines .row:not(.interim) .src .text")].map((e) => e.textContent),
+      "an id let go of in the last session silenced a line in this one",
+    ).toContain("a new first line");
+  });
+
+  // a translation for a line this stage never received - a reconnect across
+  // its source - still builds, as it always did
+  it("still builds a line it never had", async () => {
+    await goLive();
+    hooks.onSubtitle!({ id: 40, source: "never seen", target: "chưa thấy", channel: 0 });
+    await settle(30);
+    expect(
+      [...document.querySelectorAll("#lines .row:not(.interim) .src .text")].map((e) => e.textContent),
+    ).toContain("never seen");
   });
 });

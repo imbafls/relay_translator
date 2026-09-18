@@ -870,6 +870,14 @@ fixed**, the last two on 2026-09-15.
   stage has already trimmed is ignored rather than put back over the
   half-caption being spoken.
 
+- ~~**A late translation on the desktop stage took over the half-caption
+  being spoken.**~~ Fixed 2026-09-18, the desktop half of the viewer fix. A
+  translation lands 5-22 s behind its line while Gemini retries; if the line
+  had been trimmed meanwhile, the stage turned the channel's open
+  half-caption into it - the old sentence back as the newest caption, the one
+  being spoken gone. The stage now remembers the lines it let go of, as the
+  viewer page does, and forgets them when a new session starts.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

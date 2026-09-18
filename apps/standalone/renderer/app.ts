@@ -554,6 +554,16 @@ const rows = new Map<number, Row>();
 /** one open interim line per capture channel */
 const interims = new Map<number, Row>();
 const MAX_ROWS = 12;
+/**
+ * Ids of lines trimmed off the stage. A translation arrives 5-22 s behind its
+ * line while Gemini retries, and by then the line may be gone - and a line the
+ * stage holds no row for takes over the channel's half-caption, so the old
+ * sentence came back as the newest caption over the one being spoken. The
+ * viewer page keeps the same set (`letGo` in packages/viewer/public/app.js).
+ * Bounded, and cleared with the stage: ids restart with each session.
+ */
+const letGo = new Set<number>();
+const LET_GO_KEPT = 256;
 const recentStt: number[] = [];
 const recentTr: number[] = [];
 
@@ -587,7 +597,12 @@ function trimRows(): void {
   while (lines.querySelectorAll(".row:not(.interim)").length > MAX_ROWS) {
     const first = lines.querySelector(".row:not(.interim)") as HTMLElement;
     first.remove();
-    for (const [id, r] of rows) if (r.el === first) rows.delete(id);
+    for (const [id, r] of rows) {
+      if (r.el !== first) continue;
+      rows.delete(id);
+      letGo.add(id);
+      if (letGo.size > LET_GO_KEPT) letGo.delete(letGo.values().next().value as number);
+    }
   }
 }
 
@@ -605,6 +620,7 @@ function clearStage(): void {
   $("lines").innerHTML = "";
   rows.clear();
   interims.clear();
+  letGo.clear();
   recentStt.length = 0;
   recentTr.length = 0;
   renderAverages();
@@ -661,6 +677,10 @@ function onSubtitle(seg: Seg): void {
   // been trimmed by then - and taking it for a new line would put the stale
   // line back over the half-caption being spoken. The viewer page does the same.
   if (!row && seg.target === "") return;
+  // A translation for a line the stage showed and has since trimmed: taking it
+  // for a new line rebuilt the old sentence out of the half-caption being
+  // spoken. A line the stage never received is not in the set, and builds.
+  if (!row && seg.target != null && letGo.has(seg.id)) return;
   if (!row) {
     const interim = interims.get(channel);
     if (interim) {
