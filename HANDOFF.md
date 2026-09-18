@@ -219,11 +219,11 @@ fix targets.
 ## Release process
 
 ```bash
-pnpm version-bump 0.8.1
+pnpm version-bump 1.0.0
 git add package.json apps/*/package.json packages/*/package.json   # not -a: the tree may hold unrelated edits
-git commit -m "Release v0.8.1"
-git tag -a v0.8.1 -m "v0.8.1"
-git push origin master v0.8.1      # the Release workflow builds and publishes
+git commit -m "Release v1.0.0"
+git tag -a v1.0.0 -m "v1.0.0"
+git push origin master v1.0.0      # the Release workflow builds and publishes
 ```
 
 The workflow refuses to build if the tag and `apps/standalone/package.json`
@@ -235,7 +235,7 @@ both relay servers and `SHA256SUMS.txt`, under GitHub's generated notes.
 ```bash
 # the release page gets the changelog prose, not a commit list
 # (release-notes.mjs reads packages/shared/dist, so build shared first)
-node scripts/release-notes.mjs 0.8.1 | gh release edit v0.8.1 --notes-file -
+node scripts/release-notes.mjs 1.0.0 | gh release edit v1.0.0 --notes-file -
 # the hosted relay: textrelay.cc and relay.supr.systems in one deploy
 pnpm deploy:hosted
 node apps/hosted-relay/scripts/verify-deploy.cjs    https://textrelay.cc   # 15 checks

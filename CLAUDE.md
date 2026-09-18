@@ -6,7 +6,7 @@ point-in-time handoff (partly stale — see below), `docs/OPEN-WORK.md` is the
 consolidated backlog, `ITERATION_LOG.md` is the history of what was found and
 fixed.
 
-Everything here was verified against the tree at v0.8.1. Where a claim could not
+Everything here was verified against the tree at v1.0.0. Where a claim could not
 be verified from this machine it says so, and the claims that can be checked
 mechanically are held there by `handoff.test.ts` and `versions.test.ts` rather
 than by anyone remembering to re-read this.
@@ -20,7 +20,7 @@ transcribed (Deepgram cloud STT, or sherpa-onnx locally), translated (Gemini),
 and pushed as subtitles to a friend's phone or an OBS browser source.
 
 pnpm monorepo, TypeScript throughout, Node >= 20. Root package is
-`callout-relay`, private, version `0.8.1` — every workspace package carries the
+`callout-relay`, private, version `1.0.0` — every workspace package carries the
 same version, and two guard tests enforce it: one over every package.json, one
 over the sentence you are reading, because that number sat at 0.8.0 through the
 0.8.1 release with nothing holding it.
@@ -117,7 +117,7 @@ is visible from outside the code:
 
 ## Commands
 
-All verified against `package.json` at v0.8.1.
+All verified against `package.json` at v1.0.0.
 
 | Command | What it does |
 |---------|--------------|
@@ -141,11 +141,11 @@ The full gate — what CI runs and what a release must pass — is:
 ## Release process, end to end
 
 ```bash
-pnpm version-bump 0.8.1
+pnpm version-bump 1.0.0
 git add package.json apps/*/package.json packages/*/package.json   # not -a: the tree may hold unrelated edits
-git commit -m "Release v0.8.1"
-git tag -a v0.8.1 -m "v0.8.1"          # annotated; every release tag is
-git push origin master v0.8.1
+git commit -m "Release v1.0.0"
+git tag -a v1.0.0 -m "v1.0.0"          # annotated; every release tag is
+git push origin master v1.0.0
 ```
 
 Then `.github/workflows/release.yml` runs on the `v*` tag:

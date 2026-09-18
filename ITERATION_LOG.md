@@ -4787,3 +4787,17 @@ rolled back still says "config save failed"), and four mutations - the
 wrapper left on START, every rejection called a failure, kept ignoring
 whether anything changed, kept ignoring what is stored - each caught by a
 different test.
+
+**74 - Release v1.0.0.** Phase 3.3 again, on the tree with both LOG lines
+fixed. The bump read back 1.0.0 in all seven package.json files; CLAUDE.md's
+version sentences and the release examples in CLAUDE.md and HANDOFF.md moved
+with it; the gate was green at 1.0.0 (105 files, 1738 tests, smoke); the
+installer, portable exe, blockmap, latest.yml and relay exe were rebuilt from
+it. On that build, launch B (fresh install, 8787 held) logged "relay could
+not start: ... - the settings were saved" for the kept save and "start
+failed: local relay not running: ..." for START - both lines now saying what
+happened - with setup moving on and LOCAL RELAY DOWN leading 04 OUTPUT; and
+launch A opened on the 1.0.0 what's-new panel, served `/watch/<token>` and
+wrote a transcript at app version 1.0.0 from a session on the relay's
+stand-in engine. The real config.json was byte-identical after both. This
+commit is the one to tag.
