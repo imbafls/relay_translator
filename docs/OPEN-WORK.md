@@ -636,6 +636,14 @@ fixed**, the last two on 2026-09-15.
   arrive, and the saved transcript is fed from the publisher path and keeps
   everything (`packages/relay/test/lateOutputAfterRestart.test.ts`).
 
+- ~~**The viewer page decided the relay was gone and then waited a minute to
+  say so.**~~ Fixed 2026-09-18, found by the 1.0 discovery pass. Its heartbeat
+  gave up by calling `close()` and left the RECONNECTING display and the
+  retry to `onclose` - which a real browser holds back until the peer's Close
+  frame arrives or the closing handshake times out, 60 s in Chromium, and a
+  silent peer never sends the frame. The page now lets go of the socket, says
+  RECONNECTING and arms the retry at the moment it gives up.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

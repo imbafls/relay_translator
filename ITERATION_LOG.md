@@ -3779,3 +3779,19 @@ pre-existing collision the app cannot reach because it says hello only on
 open - so the test now finishes a line the viewer is actually showing. And it
 asked for proof of the comment's "the saved transcript loses nothing"; that is
 asserted now, and gating the transcript tap the same way turns it red.
+
+**16 - Giving up has to mean something in a real browser.** The viewer's
+heartbeat decided after two silent rounds that the relay was gone, called
+`close()`, and left everything else - RECONNECTING, the retry - to `onclose`.
+A real browser holds that event until the peer's Close frame arrives or the
+closing handshake times out, and a peer that stopped answering pings sends no
+frame: the discovery pass measured 60 s in Chromium. The existing test could
+not see it, because its fake socket jumps straight to CLOSED and the test only
+asked whether `close()` was called. A fake that behaves like Chromium turned
+it red; the page now lets go of the socket, says RECONNECTING and arms the
+retry at the moment it gives up. The review found one part of the fix nothing
+held - letting go of the socket, which is what stops a late close on it arming
+a second retry that tears down the healthy connection - and a test now does.
+The same shape is in the desktop app's uplink client, whose comment reads
+"closing is enough": the `ws` package it runs on waits 30 s for the handshake.
+That is a card of its own, not part of this commit.

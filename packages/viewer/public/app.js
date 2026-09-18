@@ -780,16 +780,23 @@
         return;
       }
       if (unanswered >= PING_MISSES) {
-        // open on our side only. Closing is the whole fix: onclose below arms
-        // the same 2 s retry that a disconnection this page CAN see already
-        // gets, and the wake-up path starts working again too, because
-        // readyState finally moves past OPEN.
+        // Open on our side only - and closing it is not enough on its own. A
+        // real browser holds onclose back until the peer's Close frame arrives
+        // or the closing handshake times out, 60 s in Chromium, and a peer
+        // that has stopped answering pings will not send the frame. Every
+        // recovery below hangs off onclose, so the reader sat under ON AIR for
+        // a minute after this line had decided the relay was gone. Let go of
+        // the socket here instead: it stops being current, so its late onclose
+        // does nothing, and the retry onclose would have armed is armed now.
         stopPing();
+        ws = null;
         try {
           sock.close();
         } catch {
           /* already gone */
         }
+        setHud("warn", "RECONNECTING");
+        retryTimer = setTimeout(connect, 2000);
         return;
       }
       unanswered += 1;

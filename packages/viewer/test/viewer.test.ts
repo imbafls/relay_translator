@@ -1274,6 +1274,56 @@ describe("a relay that stops answering", () => {
     ).toBe(3);
   });
 
+  /**
+   * What giving up has to mean in a real browser.
+   *
+   * The test above only asks whether close() was called, through a fake that
+   * jumps straight to CLOSED. A real one does not: close() moves the socket to
+   * CLOSING and onclose waits for the peer's Close frame - which a peer that
+   * has stopped answering pings will never send - or for the closing-handshake
+   * timer, 60 s in Chromium and 20 s in Firefox. Measured against a silent
+   * peer in Chromium by the discovery pass: the close event arrived at 60 s.
+   * Every recovery the page has - RECONNECTING, the retry - hangs off that
+   * event, so the reader sat under ON AIR for a minute after the page itself
+   * had decided the relay was gone.
+   */
+  it("reconnects when it gives up, without waiting for a close the dead peer will not finish", () => {
+    const s = opened[0];
+    // Chromium's close() for a peer that never answers: CLOSING, and no onclose
+    s.close = () => {
+      s.readyState = 2;
+    };
+
+    vi.advanceTimersByTime(40_500);
+    expect(
+      (document.getElementById("hudText") as HTMLElement).textContent,
+      "the page has decided the relay is gone and still tells the reader nothing is wrong",
+    ).toBe("RECONNECTING");
+
+    vi.advanceTimersByTime(3_000);
+    expect(
+      opened.length,
+      "no second connection was tried: the retry hangs off an onclose that a real browser holds back for a minute",
+    ).toBe(2);
+  });
+
+  // The socket given up on is let go of, so its close - whenever the browser
+  // finally delivers it - arms nothing. Were it still current, a 4408 landing
+  // inside the 2 s window would arm a second retry of its own, and the first
+  // one to fire would then tear down the healthy socket the other had opened.
+  it("lets the socket it gave up on arm nothing when its close finally arrives", () => {
+    const s = opened[0];
+    s.close = () => {
+      s.readyState = 2;
+    };
+
+    vi.advanceTimersByTime(40_500);
+    s.onclose?.({ code: 4408 });
+    vi.advanceTimersByTime(3_000);
+
+    expect(opened.length, "one give-up opened more than one new connection").toBe(2);
+  });
+
   it("leaves one that answers alone, through ten rounds", () => {
     const s = opened[0];
     for (let i = 0; i < 10; i += 1) {
