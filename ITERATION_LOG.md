@@ -4730,3 +4730,42 @@ rework; it said CI runs "all five" steps of a six-step gate; and it quoted
 hosted README and not this page. That last one now has a guard: every doc that
 quotes a verify script's check count is held to the number of `ok(` checks
 in the script, counted, not written down - red on HANDOFF's 14.
+
+**72 - The 1.0 candidate, run as a user would, and held back.** Phase 3.3 in
+full, short of the commit. `pnpm version-bump 1.0.0` set all seven
+package.json files, each read back; CLAUDE.md's version sentences and the
+release examples in CLAUDE.md and HANDOFF.md moved with it, and the gate was
+green at 1.0.0 (105 files, 1736 tests, smoke). Building took two detours, both
+this machine's and neither CI's: `pnpm dist:app -- -c...` hands electron-builder
+the `--` literally, and its native rebuild died on ENOENT inside the retired
+`apps/streamdeck` - untracked leftovers linking to a pnpm store entry long
+gone - and then on a dangling hoisted link to that workspace. The folder went
+to the session scratchpad (CLAUDE.md already calls it safe to delete), the
+link was removed, and electron-builder run directly built the 1.0.0
+installer, portable exe, blockmap and latest.yml; `pnpm dist:relay` built
+the relay exe.
+
+Two packaged launches, each on a scratch `CALLOUT_RELAY_DATA` with a scratch
+`transcriptDir` and the dead update feed on the launch line, and the real
+config.json byte-identical afterwards (same hash, same 6 September mtime).
+Launch A: the what's-new panel opened on the 1.0.0 entry, scrolling, over
+"UPDATED FROM 0.8.1"; the embedded relay served `/watch/<token>` (200, the
+viewer page); and with `RELAY_MOCK_STT=1` on the launch line - the embedded
+relay honours it - a START on the default microphone went ON AIR and wrote a
+14-record transcript at app version 1.0.0. Launch B, a fresh install with
+8787 held by a dummy listener: the relay's failure reached the LOG at boot;
+pasting a key and pressing CONTINUE moved setup to step 2 with the key stored
+and main logging "keeping the new settings" - the fresh-install trap closed
+in real Electron, which no unit test reaches; 04 OUTPUT led with LOCAL RELAY
+DOWN, PORT 8787 IN USE and CHANGE LOCAL PORT IN SETTINGS, fitting the block
+at 964x761; START named EADDRINUSE.
+
+And two LOG lines read wrong. The kept save logs "config save failed: ... -
+the settings were saved", because saveAndApply prefixes every rejection that
+way even when obSave then finds the settings stored; and START logs "Error
+invoking remote method 'runtime:prepare': Error: ...", because
+startSession's catch never used `ipcReason`. Only the LOG, but the LOG is
+what a user reads and what SEND FEEDBACK carries, and the tagged commit
+should be the Release commit. So the Release commit waits: carded, the bump
+reverted to leave a clean tree, to be redone after the fix from the script
+that wrote it.
