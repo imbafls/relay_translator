@@ -123,6 +123,14 @@ interface RoomState {
   languages: { source: string; target: string };
   translates: boolean;
   live: boolean;
+  /**
+   * Whether the publisher SAID it is live - a status, or a 0.8+ hello with a
+   * `live` field - rather than an older app's hello implying it. Only a
+   * declared stream keeps the liveness alarm running: an app from before 0.8
+   * says hello with no `live` at every boot, which reads as live, and sitting
+   * in the tray all day it would otherwise cost a billed alarm every minute.
+   */
+  liveDeclared?: boolean;
   /** what the publisher calls this stream; replayed to every viewer that joins */
   brandName?: string;
   /** `#rrggbb`, sanitised on the way in */
@@ -158,9 +166,11 @@ const TAG_VIEWER = "viewer";
 const CLOSE_UNAUTHORISED = 4401;
 const CLOSE_REPLACED = 4409;
 /**
- * Let go of a viewer that stopped beating. Deliberately NOT 4401 or 4410: the
- * viewer page treats those two as facts about the link and shows THIS LINK HAS
- * ENDED, and this is a network condition it should simply reconnect from.
+ * Let go of a socket that stopped beating - a viewer, or the publisher's
+ * uplink. Deliberately NOT 4401 or 4410: the viewer page treats those two as
+ * facts about the link and shows THIS LINK HAS ENDED, and the uplink stops on
+ * 4401 and 4409. This is a network condition either end should simply
+ * reconnect from - and an uplink that was only slow is back within seconds.
  */
 const CLOSE_SILENT = 4408;
 
@@ -178,6 +188,28 @@ const READY_OPEN = 1;
  * went away without saying so and is never coming back.
  */
 const VIEWER_SILENT_MS = 70_000;
+
+/**
+ * The same, for the publisher. Its uplink beats on the same 20 s round with
+ * the same frame, and has since before 0.8.1, so three missed rounds plus a
+ * margin is the same judgement: a slow network is never taken for a dead one.
+ */
+const UPLINK_SILENT_MS = 70_000;
+
+/**
+ * How often a live room looks in on its publisher when nothing else wakes it.
+ *
+ * A publisher that vanished without a close - a power cut, a crash, a router
+ * reboot - leaves nothing that would wake this object: its viewers' beats are
+ * answered by the runtime and its own have stopped. An alarm is the only timer
+ * a hibernating object has. It runs only while the publisher has declared a
+ * session live (`liveDeclared`), which is while captions are waking the room
+ * anyway, and adds about 60 billed requests and 60 row writes an hour to the
+ * ~1,600 requests a live room was measured at (README, "Still open", the cost
+ * entry): a viewer learns the stream ended within about two minutes instead of
+ * never.
+ */
+const LIVENESS_CHECK_MS = 60_000;
 
 /**
  * The heartbeat, answered by the runtime rather than by this object.
@@ -259,8 +291,14 @@ export class Room {
   }
 
   /**
-   * The alarm set at claim. Fires once, a month later, on a room that may have
-   * been touched since - which is exactly the case it has to get right.
+   * The one alarm a room has, doing two jobs that never overlap.
+   *
+   * On a room nobody has used, it is the reap alarm set at claim: it fires a
+   * month later on a room that may have been touched since - which is exactly
+   * the case it has to get right. On a room somebody is streaming from, it is
+   * the minute-by-minute look in on the publisher (`LIVENESS_CHECK_MS`). A room
+   * being streamed from is a used one, and `markUsed` deletes the reap alarm on
+   * first use, so the two never contend for the slot.
    *
    * The whole tick runs under `blockConcurrencyWhile` because a Durable Object
    * can run its alarm concurrently with a request: without it, a publisher
@@ -269,7 +307,12 @@ export class Room {
    */
   async alarm(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
-      await reapTick(this.io(), Date.now());
+      const reap = await reapTick(this.io(), Date.now());
+      if (reap === "reaped" || reap === "gone") return;
+      const room = await this.load();
+      if (!room) return;
+      await this.dropSilentPublisher(room);
+      if (room.live && room.liveDeclared === true) await this.ctx.storage.setAlarm(Date.now() + LIVENESS_CHECK_MS);
     });
   }
 
@@ -302,6 +345,7 @@ export class Room {
     if (op === "health") {
       // the same payload the single-tenant relay returns; docs/OPEN-WORK.md
       // diagnoses production with exactly these three fields
+      await this.dropSilentPublisher(room);
       return json({ ok: true, live: room.live, viewers: this.viewerCount() });
     }
 
@@ -343,6 +387,10 @@ export class Room {
       if (op === "uplink") {
         // one publisher per room; the newcomer wins, as the old relay did
         this.closeAll(TAG_UPLINK, CLOSE_REPLACED, "replaced by new publisher");
+      } else {
+        // before the greeting, which is built from `room.live`: a phone
+        // opening the link must not be told a vanished publisher is on air
+        await this.dropSilentPublisher(room);
       }
 
       this.ctx.acceptWebSocket(server, [op === "uplink" ? TAG_UPLINK : TAG_VIEWER]);
@@ -401,6 +449,7 @@ export class Room {
     // a viewer asks for this to pick up state it missed across a blip, so the
     // answer is the same greeting a late joiner gets
     if (msg.type === "sync") {
+      await this.dropSilentPublisher(room);
       send(ws, {
         type: "hello",
         languages: room.languages,
@@ -435,12 +484,15 @@ export class Room {
       // hello did before this field existed - rather than going dark for
       // every user who has not auto-updated yet the day this Worker deploys.
       room.live = msg.live !== false;
+      // an older app's hello leaves this as it was: it says nothing either way
+      if (typeof msg.live === "boolean") room.liveDeclared = msg.live;
       // Unconditional, not `if (msg.brandName)`: an absent brand on a later
       // hello is how a streamer clears one they set earlier, and that has to
       // work the same as setting it.
       room.brandName = safeBrandName(msg.brandName);
       room.brandColor = safeColor(msg.brandColor);
       if (snapshot(room) !== was) await this.save(room);
+      if (msg.live === true) await this.armLivenessCheck();
       this.broadcast(TAG_VIEWER, {
         type: "hello",
         languages: room.languages,
@@ -457,9 +509,11 @@ export class Room {
     if (msg.type === "status") {
       const was = snapshot(room);
       room.live = msg.live === true;
+      room.liveDeclared = room.live;
       if (typeof msg.since === "number") room.since = msg.since;
       if (typeof msg.epoch === "number") room.epoch = msg.epoch;
       if (snapshot(room) !== was) await this.save(room);
+      if (room.live) await this.armLivenessCheck();
       this.broadcast(TAG_VIEWER, {
         type: "status",
         live: room.live,
@@ -544,6 +598,7 @@ export class Room {
       const room = await this.load();
       if (room && room.live) {
         room.live = false;
+        room.liveDeclared = false;
         await this.save(room);
         this.broadcast(TAG_VIEWER, { type: "status", live: false, message: "stream ended" });
       }
@@ -567,8 +622,8 @@ export class Room {
    *
    * `apps/hosted-relay/README.md` records one viewer reported with nothing
    * watching, never explained. A socket whose phone vanished without a FIN
-   * accounts for it exactly: this object holds no timer, so nothing here ever
-   * closed it, and the count it inflated could never come down.
+   * accounts for it exactly: this object ran no timer for viewers, so nothing
+   * here ever closed it, and the count it inflated could never come down.
    *
    * Reading the auto-response timestamp costs nothing and needs no alarm - it
    * happens on a wake-up that was going to happen anyway, because the count is
@@ -606,6 +661,61 @@ export class Room {
 
   private viewerCount(): number {
     return this.liveViewers().live.length;
+  }
+
+  /**
+   * End a stream whose publisher is no longer there.
+   *
+   * The uplink of a PC that lost power or dropped off the network never sends
+   * a close, so `webSocketClose` never runs - and the only other things that
+   * set a room not-live are that same uplink's own messages. The room stayed
+   * ON AIR: viewers watching kept a running clock over nothing, and everyone
+   * who opened the link later was greeted with `live: true`.
+   *
+   * The same judgement `liveViewers()` makes of a reader: an OPEN uplink that
+   * beat within `UPLINK_SILENT_MS`, or has never beaten yet - one that has just
+   * connected, whose first ping is in flight - is a publisher. A silent one is
+   * closed with the code the client reconnects from, so if it was only slow it
+   * is back within seconds with a hello that says live again. With none left,
+   * the stream is over, and viewers are told exactly what a clean close tells
+   * them. Changes `room` in place, and saves it.
+   */
+  private async dropSilentPublisher(room: RoomState): Promise<void> {
+    if (!room.live) return;
+    const now = Date.now();
+    let present = false;
+    for (const ws of this.sockets(TAG_UPLINK)) {
+      // closed by a takeover and waiting in CLOSING for a peer that may never
+      // answer: whatever it is, it is not publishing
+      if (ws.readyState !== READY_OPEN) continue;
+      const last = this.ctx.getWebSocketAutoResponseTimestamp(ws);
+      if (!last || now - last.getTime() < UPLINK_SILENT_MS) {
+        present = true;
+        continue;
+      }
+      try {
+        ws.close(CLOSE_SILENT, "no heartbeat");
+      } catch {
+        /* already gone, which is the outcome either way */
+      }
+    }
+    if (present) return;
+    room.live = false;
+    room.liveDeclared = false;
+    await this.save(room);
+    this.broadcast(TAG_VIEWER, { type: "status", live: false, message: "stream ended" });
+  }
+
+  /**
+   * Make sure a live room is looked in on. Leaves an earlier alarm alone:
+   * pushing it back on every hello and status would mean a publisher that
+   * kept reconnecting was never checked at all.
+   */
+  private async armLivenessCheck(): Promise<void> {
+    const due = Date.now() + LIVENESS_CHECK_MS;
+    const at = await this.ctx.storage.getAlarm();
+    if (at !== null && at <= due) return;
+    await this.ctx.storage.setAlarm(due);
   }
 
   private broadcast(tag: string, msg: unknown): void {

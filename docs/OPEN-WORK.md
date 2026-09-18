@@ -756,6 +756,18 @@ fixed**, the last two on 2026-09-15.
   reason; the renderer's half of the rule now runs before the session is
   prepared as well as after.
 
+- ~~**A hosted room stayed ON AIR for good when its publisher vanished.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. A PC that loses power or
+  drops off the network never closes its uplink, and nothing else could end a
+  stream: viewers watching kept a running clock over nothing and every late
+  joiner was greeted as live. The uplink has always beaten with the frame the
+  runtime auto-answers, so the room now reads it - an uplink silent for 70 s
+  is closed and viewers are told the stream ended, checked on every wake-up
+  that happens anyway, and by a minute alarm while a session is declared live.
+  An app from before 0.8, whose hello only implies live, never starts that
+  alarm. `apps/hosted-relay/README.md` has the cost; `uplinkGone.test.ts` and
+  `viewerPing.test.ts` hold it.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

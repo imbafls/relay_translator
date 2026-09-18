@@ -175,6 +175,27 @@ The sweep runs from an alarm set when the room is claimed, under
 `src/reap.ts` holds the decision and `test/reap.test.ts` covers it; the window is
 `UNTOUCHED_ROOM_TTL_MS`.
 
+## A publisher that vanished
+
+A streamer's PC that loses power, crashes or drops off the network never closes
+its uplink, and nothing else a publisher does can end a stream here - so a room
+used to stay ON AIR for good: viewers watching kept a running clock over
+nothing, and everyone who opened the link later was greeted as live.
+
+The uplink beats with the same `{"type":"ping"}` a viewer sends, every 20 s,
+and the runtime records when it last answered. An OPEN uplink silent for
+`UPLINK_SILENT_MS` (70 s) is closed with 4408 - the uplink reconnects from
+that, so one that was only slow is back within seconds - and with no publisher
+left the room tells viewers "stream ended", exactly as a clean close does. It
+is checked whenever the room is awake anyway: a viewer joining, a viewer's
+`sync`, `/health`. Viewers already watching wake nothing, so while a publisher
+has declared a session live the same alarm the reap uses looks in every
+`LIVENESS_CHECK_MS` (60 s) - about 60 billed requests and 60 row writes per
+live hour, on top of the ~1,600 measured below. An app from before 0.8 says
+hello with no `live` field at every boot; that still reads as live but never
+starts the alarm, or an idle one in the tray would cost a request a minute all
+day. `test/uplinkGone.test.ts` covers it.
+
 ## Still open
 
 - ~~**An unexplained viewer socket, seen once**~~ — **closed 2026-09-18: a
@@ -189,8 +210,8 @@ The sweep runs from an alarm set when the room is claimed, under
   rather than the service.
 
   The fitting explanation is a viewer socket that died without a FIN. The count
-  is `getWebSockets("viewer").length`, and hibernation means this object holds
-  no timer of its own — so a socket whose phone walked into a tunnel was held
+  is `getWebSockets("viewer").length`, and hibernation meant this object ran
+  no timer for viewers — so a socket whose phone walked into a tunnel was held
   until something else closed it, and nothing else ever did. A room never
   opened reads zero; the first one, opened once to check it worked, reads one
   for ever. That matches every detail of the sighting, including why a fresh
@@ -253,9 +274,10 @@ The sweep runs from an alarm set when the room is claimed, under
 
   So the check is the billing, not the behaviour: run `scripts/measure-cost.cjs`
   and `scripts/read-cost.cjs` against a room with one viewer attached for the
-  window, and compare billed requests against the 1,597 in the table. Roughly
-  unchanged means the runtime is answering. About 1,780 means it is not, and
-  the frames have drifted apart.
+  window, and compare billed requests against the 1,597 in the table - plus
+  the ~60 an hour the liveness alarm has added since that measurement (see "A
+  publisher that vanished"), so about 1,660. Roughly that means the runtime is
+  answering. About 1,840 means it is not, and the frames have drifted apart.
 
   **Hibernation works, and works so well that duration stopped being the
   question.** 3.83 GB-s/hr against the free plan's 13,000 GB-s/day is 3,400
@@ -266,7 +288,9 @@ The sweep runs from an alarm set when the room is claimed, under
   WebSocket message on a hibernating object is a billed request, so a caption is
   a request. At 1,597/hr against the free plan's 100,000/day that is **63
   room-hours a day** - two or three people streaming a full evening. Duration
-  allows fifty times more.
+  allows fifty times more. The liveness alarm, added since, costs ~60 an hour
+  more while live - about 60 room-hours a day - and alarm invocations count
+  as requests on Cloudflare's price list.
 
   On the Workers Paid plan the included 1M requests/month is ~626 room-hours,
   and past that the whole cost is about **$0.29 per 1,000 room-hours**. Still

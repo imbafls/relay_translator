@@ -4003,3 +4003,26 @@ has a key now, which is what it was testing all along. The review looked at
 the one new window - the check now runs at the press rather than after an
 IPC round trip, and START is bound a few milliseconds before the model list
 loads - and found nothing that can start a session that early.
+
+**28 - A publisher that vanished.** A streamer's PC that loses power or drops
+off the network never closes its uplink, so `webSocketClose` never runs, and
+the only other things that end a hosted stream are that same uplink's
+messages. The room stayed ON AIR indefinitely: viewers watching kept a
+running clock over nothing, every late joiner was greeted as live, `/health`
+agreed. The uplink has beaten with `{"type":"ping"}` every 20 s since before
+0.8.1 - the frame the runtime auto-answers and timestamps - so the evidence
+was there and unread. The room now judges an uplink the way it already
+judged a viewer: silent 70 s is gone, never beaten is just connected. It
+checks on every wake-up that happens anyway, and - since viewers already
+watching wake nothing - from the alarm the reap uses, once a minute while a
+session is live. The review found the alarm's price was not what the comment
+said: an app from before 0.8 says hello with no `live` at every boot, that
+reads as live, and one idling in the tray would have cost a billed request a
+minute all day. The room now records whether live was declared, and only a
+declared session keeps the alarm running. It also found the fix leaning on a
+contract nothing held - the uplink's ping bytes and period against the room's
+frame and window - and tests that could not see a room ending itself twice
+over a half-open socket, or one that was never live; each has a guard now.
+Twenty mutations to `room.ts`, each red, and two to the contract.
+It refuted two findings as well: a deploy briefly reads as OFF AIR only if a
+viewer beats the uplink back, and that is true while it lasts.

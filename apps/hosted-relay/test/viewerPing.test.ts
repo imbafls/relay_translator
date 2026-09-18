@@ -195,3 +195,44 @@ describe("the timing the two sides have to agree on", () => {
     ).toBeGreaterThanOrEqual(viewerGivesUp + pingMs!);
   });
 });
+
+/**
+ * The publisher's heartbeat, which the room now reads too.
+ *
+ * `dropSilentPublisher` ends a stream whose uplink has stopped beating, and it
+ * knows a beat only by the runtime's auto-response timestamp - so the uplink's
+ * ping has to be byte for byte the frame the room hands the runtime. If they
+ * drift, the timestamp stays null, a null is "has not beaten yet", and the
+ * check quietly never fires: a vanished publisher is ON AIR for good again,
+ * with every test of the room itself still green.
+ *
+ * And the same order as for viewers: the room must not decide the publisher is
+ * gone before the uplink itself would have given up and reconnected.
+ */
+describe("the publisher's heartbeat on the hosted relay", () => {
+  const uplinkTs = fs.readFileSync(path.join(root, "packages", "companion", "src", "uplinkClient.ts"), "utf8");
+  const roomTs = fs.readFileSync(path.join(root, "apps", "hosted-relay", "src", "room.ts"), "utf8");
+
+  it("is the exact frame the runtime auto-answers", () => {
+    const pair = autoResponse();
+    expect(uplinkTs, "the uplink no longer sends { type: \"ping\" } as its heartbeat").toMatch(/this\.send\(\{ type: "ping" \}\)/);
+    expect(uplinkTs, "the uplink no longer sends a message as plain JSON.stringify of it").toMatch(
+      /this\.ws!\.send\(JSON\.stringify\(msg\)\)/,
+    );
+    expect(pair.request).toBe(JSON.stringify({ type: "ping" }));
+  });
+
+  it("is given up on only after the uplink would have given up itself", () => {
+    const period = Number(/this\.hooks\.pingMs \?\? (\d[\d_]*)/.exec(uplinkTs)?.[1]?.replace(/_/g, ""));
+    const misses = Number(/this\.unanswered >= (\d+)/.exec(uplinkTs)?.[1]);
+    const silent = Number(/const UPLINK_SILENT_MS = (\d[\d_]*)/.exec(roomTs)?.[1]?.replace(/_/g, ""));
+    expect(period, "the uplink's default ping period is not where this looks for it").toBeGreaterThan(0);
+    expect(misses, "the uplink's give-up count is not where this looks for it").toBeGreaterThan(0);
+    expect(silent, "UPLINK_SILENT_MS is not declared in room.ts any more").toBeGreaterThan(0);
+    expect(
+      silent,
+      `the uplink beats every ${period}ms and gives up after ${misses} unanswered, and this room drops it at ` +
+        `${silent}ms - a publisher on a slow link would be ended while it still believes it is connected`,
+    ).toBeGreaterThanOrEqual(period * misses + period);
+  });
+});
