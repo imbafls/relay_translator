@@ -71,7 +71,13 @@ window.cr = (() => {
     obsUrl: async () => "http://127.0.0.1:8787/watch/harness?obs=1",
     phoneUrl: async () => undefined,
     config: async () => config,
-    rotateLink: async () => "http://127.0.0.1:8787/watch/rotated",
+    // ?rotate=unchanged|unknown|refused shows what NEW says when the relay did
+    // not confirm a new internet link; the default is a rotation that worked
+    rotateLink: async () => ({
+      remote: new URLSearchParams(location.search).get("rotate") || "rotated",
+      reason: "textrelay.cc could not replace the link (500)",
+      url: "http://127.0.0.1:8787/watch/rotated",
+    }),
     claimRelayRoom: async () => ({ relayUrl: "", publisherToken: "" }),
     validateKey: async () => ({ valid: true }),
     checkForUpdate: async () => noop(),

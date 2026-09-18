@@ -3957,3 +3957,32 @@ the hosted README quoting the old concatenation, beside a row saying the
 client retries a 4409 it has not retried for a long time; both corrected.
 And the regex went through the shell once more and lost its backslash; the
 Edit tool is the rule for those now, not a lesson re-learned per iteration.
+
+**26 - NEW said the old link was dead.** NEW rotates the LAN link in-process
+and asks the internet relay to rotate its own. When that request failed, main
+logged at most a line - a non-2xx answer not even that - and the window said
+"links rotated - old links are dead" in green over a phone link that still
+worked, for whoever the streamer was trying to shut out. START in the default
+link mode rotated the same way and said nothing, and the tray opened the old
+link as though it were new. The first fix returned a failure through the
+bridge and printed "the old one still works", and the review took it apart.
+Both relays replace the link before they answer, so a timeout, a dropped
+connection or a 500 may have killed the old link anyway: "still works" was
+the opposite lie, told in exactly the cases the fix was for. A config save
+that threw after a successful rotation was caught with the request's failures
+and reported the same way. The warning went only to the log, a view the stage
+hides - and NEW is on the stage. The timeout stopped at the headers, so a
+relay that stalled mid-answer held NEW indefinitely. And nothing tied what
+main sent back to what the renderer expected: `ipcMain.handle` is `any`, and
+a reply nested one level deeper compiled, passed every test, and read as
+success. Now a failure is followed by asking the relay which link it admits,
+and the app says only what that confirms - rotated, unchanged, refused, or
+unknown - in one wording shared by the window and the tray, with a chip in 04
+OUTPUT that stays until the next rotation. The outcome moved into an
+Electron-free module tested against real relays and a real ConfigStore whose
+save fails, and both IPC replies are typed from the bridge. Thirteen
+mutations, one per part, each turned something red; two of them are compile
+errors, which is the point of typing the replies. Two adjacent shapes are
+carded rather than folded in: a START that cannot start - no key, no model -
+still replaces the link before refusing, and `claimHostedRoom` clears its
+timeout at the headers the same way this helper did.

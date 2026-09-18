@@ -4,6 +4,7 @@ import type {
   AudioDeviceInfo,
   ControlStatus,
   KeyValidation,
+  LinkRotation,
   LocalModelStatus,
   SessionState,
   Transcript,
@@ -21,8 +22,14 @@ export interface RendererBridge {
     obsUrl?: string;
     phoneUrl?: string;
     config: AppConfig;
+    /**
+     * what the START did to the link: undefined when it did not rotate (fixed
+     * link mode). A required key, so a reply that leaves it out does not compile
+     */
+    rotation: LinkRotation | undefined;
   }>;
-  rotateLink(): Promise<string | undefined>;
+  /** NEW: the rotation, and the link the footer now shows */
+  rotateLink(): Promise<LinkRotation & { url?: string }>;
   /** claim a room on the hosted relay so the link works outside this network */
   claimRelayRoom(relayUrl?: string): Promise<{ ok: boolean; message?: string }>;
   /** test an API key with a cheap request against the provider */

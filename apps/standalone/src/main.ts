@@ -23,6 +23,7 @@ import {
   AudioDeviceInfo,
   ControlStatus,
   KeyValidation,
+  LinkRotation,
   ServerToViewer,
   SessionState,
   HardwareInfo,
@@ -33,12 +34,23 @@ import {
   RELAY_CONFIG_KEYS,
   redactLog,
   relayRollbackPatch,
+  rotationNotice,
   validPublicBaseUrl,
   uplinkUrlFor,
   validTranscriptDir,
   viewerLinkFor,
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
+import { rotateLinks, trayOpensLink } from "./linkRotation";
+import type { RendererBridge } from "./preload";
+
+/**
+ * What the renderer receives from a bridge method. `ipcMain.handle` takes and
+ * returns `any`, so without this nothing ties a handler to the type the
+ * renderer is written against - a reply in the wrong shape compiles, and the
+ * rotation replies are ones where the wrong shape reads as success.
+ */
+type Reply<K extends keyof RendererBridge> = RendererBridge[K] extends (...args: never[]) => infer R ? Awaited<R> : never;
 import { ModelStore } from "./models";
 import {
   TranscriptWriter,
@@ -458,27 +470,19 @@ async function validateKey(provider: "deepgram" | "gemini", key: string): Promis
   }
 }
 
-async function rotateLink(): Promise<string | undefined> {
-  // rotate both the local (OBS/LAN) link and the remote (phone) link
-  if (relay) relay.rotateViewerToken();
-  const cfg = config();
-  const origin = cfg.relayUrl ? httpOriginOfRelayUrl(cfg.relayUrl) : null;
-  if (origin && cfg.publisherToken) {
-    try {
-      const res = await fetch(`${origin}/admin/rotate-viewer-token`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${cfg.publisherToken}` },
-      });
-      if (res.ok) {
-        const token = ((await res.json()) as { viewerToken: string }).viewerToken;
-        configStore.update({ viewerToken: token });
-      }
-    } catch (err) {
-      log("error", `remote rotate failed: ${String(err)}`);
-    }
-  }
+/**
+ * Rotate both the local (OBS/LAN) link and the remote (phone) link, and say
+ * what the relay confirmed about the remote one - see linkRotation.ts.
+ */
+async function rotateLink(): Promise<LinkRotation> {
+  const rotation = await rotateLinks({
+    rotateLocal: () => relay?.rotateViewerToken(),
+    config,
+    saveViewerToken: (viewerToken) => configStore.update({ viewerToken }),
+    log,
+  });
   broadcastStatus();
-  return viewerUrl();
+  return rotation;
 }
 
 function currentStatus() {
@@ -590,7 +594,7 @@ function registerIpc(): void {
 
   // renderer asks for fresh session runtime info; rotates the viewer link
   // when entering a new session in "unique" mode
-  ipcMain.handle("runtime:prepare", async (_e, opts: { rotate?: boolean } = {}) => {
+  ipcMain.handle("runtime:prepare", async (_e, opts: { rotate?: boolean } = {}): Promise<Reply<"prepareSession">> => {
     const cfg = config();
     // The relay check comes FIRST. Rotating before it meant every failed START
     // in the default link mode still minted a new viewer token, persisted it,
@@ -599,13 +603,14 @@ function registerIpc(): void {
     // screen. Nothing about a session that cannot start should spend the link.
     const url = publisherWsUrl();
     if (!url) throw new Error("local relay not ready");
-    if (opts.rotate && cfg.linkMode === "unique") await rotateLink();
+    const rotation = opts.rotate && cfg.linkMode === "unique" ? await rotateLink() : undefined;
     return {
       publisherUrl: url,
       viewerUrl: viewerUrl(),
       obsUrl: localViewerUrl(),
       phoneUrl: phoneUrl(),
       config: config(),
+      rotation,
     };
   });
 
@@ -713,9 +718,11 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle("link:rotate", async () => {
-    await rotateLink();
-    return viewerUrl();
+  // typed from the bridge, like runtime:prepare: a reply in the wrong shape
+  // reads as a rotation that worked
+  ipcMain.handle("link:rotate", async (): Promise<Reply<"rotateLink">> => {
+    const rotation = await rotateLink();
+    return { ...rotation, url: viewerUrl() };
   });
 
   /**
@@ -884,8 +891,13 @@ function buildTrayMenu(): Electron.Menu {
       {
         label: "Rotate viewer link",
         click: async () => {
-          await rotateLink();
-          if (viewerUrl()) openExternal(viewerUrl()!);
+          const rotation = await rotateLink();
+          // the tray has no log to say it in, so it says it in a dialog
+          const notice = rotationNotice(rotation, "use Rotate viewer link again");
+          if (!notice.ok) {
+            void dialog.showMessageBox({ type: "warning", title: APP_NAME, message: notice.title, detail: notice.text });
+          }
+          if (trayOpensLink(rotation, config().output) && viewerUrl()) openExternal(viewerUrl()!);
         },
       },
       { type: "separator" },

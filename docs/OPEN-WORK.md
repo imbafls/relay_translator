@@ -729,6 +729,24 @@ fixed**, the last two on 2026-09-15.
   same one slash the claim and the phone link accept, so an address works
   everywhere or visibly nowhere.
 
+- ~~**NEW said "old links are dead" when the internet link had not
+  changed.**~~ Fixed 2026-09-18, found by the 1.0 discovery pass. NEW rotates
+  the LAN link in-process and asks the internet relay to rotate its own; when
+  that request failed - a 500, a publish key the relay no longer knows, a
+  captive portal's 200, no network - main logged at most a line (a non-2xx not
+  even that) and the renderer said the old links were dead while the old phone
+  link went on working, for whoever the streamer was trying to shut out. A START
+  in the default link mode rotated the same way and said nothing, and the tray's
+  Rotate viewer link opened the old link as though it were new. Each outcome is
+  now only what the relay confirmed: both relays replace the link before they
+  answer, so a request that failed after it may have been acted on is followed
+  by asking the relay which link it admits now - `unchanged` if the old one,
+  `unknown` if it cannot be asked, `refused` for a key it turned away. The
+  request lives in `packages/companion/src/rotateLink.ts`, the outcome in
+  `apps/standalone/src/linkRotation.ts` (tested under plain Node against real
+  relays), the wording in one `rotationNotice` for the window and the tray, and
+  a warning stays in 04 OUTPUT - the log is hidden on the stage, where NEW is.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

@@ -53,8 +53,9 @@ import {
   MAX_CAPTURE_CHANNELS,
   maskViewerLink,
   redactLog,
+  rotationNotice,
 } from "@callout-relay/shared";
-import type { Transcript, TranscriptSummary } from "@callout-relay/shared";
+import type { LinkRotation, Transcript, TranscriptSummary } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
 
 declare global {
@@ -775,6 +776,11 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
       relayClient = null;
     }
     const prep = await cr.prepareSession({ rotate: opts.rotateLink });
+    // Said before the stop check below, because the rotation has happened
+    // whether or not this start goes on: in the default link mode a new session
+    // is a new link, and when the internet half of that failed the old link is
+    // still in the hands of whoever had it.
+    if (prep.rotation) noteRotation(prep.rotation, "press NEW to replace it", false);
     // The preparation can take seconds - with a hosted room it waits on a
     // network call to rotate the link - and the button reads STOP throughout.
     // A stop in that window has nothing to tear down yet, so this is the only
@@ -1200,6 +1206,9 @@ function renderChain(): void {
   } else {
     items.push({ text: "RELAY ERROR · CHECK SETTINGS", cls: "warn" });
   }
+  if (linkWarning && linkWarning.relayUrl === config.relayUrl && linkWarning.publisherToken === config.publisherToken) {
+    items.push({ text: linkWarning.chip, cls: "warn" });
+  }
   metaSpans($("metaOutput"), items);
 }
 
@@ -1220,6 +1229,30 @@ function watchingNow(): number {
  * lose, so it just goes.
  */
 let rotateArmed = false;
+
+/**
+ * What the last rotation left the internet link as, while that is worth a
+ * warning. The log line alone was not enough: the log is its own view, hidden
+ * while the streamer is on the stage, so a NEW that failed looked exactly like
+ * one that worked. This stays in 04 OUTPUT until the next rotation says
+ * otherwise, or the relay it was about is no longer the one in SETTINGS.
+ */
+let linkWarning: { chip: string; relayUrl?: string; publisherToken?: string } | null = null;
+
+/**
+ * Tell the streamer what a rotation did. The LAN half cannot fail; the internet
+ * half is a request to another machine, and saying "dead" over a link that
+ * still works is the one thing NEW must never do. `announce` is off for START,
+ * which only speaks up when something went wrong.
+ */
+function noteRotation(rotation: LinkRotation, again: string, announce: boolean): void {
+  const notice = rotationNotice(rotation, again);
+  if (announce || !notice.ok) log(notice.text, notice.ok ? "ok" : "err");
+  linkWarning = notice.chip
+    ? { chip: notice.chip, relayUrl: config?.relayUrl, publisherToken: config?.publisherToken }
+    : null;
+  renderChain();
+}
 let rotateTimer: ReturnType<typeof setTimeout> | null = null;
 
 function armRotate(on: boolean): void {
@@ -2520,8 +2553,8 @@ function bind(): void {
       return;
     }
     armRotate(false);
-    await cr.rotateLink();
-    log("links rotated - old links are dead", "ok");
+    const rotation = await cr.rotateLink();
+    noteRotation(rotation, "press NEW again", true);
   };
   bindSeg("linkSeg", (v) => {
     linkChoice = v as "phone" | "obs";

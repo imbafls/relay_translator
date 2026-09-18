@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_CONFIG, FALLBACK_STT, HOSTED_RELAY_URL, STT_MODELS } from "@callout-relay/shared";
-import type { AppConfig } from "@callout-relay/shared";
+import type { AppConfig, LinkRotation } from "@callout-relay/shared";
 
 /**
  * The renderer booting for real: the shipped index.html in a DOM, the real
@@ -73,10 +73,17 @@ function bridge(config: AppConfig) {
     // mock left config undefined and renderIdle()'s config.stt read threw an
     // unhandled rejection once the preflight failed and setState("error", ...)
     // tried to redraw the stage.
-    prepareSession: async () => ({ publisherUrl: "ws://127.0.0.1:0/publish", viewerUrl: "", obsUrl: "", phoneUrl: "", config: current }),
+    prepareSession: async (opts?: { rotate?: boolean }) => ({
+      publisherUrl: "ws://127.0.0.1:0/publish",
+      viewerUrl: "",
+      obsUrl: "",
+      phoneUrl: "",
+      config: current,
+      rotation: opts?.rotate && current.linkMode === "unique" ? fakeRotation : undefined,
+    }),
     rotateLink: async () => {
       calls.rotated.push(Date.now());
-      return undefined;
+      return { ...fakeRotation, url: undefined };
     },
     claimRelayRoom: async (relayUrl?: string) => {
       calls.claimed.push(relayUrl);
@@ -165,6 +172,8 @@ let fakeDevices: { kind: string; deviceId: string; label: string; groupId: strin
 let setConfigFails = false;
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
+/** what a rotation did to the internet link, as main reports it */
+let fakeRotation: LinkRotation = { remote: "none" };
 /** what cr.modelStatus() answers: the local models on disk */
 let fakeModels: { id: string; downloaded: boolean; sizeMb: number }[] = [];
 /** what cr.readRelayLog() answers - the raw, unredacted relay.log text */
@@ -262,6 +271,7 @@ afterEach(() => {
   setConfigFails = false;
   claimFails = null;
   fakeModels = [];
+  fakeRotation = { remote: "none" };
   fakeRelayLog = "";
   readRelayLogGate = null;
   releaseReadRelayLogGate = null;
@@ -3541,5 +3551,159 @@ describe("the model list while a download is running", () => {
     const buttons = [...document.querySelectorAll("#settingsModels .model-row button")].map((b) => b.textContent);
     expect(buttons, "a finished download still offers CANCEL").not.toContain("CANCEL");
     expect(document.querySelector("#settingsModels")?.textContent, "the finished model does not say READY").toContain("READY");
+  });
+});
+
+/**
+ * NEW, and what it says about the link it was meant to kill.
+ *
+ * NEW is how a streamer takes back a phone link sent to the wrong person. It
+ * rotates the local link and asks the internet relay to rotate its own; if
+ * that request failed - a 500 from the room's storage, a network blip - main
+ * logged it (a non-2xx answer not even that) and handed back the same link,
+ * and the renderer said "links rotated - old links are dead" in green. The
+ * old phone link went on working, for whoever the streamer was trying to shut
+ * out. START in the default mode rotates the same way, and said nothing.
+ *
+ * The log alone is not enough to say it in: it is its own view, hidden while
+ * the streamer is on the stage, where NEW is. So the warning has to be on the
+ * stage too, and these check it is somewhere that is actually shown.
+ */
+describe("NEW when the internet link could not be replaced", () => {
+  const logText = (): string => (document.getElementById("log") as HTMLElement).textContent || "";
+  /** the chip, if 04 OUTPUT is showing it - checked up the tree, since a hidden parent hides it too */
+  const chipOnStage = (text: string): boolean => {
+    const chip = [...document.querySelectorAll("#metaOutput span")].find((s) => s.textContent === text);
+    for (let el: Element | null = chip ?? null; el; el = el.parentElement) {
+      if (el.hasAttribute("hidden") || el.classList.contains("hidden")) return false;
+    }
+    return !!chip;
+  };
+  const quiet = async (): Promise<void> => {
+    pushStatus!({
+      companion: { version: "test" },
+      session: { state: "idle" },
+      relay: {
+        localViewerUrl: "http://127.0.0.1:8787/watch/tok",
+        remoteViewerUrl: "https://textrelay.cc/watch/tok",
+        uplinkState: "connected",
+        viewers: 0,
+        remoteViewers: 0,
+      },
+      usage: undefined,
+    });
+    await settle(30);
+  };
+  const pressNew = async (): Promise<void> => {
+    (document.getElementById("rotateLink") as HTMLButtonElement).click();
+    await settle(30);
+  };
+  const hosted = { setupDone: true, relayUrl: "wss://textrelay.cc", publisherToken: "p1_a_b" };
+
+  it("does not say the old link is dead, and says so on the stage", async () => {
+    fakeRotation = { remote: "unchanged", reason: "textrelay.cc could not replace the link (500)" };
+    await bootWith(hosted);
+    await quiet();
+    await pressNew();
+
+    expect(logText(), "the log told the streamer the old link is dead while it still works").not.toContain(
+      "old links are dead",
+    );
+    expect(logText(), "nothing said the internet link is unchanged").toMatch(/still works/i);
+    expect(chipOnStage("OLD LINK STILL WORKS"), "the only word of it was in a log the stage hides").toBe(true);
+  });
+
+  it("still says so when it worked, with nothing left on the stage", async () => {
+    fakeRotation = { remote: "rotated" };
+    await bootWith(hosted);
+    await quiet();
+    await pressNew();
+
+    expect(logText()).toContain("old links are dead");
+    expect(chipOnStage("OLD LINK STILL WORKS")).toBe(false);
+  });
+
+  it("takes the warning down once a later NEW works", async () => {
+    fakeRotation = { remote: "unchanged", reason: "textrelay.cc could not replace the link (500)" };
+    await bootWith(hosted);
+    await quiet();
+    await pressNew();
+    expect(chipOnStage("OLD LINK STILL WORKS")).toBe(true);
+
+    fakeRotation = { remote: "rotated" };
+    await pressNew();
+    await quiet();
+
+    expect(chipOnStage("OLD LINK STILL WORKS"), "a warning outlived the rotation that answered it").toBe(false);
+  });
+
+  // the request failed after it may have been acted on, and the relay could not
+  // be asked: neither "dead" nor "still works" is known
+  it("claims neither when it cannot be known", async () => {
+    fakeRotation = { remote: "unknown", reason: "could not reach textrelay.cc - it did not answer in time" };
+    await bootWith(hosted);
+    await quiet();
+    await pressNew();
+
+    expect(logText()).not.toContain("old links are dead");
+    expect(logText()).not.toMatch(/still works/i);
+    expect(logText()).toMatch(/could not tell/);
+    expect(chipOnStage("LINK NOT CONFIRMED")).toBe(true);
+  });
+
+  // pressing again asks the same question of a relay that refuses the key
+  it("does not send a refused streamer round the same loop", async () => {
+    fakeRotation = { remote: "refused", reason: "textrelay.cc did not accept this app's publish key" };
+    await bootWith(hosted);
+    await quiet();
+    await pressNew();
+
+    expect(logText()).toContain("did not accept this app's publish key");
+    expect(logText()).not.toMatch(/still works|press NEW again|old links are dead/i);
+  });
+
+  it("warns on a START that could not replace it either", async () => {
+    fakeRotation = { remote: "unchanged", reason: "textrelay.cc could not replace the link (500)" };
+    await bootWith({ ...hosted, deepgramApiKey: "dg-key", linkMode: "unique" });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: { state: string; hooks: { onState?: (s: string) => void } }) {
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", { configurable: true, get: () => true });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", { configurable: true, get: () => 1 });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+
+    expect(logText(), "START handed out a new session over an internet link it could not replace, and said nothing").toMatch(
+      /still works/i,
+    );
+    expect(chipOnStage("OLD LINK STILL WORKS")).toBe(true);
+  });
+
+  // STOP pressed while the rotation is in flight abandons the start, not the
+  // rotation: it has happened either way, and so has its failure
+  it("still warns when STOP lands while the rotation is in flight", async () => {
+    fakeRotation = { remote: "unchanged", reason: "textrelay.cc could not replace the link (500)" };
+    await bootWith({ ...hosted, deepgramApiKey: "dg-key", linkMode: "unique" });
+    const cr = (window as unknown as { cr: { prepareSession: (...a: unknown[]) => Promise<unknown> } }).cr;
+    const real = cr.prepareSession;
+    let release: () => void = () => undefined;
+    cr.prepareSession = (...args: unknown[]) => new Promise((resolve) => (release = () => resolve(real(...args))));
+    const button = document.getElementById("startStop") as HTMLButtonElement;
+    button.click();
+    await settle(30);
+    button.click();
+    await settle(30);
+    expect(document.getElementById("app")?.dataset.session).toBe("idle");
+
+    release();
+    await settle(30);
+
+    expect(logText(), "a STOP during the rotation swallowed the news that the old link still works").toMatch(/still works/i);
   });
 });

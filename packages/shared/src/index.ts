@@ -214,12 +214,29 @@ export const HOSTED_RELAY_URL = "wss://textrelay.cc";
  * address is how the footer ends up quietly handing out the LAN link.
  */
 export function claimUrlFor(relayUrl: string | undefined): string | undefined {
+  return adminUrlFor(relayUrl, "/claim");
+}
+
+/**
+ * Where to POST to replace a room's viewer link. The same address rule as
+ * `claimUrlFor`, because it is the same origin asked a different question.
+ */
+export function rotateUrlFor(relayUrl: string | undefined): string | undefined {
+  return adminUrlFor(relayUrl, "/admin/rotate-viewer-token");
+}
+
+/** where to GET the viewer token a relay admits right now - the same origin again */
+export function viewerTokenUrlFor(relayUrl: string | undefined): string | undefined {
+  return adminUrlFor(relayUrl, "/admin/viewer-token");
+}
+
+function adminUrlFor(relayUrl: string | undefined, pathname: string): string | undefined {
   const m = (relayUrl || "").match(/^(wss?):\/\/([^/]+)\/?$/i);
   const proto = m?.[1];
   const host = m?.[2];
   if (proto === undefined || host === undefined) return undefined;
   const scheme = proto.toLowerCase() === "wss" ? "https" : "http";
-  return `${scheme}://${host}/claim`;
+  return `${scheme}://${host}${pathname}`;
 }
 
 /**
@@ -252,6 +269,77 @@ export function isRoomClaim(value: unknown): value is RoomClaim {
   const v = value as Record<string, unknown>;
   return typeof v.publisherToken === "string" && v.publisherToken.length > 0 &&
     typeof v.viewerToken === "string" && v.viewerToken.length > 0;
+}
+
+/** what both relays answer a viewer-token question with */
+export function isViewerTokenAnswer(value: unknown): value is { viewerToken: string } {
+  if (!value || typeof value !== "object") return false;
+  const v = (value as Record<string, unknown>).viewerToken;
+  return typeof v === "string" && v.length > 0;
+}
+
+/**
+ * What NEW - or a START in the default link mode - did to the internet link.
+ *
+ * The LAN link is rotated in-process and cannot fail. The internet one is a
+ * request to another machine, and when that request failed the app still said
+ * "old links are dead" while the old phone link went on working, for whoever
+ * the streamer was trying to shut out.
+ *
+ * Each outcome is only what the relay has confirmed. A request that failed
+ * after it may have been acted on - a timeout, a dropped connection, a 500, an
+ * answer cut short - does not say whether the link changed, so the app asks the
+ * relay which link it admits now: the same one is `unchanged`, and no answer
+ * at all is `unknown`. `refused` is a relay that turned the publish key away
+ * before doing anything. `none` is an install with no internet link.
+ */
+export type LinkRotation =
+  | { remote: "none" }
+  | { remote: "rotated" }
+  | { remote: "unchanged"; reason: string }
+  | { remote: "refused"; reason: string }
+  | { remote: "unknown"; reason: string };
+
+/**
+ * What to tell the streamer about a rotation, in one wording for every place
+ * that rotates. `again` is how that place's control is named - "press NEW
+ * again" in the window, the menu item's name in the tray. `chip` is the short
+ * form that stays on screen, because the log line alone lands in a view that is
+ * hidden while the streamer is on the stage.
+ *
+ * `refused` has no chip and no "again": the relay turned the publish key away,
+ * so pressing again only asks the same question, and the uplink is refused with
+ * the same key - which already puts RELAY ERROR on the stage.
+ */
+export function rotationNotice(
+  rotation: LinkRotation,
+  again: string,
+): { ok: boolean; title: string; text: string; chip?: string } {
+  switch (rotation.remote) {
+    case "none":
+    case "rotated":
+      return { ok: true, title: "Links replaced", text: "links rotated - old links are dead" };
+    case "unchanged":
+      return {
+        ok: false,
+        title: "The internet link was not replaced",
+        text: `the internet link could not be replaced - ${rotation.reason}. The old one still works: ${again}`,
+        chip: "OLD LINK STILL WORKS",
+      };
+    case "unknown":
+      return {
+        ok: false,
+        title: "The internet link may not have been replaced",
+        text: `could not tell whether the internet link was replaced - ${rotation.reason}. ${again.charAt(0).toUpperCase()}${again.slice(1)} before sending it to anyone`,
+        chip: "LINK NOT CONFIRMED",
+      };
+    case "refused":
+      return {
+        ok: false,
+        title: "The relay did not accept this app",
+        text: `the internet link could not be replaced - ${rotation.reason}`,
+      };
+  }
 }
 
 /**
