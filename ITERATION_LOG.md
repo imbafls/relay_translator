@@ -4529,3 +4529,16 @@ tightened, all five red. Also moved `openSetup`'s one-line doc comment back
 above `openSetup`, where iteration 53 had left it stranded over `obSave`.
 What stays open, and is carded: a relay that cannot start is still invisible
 until START fails with "local relay not ready".
+
+**60 - Rate-limited is not rejected.** `couldNotCheck` knew "no connection"
+and "timed out", and main's `validateKey` has a third way of saying nothing
+about the key: it turns 401 and 403 (and Gemini's 400) into "key rejected"
+and passes every other status through as "deepgram http 503" or "gemini http
+429". Those read as rejections - KEY INVALID on the chain, KEY REJECTED in
+setup with CONTINUE dead, and `openSetup` trusting it for the run. Any
+`<provider> http <status>` now counts as could-not-check, since main has
+already taken out the statuses that are about the key. Three tests red first
+(a Deepgram 503 and a Gemini 429 at boot, and setup re-asking after one).
+Three mutations: the HTTP case dropped, Gemini forgotten, and the
+over-correction - everything counted as could-not-check - which six existing
+tests catch because they expect KEY INVALID for a real rejection.

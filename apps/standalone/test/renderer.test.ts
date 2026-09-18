@@ -2524,6 +2524,49 @@ describe("a key that could not be checked at boot", () => {
     await waitFor(() => /KEY OK/.test(text("gmKeyState")), "the Gemini readout to recover");
   });
 
+  /**
+   * The provider answering with an error is not the provider saying no. main
+   * turns 401 and 403 (and Gemini's 400) into "key rejected"; any other status
+   * comes back as "deepgram http 503" or "gemini http 429" - rate-limited,
+   * down for a minute - and read as a rejection, it showed KEY INVALID for a
+   * good key and left setup with CONTINUE dead for the run, the dead end the
+   * network-failure fix above had just removed.
+   */
+  it("reads a provider error at boot as could-not-check, not as a rejected key", async () => {
+    unreachableOnce = ["dg-saved"];
+    unreachableDetail = "deepgram http 503";
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    await waitFor(() => calls.validated.some((v) => v.key === "dg-saved"), "the boot check");
+    await settle(40);
+
+    expect(text("metaStt"), "a 503 from Deepgram was shown as a rejected key").toMatch(/KEY \?/);
+    expect(text("metaStt")).not.toMatch(/KEY INVALID/);
+  });
+
+  it("reads a Gemini rate limit the same way", async () => {
+    unreachableOnce = ["gm-saved"];
+    unreachableDetail = "gemini http 429";
+    await bootWith({ setupDone: true, geminiApiKey: "gm-saved", translationEnabled: true });
+    await waitFor(() => calls.validated.some((v) => v.key === "gm-saved"), "the boot check");
+    await settle(40);
+
+    expect(text("gmKeyState"), "a 429 from Gemini was shown as a rejected key").toMatch(/KEY \?/);
+  });
+
+  it("asks again when setup reopens after a provider error, so step 1 can continue", async () => {
+    unreachableOnce = ["dg-saved"];
+    unreachableDetail = "deepgram http 503";
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-saved" });
+    await waitFor(() => calls.validated.some((v) => v.key === "dg-saved"), "the boot check");
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(40);
+    (document.getElementById("settingsSetup") as HTMLButtonElement).click();
+
+    await waitFor(() => checksOf("dg-saved") === 2, "the saved key to be checked again");
+    await waitFor(() => /^VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
+    expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
+  });
+
   it("does not ask again about a key the provider actually turned down", async () => {
     // a key no other test uses. Written when every earlier boot's listeners
     // were still on window and their checks landed in this test's call log;

@@ -1010,6 +1010,12 @@ fixed**, the last two on 2026-09-15.
   reach. Main now keeps a save when the relay was not running before it
   either, and setup moves on when what it saved is what is stored.
 
+- ~~**A provider error read as a rejected key.**~~ Fixed 2026-09-18, found by
+  an independent review. A 429 or 503 from Deepgram or Gemini came back as
+  `deepgram http 503` and showed KEY INVALID for a good key, with setup's
+  CONTINUE dead for the run. Only "key rejected" - 401/403, Gemini's 400 - is
+  a verdict now; any other status reads KEY ? and is asked again.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

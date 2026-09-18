@@ -136,13 +136,20 @@ function verdictFor(
 }
 
 /**
- * An answer that says nothing about the key, because the provider was never
- * reached. It is shown (KEY ?, COULD NOT CHECK) but never trusted as final:
- * the boot checks run whenever the app starts, and a PC that starts before
- * its network is up would otherwise carry the failure for the whole run.
+ * An answer that says nothing about the key: the provider was never reached,
+ * or answered with an error that is not about the key. It is shown (KEY ?,
+ * COULD NOT CHECK) but never trusted as final: the boot checks run whenever
+ * the app starts, and a PC that starts before its network is up would
+ * otherwise carry the failure for the whole run.
+ *
+ * main's validateKey turns the statuses that ARE about the key - 401 and 403,
+ * and Gemini's 400 - into "key rejected", and passes any other one through as
+ * "deepgram http 503" or "gemini http 429". A rate limit or a provider down
+ * for a minute read as a rejected key showed KEY INVALID for a good one.
  */
 function couldNotCheck(v: KeyValidation | "checking" | undefined): boolean {
-  return !!v && v !== "checking" && !v.valid && (v.detail === "no connection" || v.detail === "timed out");
+  if (!v || v === "checking" || v.valid) return false;
+  return v.detail === "no connection" || v.detail === "timed out" || /^(deepgram|gemini) http \d+$/.test(v.detail ?? "");
 }
 
 function rememberVerdict(provider: "deepgram" | "gemini", key: string, verdict: Verdict): void {
