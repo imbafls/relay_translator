@@ -4769,3 +4769,21 @@ what a user reads and what SEND FEEDBACK carries, and the tagged commit
 should be the Release commit. So the Release commit waits: carded, the bump
 reverted to leave a clean tree, to be redone after the fix from the script
 that wrote it.
+
+**73 - The two LOG lines the packaged run found.** START's refusal went
+through `captureErrorText`, which returns a message as it finds it, so main's
+"local relay not running: ..." arrived as "Error invoking remote method
+'runtime:prepare': Error: local relay not running: ..." - in the LOG and as
+the session's error on the stage and in the tray. It now goes through
+`ipcReason` like every save does. And `saveAndApply` logged "config save
+failed:" before anything asked whether the settings had landed, which for a
+save main kept read "config save failed: ... - the settings were saved". It
+now asks. The first rule - "stored as asked means kept" - broke an existing
+test at once, and rightly: SAVE pressed with nothing changed, then refused,
+is stored as asked by definition and is still a failed save. Kept means the
+save changed something and the change is there. Two tests red first, one
+older test given the other half of the rule to hold (a changed save that was
+rolled back still says "config save failed"), and four mutations - the
+wrapper left on START, every rejection called a failure, kept ignoring
+whether anything changed, kept ignoring what is stored - each caught by a
+different test.

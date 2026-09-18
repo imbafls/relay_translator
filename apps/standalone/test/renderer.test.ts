@@ -116,6 +116,7 @@ function bridge(config: AppConfig) {
     // tried to redraw the stage.
     prepareSession: async (opts?: { rotate?: boolean }) => {
       calls.prepared.push({ rotate: !!opts?.rotate });
+      if (prepareFails) throw new Error(prepareFails);
       return {
         publisherUrl: "ws://127.0.0.1:0/publish",
         viewerUrl: "",
@@ -237,6 +238,8 @@ let setConfigMessage = "EADDRINUSE: port 3000 is already in use";
 let setConfigGate: Promise<void> | null = null;
 /** make cr.setConfig() store the patch and still throw setConfigMessage */
 let setConfigKeepsThenFails = false;
+/** when set, cr.prepareSession() rejects with this message - main refusing a START */
+let prepareFails: string | null = null;
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
 /** what a rotation did to the internet link, as main reports it */
@@ -401,6 +404,7 @@ afterEach(() => {
   setConfigMessage = "EADDRINUSE: port 3000 is already in use";
   setConfigGate = null;
   setConfigKeepsThenFails = false;
+  prepareFails = null;
   claimFails = null;
   fakeModels = [];
   fakeRotation = { remote: "none" };
@@ -2049,6 +2053,28 @@ describe("a local relay that could not start", () => {
     expect(text).toMatch(/SETTINGS/);
   });
 
+  /**
+   * Found running the packaged 1.0 candidate: START's refusal reached the LOG
+   * as "start failed: Error invoking remote method 'runtime:prepare': Error:
+   * local relay not running: ..." - Electron's wrapper round an ipcMain.handle
+   * rejection, which saveAndApply already strips and startSession did not. The
+   * same string is the session's error, which the stage and the tray show.
+   */
+  it("gives START's refusal without Electron's wrapping, in the LOG and on screen", async () => {
+    prepareFails =
+      "Error invoking remote method 'runtime:prepare': Error: local relay not running: listen EADDRINUSE: address already in use 0.0.0.0:8787";
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await settle(80);
+
+    const logged = document.getElementById("log")?.textContent || "";
+    expect(logged).toMatch(/start failed: local relay not running: listen EADDRINUSE/);
+    expect(logged, "the IPC plumbing reached the LOG").not.toMatch(/remote method/i);
+    expect(document.getElementById("stage")?.textContent || "", "the IPC plumbing reached the stage").not.toMatch(
+      /remote method/i,
+    );
+  });
+
   it("puts the reason in the LOG once, not on every status", async () => {
     await bootWith({ setupDone: true, relayPort: 8787 });
     await relayDown("listen EADDRINUSE: address already in use 0.0.0.0:8787");
@@ -2509,6 +2535,26 @@ describe("a setup step whose save fails", () => {
     expect(visible("obSaveError"), "a save that landed was reported as not saved").toBe(false);
   });
 
+  /**
+   * Found running the packaged 1.0 candidate: that kept save logged "config
+   * save failed: relay could not start: ... - the settings were saved", which
+   * says two opposite things in one line. saveAndApply prefixed every rejection
+   * that way before anything asked whether the settings had landed.
+   */
+  it("does not log a save main kept as a save that failed", async () => {
+    await bootWith({ setupDone: false });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    setConfigKeepsThenFails = true;
+    setConfigMessage =
+      "Error invoking remote method 'config:set': Error: relay could not start: listen EADDRINUSE: address already in use 0.0.0.0:8787 - the settings were saved";
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await waitFor(() => visible("obStep2"), "setup to move on");
+
+    const logged = document.getElementById("log")?.textContent || "";
+    expect(logged, "a kept save was logged as a failed one").not.toMatch(/config save failed/);
+    expect(logged, "the restart failure was not logged at all").toMatch(/relay could not start: listen EADDRINUSE/);
+  });
+
   it("still stays when main put the old settings back", async () => {
     // an older key stored, and a different one pasted: after a rollback the
     // stored key is there but is not the one saved, so the save did not land
@@ -2520,6 +2566,8 @@ describe("a setup step whose save fails", () => {
 
     expect(visible("obStep2")).toBe(false);
     expect(visible("obSaveError")).toBe(true);
+    // and the LOG calls it what it was: a changed save that did not land
+    expect(document.getElementById("log")?.textContent || "").toMatch(/config save failed/);
   });
 
   it("clears the message once the step saves", async () => {

@@ -956,7 +956,9 @@ async function startSession(opts: { rotateLink: boolean }): Promise<void> {
     // a failure belonging to a start that was already stopped or replaced is
     // not this session's to report
     if (mine !== startGeneration) return;
-    const message = captureErrorText(err);
+    // main's refusals arrive wrapped in Electron's "Error invoking remote
+    // method ..." - and this string is also the session's error on screen
+    const message = ipcReason(captureErrorText(err));
     log(`start failed: ${message}`, "err");
     stopSession(true);
     setState("error", message);
@@ -1149,6 +1151,7 @@ async function saveAndApply(
   patch: Partial<AppConfig>,
   opts: { restart?: boolean; onFail?: (reason: string) => void } = {},
 ): Promise<boolean> {
+  const before = config;
   try {
     config = await cr.setConfig(patch);
     syncControlsFromConfig();
@@ -1156,7 +1159,17 @@ async function saveAndApply(
     return true;
   } catch (err) {
     const reason = ipcReason(err);
-    log(`config save failed: ${reason}`, "err");
+    // A rejection is not always a lost save: with no running relay to roll
+    // back to, main keeps the settings and still reports the failed restart.
+    // "config save failed: ... the settings were saved" said both at once, so
+    // ask what is stored before saying which it was. Kept means it changed
+    // something and the change is there - a save that asked for nothing new
+    // and failed is still a failed save, whatever is stored.
+    const changed = (Object.keys(patch) as (keyof AppConfig)[]).some(
+      (k) => JSON.stringify(before[k]) !== JSON.stringify(patch[k]),
+    );
+    const kept = changed && (await storedAsSaved(patch));
+    log(kept ? reason : `config save failed: ${reason}`, "err");
     opts.onFail?.(reason);
     return false;
   }

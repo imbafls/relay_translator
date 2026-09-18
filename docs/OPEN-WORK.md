@@ -1075,6 +1075,12 @@ fixed**, the last two on 2026-09-15.
   Status now carries the reason, 04 OUTPUT says LOCAL RELAY DOWN with the
   taken port and where to change it, and START's error names the reason.
 
+- ~~**Two LOG lines read wrong in the packaged 1.0 candidate.**~~ Fixed
+  2026-09-18, found by running it. A save main kept while the relay could not
+  start was logged as "config save failed: ... the settings were saved", and
+  START's refusal still carried Electron's "Error invoking remote method"
+  wrapper, on screen too. Both read as what they are now.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
