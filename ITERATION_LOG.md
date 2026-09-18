@@ -4664,3 +4664,15 @@ upper-cases to itself and stays valid. That is 0.625^16, about one run in
 1,850, and it has been there since the hosted relay landed. The rerun was
 green; the flake is carded as a release risk, since CI runs this suite on the
 tag, and is the next unit rather than a rider on this one.
+
+**68 - The one-in-1,850 test.** `routes.test.ts` built one of its malformed
+credentials by upper-casing the test's random room id. Room ids are 16 hex
+digits; about one in 1,850 has no letter, upper-cases to itself, and is a
+valid id - the test then failed, as it did once last iteration. Reproduced on
+demand by pinning the id to the all-digit value it drew. The case now uses a
+fixed id with letters, checked against its lower-case twin (which parses) so
+it is refused for its case and nothing else; the whole describe passes with
+the all-digit id pinned, and the new case goes red when the Worker's room-id
+pattern is made case-insensitive. The other malformed cases do not depend on
+what the random values happen to be, and no other test builds an "invalid"
+input by transforming a random one.

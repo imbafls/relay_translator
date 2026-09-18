@@ -121,10 +121,24 @@ describe("room credentials", () => {
       "x1_" + rid + "_" + secret,
       "p1_" + rid,
       "p1_" + rid + "_" + secret + "_extra",
-      "p1_" + rid.toUpperCase() + "_" + secret,
     ]) {
       expect(parseToken(bad as string | null), `${String(bad)} parsed`).toBeNull();
     }
+  });
+
+  /**
+   * This case used to upper-case the random `rid`. A room id is 16 hex
+   * digits, and one with no letter in it - 0.625^16, about one in 1,850 -
+   * upper-cases to itself, so the "malformed" token was a valid one and the
+   * test failed. It did, once, with 9654440879671251. A fixed id that has
+   * letters makes the case what it says it is, and the valid lower-case twin
+   * shows it is refused for its case and nothing else.
+   */
+  it("rejects a room id in upper case", () => {
+    const lettered = "a1b2c3d4e5f60718";
+    expect(parseToken("p1_" + lettered + "_" + secret), "the lower-case twin should parse").not.toBeNull();
+    expect(lettered.toUpperCase(), "the fixed id upper-cases to itself").not.toBe(lettered);
+    expect(parseToken("p1_" + lettered.toUpperCase() + "_" + secret)).toBeNull();
   });
 
   it("gives every room a different id and secret", () => {

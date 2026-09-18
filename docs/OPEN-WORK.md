@@ -1063,6 +1063,11 @@ fixed**, the last two on 2026-09-15.
   that could not be checked is now asked about again on its own clock - 30 s,
   doubling to 5 min - and never one the provider actually rejected.
 
+- ~~**A hosted-relay test failed about one run in 1,850.**~~ Fixed 2026-09-18.
+  Its "malformed" credential upper-cased a random hex room id, and one with
+  no letter in it upper-cases to itself and stays valid. The case uses a fixed
+  id with letters now, beside its valid lower-case twin.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
