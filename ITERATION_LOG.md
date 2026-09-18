@@ -4156,3 +4156,20 @@ does not, on a picker refilled in place. The app was right and the test was
 reading a world that does not exist, so `fillSelect` now sets the value
 outright - a no-op in Chromium - with its own test, and only then did the
 setup test go red for the reason it was written for.
+
+**37 - The coach, tagged TEAM.** Speaker names and colours are stored per
+slot, parallel to the source list, and the list is compacted - a slot set to
+"No second source", or a device not plugged in at launch. Nothing re-indexed
+the names, so the device that moved up took the removed one's: the coach's
+every line reached viewers and the saved transcript tagged TEAM in TEAM's
+colour, and COACH sat in the emptied slot for whatever went there next. The
+fix is in `ConfigStore`, which every write of the list passes through: when
+the list changes shape, names and colours are re-laid to follow their
+devices, trimmed to the list's length. The rule that took thought is the
+swap - replacing the chat-mix device with another keeps the name TEAM,
+because the slot still means the same thing - so a new device inherits its
+slot's name only when the device it replaced is gone, and otherwise starts
+blank. Three tests went red on the old store and three held what must not
+change; four mutations, each red. A config already written with shifted
+names by an older version cannot be told apart from one named that way on
+purpose, so it is left as it is.

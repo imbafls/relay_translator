@@ -851,6 +851,15 @@ fixed**, the last two on 2026-09-15.
   Chromium: an option marked selected before it is appended is honoured by
   one and not the other, so `fillSelect` now sets the value outright.
 
+- ~~**A removed source's name and colour went to the device after it.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. Speaker names and
+  colours are stored per slot, and the source list is compacted when a slot
+  is emptied or a device is gone at launch - so the next device moved up and
+  took the removed one's name: the coach tagged TEAM in TEAM's colour, to
+  viewers and in the saved transcript. `ConfigStore` now re-lays both to
+  follow their devices whenever the list changes shape; a device swapped in
+  place keeps its slot's name, and a patch that sets names itself still wins.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

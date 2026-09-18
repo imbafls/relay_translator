@@ -341,3 +341,73 @@ describe("the legacy pair and the source list", () => {
     expect(store.get().sources).toEqual(["default-mic"]);
   });
 });
+
+/**
+ * Speaker names and colours, when the source list changes shape.
+ *
+ * Both are stored per slot, parallel to `sources`, and `sources` gets
+ * compacted - a slot set to "No second source", or a device that was not
+ * plugged in at launch, closes the gap. Nothing re-indexed the names, so the
+ * device that moved up took the removed one's name and colour: the coach's
+ * every line tagged TEAM in TEAM's colour, to viewers and in the saved
+ * transcript, and COACH left waiting in slot 3 for the next device put there.
+ * They follow the device now; a device swapped in place keeps its slot's.
+ */
+describe("speaker names when the source list changes shape", () => {
+  const named = (store: ConfigStore): void => {
+    store.update({
+      sources: ["headset", "discord", "coach"],
+      sourceLabels: ["ME", "TEAM", "COACH"],
+      sourceColors: ["#111111", "#222222", "#333333"],
+    });
+  };
+
+  it("keeps each name with its device when a middle one is removed", () => {
+    const store = new ConfigStore(dir);
+    named(store);
+    store.update({ sources: ["headset", "coach"] });
+
+    expect(store.get().sourceLabels, "the coach took the removed device's name").toEqual(["ME", "COACH"]);
+    expect(store.get().sourceColors).toEqual(["#111111", "#333333"]);
+    expect(new ConfigStore(dir).load().sourceLabels, "and on disk").toEqual(["ME", "COACH"]);
+  });
+
+  it("keeps a slot's name when its device is swapped for another", () => {
+    const store = new ConfigStore(dir);
+    named(store);
+    store.update({ sources: ["headset", "voicemeeter", "coach"] });
+    expect(store.get().sourceLabels).toEqual(["ME", "TEAM", "COACH"]);
+  });
+
+  it("moves the names with the devices when they are reordered", () => {
+    const store = new ConfigStore(dir);
+    named(store);
+    store.update({ sources: ["headset", "coach", "discord"] });
+    expect(store.get().sourceLabels).toEqual(["ME", "COACH", "TEAM"]);
+    expect(store.get().sourceColors).toEqual(["#111111", "#333333", "#222222"]);
+  });
+
+  it("does not hand a removed device's name to the next one put in its place", () => {
+    const store = new ConfigStore(dir);
+    named(store);
+    store.update({ sources: ["headset", "coach"] });
+    store.update({ sources: ["headset", "coach", "new-usb"] });
+    expect(store.get().sourceLabels).toEqual(["ME", "COACH", ""]);
+  });
+
+  // a caller that names the labels itself knows what it wants
+  it("lets a patch that sets the names say what they are", () => {
+    const store = new ConfigStore(dir);
+    named(store);
+    store.update({ sources: ["headset", "coach"], sourceLabels: ["A", "B"] });
+    expect(store.get().sourceLabels).toEqual(["A", "B"]);
+  });
+
+  it("leaves the names alone when the list does not change", () => {
+    const store = new ConfigStore(dir);
+    named(store);
+    store.update({ profanityFilter: false });
+    store.update({ sources: ["headset", "discord", "coach"] });
+    expect(store.get().sourceLabels).toEqual(["ME", "TEAM", "COACH"]);
+  });
+});

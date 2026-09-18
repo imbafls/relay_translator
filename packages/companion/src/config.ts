@@ -191,5 +191,37 @@ function syncSources(cfg: AppConfig, patch: Partial<AppConfig>, before: string[]
   // an older build reads only the pair, so leave it pointing at the first two
   out.audioSource = out.sources[0] ?? "";
   out.audioSource2 = out.sources[1] ?? "";
+
+  // Names and colours are stored per slot, and the list above is compacted
+  // when a slot is emptied or its device is gone - so without this the device
+  // that moved up took the removed one's name and colour, to viewers and in
+  // the saved transcript. A patch that sets them itself knows what it wants.
+  const after = out.sources;
+  if (after.length !== before.length || after.some((id, i) => id !== before[i])) {
+    if (!Object.prototype.hasOwnProperty.call(patch, "sourceLabels")) {
+      out.sourceLabels = followDevices(before, after, out.sourceLabels);
+    }
+    if (!Object.prototype.hasOwnProperty.call(patch, "sourceColors")) {
+      out.sourceColors = followDevices(before, after, out.sourceColors);
+    }
+  }
   return out;
+}
+
+/**
+ * Per-slot values re-laid for a new source list: each follows its device.
+ * A device new to the list takes the old slot's value only when it replaced
+ * a device that is gone - swapping the chat-mix device keeps the name TEAM -
+ * and otherwise starts blank, which means the slot's default. The result is
+ * exactly as long as the list, so no stale name waits in an empty slot for
+ * the next device put there.
+ */
+function followDevices(before: string[], after: string[], values: string[] | undefined): string[] | undefined {
+  if (!values) return values;
+  return after.map((id, j) => {
+    const was = before.indexOf(id);
+    if (was >= 0) return values[was] ?? "";
+    const replaced = before[j];
+    return replaced !== undefined && !after.includes(replaced) ? values[j] ?? "" : "";
+  });
 }
