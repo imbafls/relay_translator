@@ -3686,3 +3686,33 @@ limitations, or in the limitations themselves, and nowhere else. Built up in
 stages so every half was seen failing - no section at all, then B6 left out,
 then the cost hint still loose under Other, then finding 17 still in its table
 - before it went green.
+
+**8-11 - The discovery pass, and what it found.** Phase 2 ends with one pass
+over the three surfaces a user touches: the phone and OBS viewer page, the
+desktop renderer, and the hosted Worker. The first attempt, three reviewers
+in parallel, was lost when the app quit mid-run. It was re-run as a workflow:
+two finders per surface reading through different lenses, three skeptics per
+finding (one tracing the code path, one hunting for an existing defence, one
+asking whether the trigger can really happen), and a completeness critic per
+surface told what had already been found. The landing page was read directly
+and came back clean.
+
+It found 36 things and every one survived its skeptics - 34 unanimously. Two
+were the same bug seen from two sides (a relay address ending in `/` makes the
+uplink dial `//ws/uplink` and retry for ever), so 35 cards, tagged
+`discovery-1.0` on the board: two that matter most - GET AN ADDRESS during a
+live session silently ending captions under ON AIR, and STOP pressed while a
+session is still preparing being undone - then eighteen medium and fifteen
+low, from a late translation resurrecting a trimmed line to a slider with no
+accessible name.
+
+A skeptic agreeing is not a reproduction. Each card is written so the next
+iteration starts from its test idea; it counts once its guard test has gone
+red for the stated reason, and if it will not go red it is closed as not
+reproduced, with the reason. Unanimity from skeptics on 36 of 36 is itself a
+reason to hold that line.
+
+Found while carding them: the triage guard written in iteration 7 inspects
+`## Not blocked` for loose open items, so a new `##` section of live bullets
+would pass it unnoticed - the fifth lesson, one level up. Recorded on the
+release card to close alongside the discovery work.
