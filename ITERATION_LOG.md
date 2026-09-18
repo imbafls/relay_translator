@@ -3837,3 +3837,21 @@ is a separate card with a harder rule; for "not coming" there is nothing
 waiting, so it is simply ignored. The desktop stage keeps its own "…" for a
 failed line - carded, because the same signal on the publisher path would also
 write into the saved transcript.
+
+**19 - A translation that lands after its line has gone, and the rule that
+tells.** Gemini's retries put a translation 5-22 s behind its line; on a fast
+stream the viewer has trimmed the row by then, and the page took the
+translation for a new line - the old sentence came back as the newest
+caption and the half-caption being spoken was deleted. The first fix was a
+high-water mark: ignore a translation for a missing id at or below the newest
+line shown. It was green, and a reviewer showed it wrong: a viewer that never
+received a line - a fresh join, a heartbeat reconnect, an uplink gap across its
+source - can hold newer lines, and would now lose that one outright. Another
+showed the tests could not tell the rule from cruder ones, since every build
+case ran with the mark at zero on one channel. The rule became identity: the
+page remembers the ids it let go of (the last 256, cleared when a new session
+restarts the numbering) and ignores a translation only for one of those. Five
+mutations, five reds - including swapping in the high-water rule, which fails
+the never-seen test, and a lowest-id-held rule, which fails a two-source test
+where the ids finish out of order. The desktop stage has the same shape and is
+carded.

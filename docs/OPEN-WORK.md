@@ -665,6 +665,16 @@ fixed**, the last two on 2026-09-15.
   puts a lone "…" on air. The desktop stage's own placeholder is a separate
   card: its signal would also feed the saved transcript.
 
+- ~~**A late translation brought back a line the viewer had already
+  trimmed.**~~ Fixed 2026-09-18, found by the 1.0 discovery pass. Gemini's
+  retries put a translation 5-22 s behind its line, and on a fast stream the
+  row was gone by then; the page took the translation for a new line, put the
+  old sentence up as the newest caption and deleted the half-caption being
+  spoken. The page now remembers the ids it let go of and ignores a
+  translation for one - by identity, not by numbering, because a line a viewer
+  never received (a join, a reconnect, an uplink gap) can be older than what
+  is on screen and still has to build. The desktop stage's version is a card.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

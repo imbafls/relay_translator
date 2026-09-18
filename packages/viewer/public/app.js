@@ -333,6 +333,15 @@
   const rows = new Map();
   /** one open interim line per capture channel (two sources -> two) */
   const interims = new Map();
+  /**
+   * Ids this page showed and has let go of, so a translation that lands after
+   * its line has been trimmed can be told from one for a line never seen - see
+   * showSubtitle. Only the recent ones matter: a translation is at most ~22 s
+   * behind its line, so the set keeps the last few hundred and a stream running
+   * for hours does not grow it.
+   */
+  const letGo = new Set();
+  const LET_GO_KEPT = 256;
 
   function stamp() {
     const d = new Date();
@@ -410,9 +419,19 @@
     while (finals.length > style.lines) {
       const el = finals.shift();
       if (!el) break;
-      for (const [id, r] of rows) if (r === el) rows.delete(id);
+      for (const [id, r] of rows) {
+        if (r !== el) continue;
+        rows.delete(id);
+        forget(id);
+      }
       el.remove();
     }
+  }
+
+  /** see `letGo` */
+  function forget(id) {
+    letGo.add(id);
+    if (letGo.size > LET_GO_KEPT) letGo.delete(letGo.values().next().value);
   }
 
   /** the newest final line is the last one in the list (ids are reserved per channel, so DOM order wins) */
@@ -558,6 +577,8 @@
     if (previous === undefined || previous === epoch) return;
     for (const el of rows.values()) el.remove();
     rows.clear();
+    // the ids start again, so an id let go of means nothing any more
+    letGo.clear();
     clearInterims();
   }
 
@@ -568,6 +589,12 @@
     // run out - so the row has often been trimmed by then, and treating it as a
     // new line put the stale line back on air and deleted the one being spoken.
     if (!el && msg.target === "") return;
+    // A translation for a line this page showed and has since let go of: its
+    // line was trimmed while Gemini retried, 5-22 s behind. Taking it for a new
+    // line rebuilt the old sentence as the newest caption and deleted the one
+    // being spoken. A line the page never received - a join, a reconnect, an
+    // uplink gap across its source - is not in the set, and still builds.
+    if (!el && msg.target != null && letGo.has(msg.id)) return;
     if (!el) {
       const ch = msg.channel || 0;
       const interim = interims.get(ch);

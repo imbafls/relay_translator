@@ -1789,3 +1789,95 @@ describe("a line whose translation is not coming", () => {
     expect(row?.querySelector(".tgt")?.textContent).toBe("…");
   });
 });
+
+/**
+ * A translation that lands after its line has gone.
+ *
+ * Gemini's retries put a translation 5-22 s behind its line under a 429 or a
+ * timeout, and on a fast stream the page has trimmed that line by then -
+ * trimRows drops the id from `rows`, so the page keeps no record it was shown.
+ * showSubtitle then took the translation for a new line: it rebuilt the old
+ * sentence at the bottom as the newest caption (and the OBS overlay's line on
+ * air), pushed the oldest real line off, and deleted the half-caption being
+ * spoken on that channel.
+ *
+ * The rule has to tell "trimmed" from "never seen". A viewer that joined in
+ * the middle of a line, reconnected across it, or sat behind an uplink gap
+ * gets its translation without its source - and for that viewer the line is
+ * news, so building its row is right. The numbering cannot separate them: a
+ * missed line can be older than lines already on screen, and with two sources
+ * the ids are reserved per channel and finish out of order. So the page
+ * remembers the ids it actually let go of, and forgets them when a new session
+ * restarts the numbering.
+ */
+describe("a translation that lands after its line has gone", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  const keepThree = (): void => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify({ lines: 3 }));
+    boot();
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true, epoch: 100 });
+  };
+  const latest = (): string =>
+    document.querySelector("#lines .row.latest .src .txt")?.textContent ?? "";
+
+  it("does not bring the line back as the newest caption", () => {
+    keepThree();
+    for (let id = 1; id <= 4; id += 1) push({ type: "subtitle", id, source: `line ${id}`, final: true, channel: 0 });
+    push({ type: "partial", id: 5, source: "still talking", channel: 0 });
+
+    push({ type: "subtitle", id: 1, source: "line 1", target: "dong 1", final: true, channel: 0 });
+
+    const finished = [...document.querySelectorAll("#lines .row:not(.interim) .src .txt")].map((n) => n.textContent);
+    expect(finished, "a trimmed line came back at the bottom, out of order").toEqual(["line 2", "line 3", "line 4"]);
+    expect(latest(), "the stale line became the newest caption").toBe("line 4");
+    expect(document.querySelector("#lines .row.interim"), "the half-caption being spoken was deleted").not.toBeNull();
+  });
+
+  it("still builds a line it never saw, even with newer lines on screen", () => {
+    keepThree();
+    // line 3's source went out while this viewer was reconnecting
+    push({ type: "subtitle", id: 1, source: "line 1", final: true, channel: 0 });
+    push({ type: "subtitle", id: 2, source: "line 2", final: true, channel: 0 });
+    push({ type: "subtitle", id: 4, source: "line 4", final: true, channel: 0 });
+    push({ type: "subtitle", id: 3, source: "line 3", target: "dong 3", final: true, channel: 0 });
+
+    expect(lineTexts(), "a line this viewer had never seen was thrown away").toContain("line 3");
+  });
+
+  it("tells them apart by what it let go of, not by the numbering, when two sources finish out of order", () => {
+    keepThree();
+    push({ type: "partial", id: 5, source: "fi", channel: 0 });
+    push({ type: "partial", id: 6, source: "si", channel: 1 });
+    push({ type: "subtitle", id: 6, source: "six", final: true, channel: 1 });
+    push({ type: "subtitle", id: 5, source: "five", final: true, channel: 0 });
+    push({ type: "subtitle", id: 7, source: "seven", final: true, channel: 1 });
+    push({ type: "subtitle", id: 8, source: "eight", final: true, channel: 0 });
+    // three kept, in the order they finished: six went first, five is still up
+    expect(lineTexts()).toEqual(["five", "seven", "eight"]);
+
+    push({ type: "subtitle", id: 6, source: "six", target: "sau", final: true, channel: 1 });
+
+    expect(lineTexts(), "a line let go of came back, because a lower id was still on screen").toEqual([
+      "five",
+      "seven",
+      "eight",
+    ]);
+  });
+
+  it("measures against the session on screen, not the one before it", () => {
+    keepThree();
+    for (let id = 1; id <= 5; id += 1) push({ type: "subtitle", id, source: `old ${id}`, final: true, channel: 0 });
+    // a new session: the ids start again and the rows are cleared
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true, epoch: 200 });
+    // missed the new line 2's source across a reconnect, then got its translation
+    push({ type: "subtitle", id: 2, source: "new two", target: "moi hai", final: true, channel: 0 });
+
+    expect(lineTexts(), "the previous session's numbering hid a line of this one").toEqual(["new two"]);
+  });
+});
