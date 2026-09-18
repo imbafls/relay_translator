@@ -177,8 +177,13 @@ The sweep runs from an alarm set when the room is claimed, under
 
 ## Still open
 
-- **An unexplained viewer socket, seen once** — **a cause now fits it, and the
-  room no longer holds one either way.** The first room the desktop app
+- ~~**An unexplained viewer socket, seen once**~~ — **closed 2026-09-18: a
+  cause fits it, and the room can no longer hold one either way.** Since
+  `dcaaded` the sweep also skips any socket the room has already closed, which
+  the runtime keeps handing back in CLOSING until the peer answers, so neither
+  a silent socket nor a closed one is counted. What follows is why it was open.
+
+  The first room the desktop app
   attached to reported one viewer with nothing watching; a room claimed after
   the subdomain change reported zero from the same app, so it was that object
   rather than the service.

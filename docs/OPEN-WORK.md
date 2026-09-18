@@ -469,8 +469,11 @@ fixed**, the last two on 2026-09-15.
   evidence it stopped mattering, and an idle room costs nothing because the
   billing is per request. The alarm also declines to fire while a socket is
   open, since `shouldReap` takes a record and cannot see a live connection.
-- **An unexplained viewer socket, seen once** on the hosted relay. Also in that
-  README, with the full note.
+- ~~**An unexplained viewer socket, seen once** on the hosted relay.~~ Closed
+  2026-09-18. Never proven - the room it was seen in is gone - but it can no
+  longer happen whatever caused it: `liveViewers()` drops a socket silent for
+  70 s and, since `dcaaded`, never counts one the room has closed. The full
+  note is in `apps/hosted-relay/README.md`.
 - ~~The self-hosted relay's `isLive()` answered ON AIR before any hello~~ -
   **fixed 2026-09-10 in v0.8.0, together with the `stamp()` asymmetry below, as
   this note asked; see "Closed by v0.8.0" above.** The original note follows.

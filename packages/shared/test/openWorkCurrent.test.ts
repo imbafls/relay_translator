@@ -101,6 +101,36 @@ describe("what the backlog still calls open", () => {
     ).toEqual([]);
   });
 
+  /**
+   * The phantom viewer: one room reported a reader with nothing watching, and
+   * both this file and the hosted README carried it as unexplained and open.
+   * A cause was found to fit - a phone gone without a FIN, its socket held by a
+   * room that has no timer - and never proven, because the room was gone.
+   *
+   * It does not need proving any more to be closed. The count cannot be held
+   * up: `liveViewers()` drops a socket silent past `VIEWER_SILENT_MS`, and skips
+   * one the room has already closed, so whatever held that socket would now be
+   * let go on the next wake-up. An open entry telling the next session to chase
+   * it sends them after something the code no longer permits.
+   */
+  it("does not call the phantom viewer open, when no socket can hold the count up", () => {
+    const roomSrc = fs.readFileSync(path.join(root, "apps", "hosted-relay", "src", "room.ts"), "utf8");
+    const sweeps =
+      /now - last\.getTime\(\) < VIEWER_SILENT_MS/.test(roomSrc) &&
+      /if \(ws\.readyState !== READY_OPEN\) continue;/.test(roomSrc);
+    if (!sweeps) return;
+
+    const readme = fs.readFileSync(path.join(root, "apps", "hosted-relay", "README.md"), "utf8");
+    const offenders = [...liveEntries(doc()), ...liveEntries(readme)].filter((e) =>
+      /unexplained viewer socket/i.test(e),
+    );
+    expect(
+      offenders,
+      "room.ts drops a viewer that has been silent past VIEWER_SILENT_MS and never counts one it closed, " +
+        `but a backlog still lists the phantom viewer as open:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+  });
+
   it("found entries to check, so the two assertions above mean something", () => {
     const live = liveEntries(doc());
     expect(live.length).toBeGreaterThan(3);

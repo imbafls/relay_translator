@@ -3658,3 +3658,16 @@ guard never saw it. A second guard now finds the block by what it quotes
 rather than where it sits, and requires it verbatim in the workflow: red on
 the abridged copy, green on the real one, and red again when the dispatch half
 was taken out of the workflow instead.
+
+**6 - Closing what can no longer happen.** "An unexplained viewer socket, seen
+once" sat as open in `docs/OPEN-WORK.md` and under "Still open" in the hosted
+README, while the README's own text said a cause now fits it and the count
+corrects itself. It was never proven - the room it was seen in is gone - and
+it does not need to be: the sweep drops a socket silent past 70 s, and since
+`dcaaded` never counts one the room has closed, so whatever held that socket
+would be let go on the next wake-up. An open entry sends the next session to
+chase something the code no longer permits. `openWorkCurrent.test.ts` already
+held two entries to the code this way; a third asks `room.ts` for both halves
+of the sweep and then refuses a live entry, in either document, that calls
+the phantom viewer open. Red with both entries live, still red on the README
+once the backlog alone was struck, green with both closed.
