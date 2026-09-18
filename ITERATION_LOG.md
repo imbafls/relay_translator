@@ -3922,3 +3922,20 @@ away, is answered in place: the models field says DOWNLOAD ... FIRST · ON AIR
 in amber for a few seconds. A downloaded model still switches live without
 rotating the link, and a test holds it. Five parts, each removed in turn -
 including the too-broad lock - each turning a test red.
+
+**24 - Buttons rebuilt under the pointer.** While a model downloads, main
+pushes status about four times a second, and the model list - in SETTINGS
+and on setup step 1 - was emptied and rebuilt on each one. A click is a press
+and a release on the same element, and Chromium drops it when the pressed one
+was removed in between, so CANCEL, and DOWNLOAD or REMOVE on another row,
+did nothing a good share of the time during any download. Each row now
+carries its shape - model, what it offers, whether it is picked - and a push
+that changes no shape only moves the percentage. Mutating each part turned a
+test red except one: leaving the pick out of the shape survived, because
+nothing checked that the highlight moves when another model is picked. That
+test first failed on the unchanged code too, which was the harness rather
+than the product - main answers a save with a status push, and the test had
+not - so it now pushes as main does, and the mutation goes red. A line
+refreshing the row's pick handler in place was taken out rather than kept:
+every caller's handler behaves the same across renders, so it was a claim
+nothing could check.

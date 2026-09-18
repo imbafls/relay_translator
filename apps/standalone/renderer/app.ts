@@ -1727,17 +1727,45 @@ function pickSettingsModel(id: string): void {
 }
 /**
  * One row per local model: pick (radio), download / cancel / remove, progress.
- * Rendering is idempotent so status broadcasts can redraw it freely.
+ *
+ * Status broadcasts redraw it - about four a second while a download runs -
+ * and it used to be rebuilt whole on each one, swapping every button out from
+ * under the pointer. A click is a press and a release on the same element, and
+ * Chromium drops it when the pressed element was removed in between, so
+ * CANCEL, and DOWNLOAD or REMOVE on another row, did nothing a good share of
+ * the time during any download. The list is now rebuilt only when what some
+ * row offers changes - a download starting, finishing or failing, or the pick
+ * moving - which is rare; a push that only moves a percentage moves it in
+ * place.
  */
 function renderModelList(
   box: HTMLElement,
   opts: { picked: string; pick: (id: string) => void; tier?: ModelTier },
 ): void {
+  const models = modelsInTier(opts.tier);
+  const shapeOf = (m: SttModelInfo): string => {
+    const st = modelState(m.id);
+    const offers = st?.progress != null ? "downloading" : st?.downloaded ? "ready" : st?.error ? `error:${st.error}` : "none";
+    return `${m.id}|${offers}|${opts.picked === m.id ? "picked" : ""}`;
+  };
+  const drawn = [...box.children] as HTMLElement[];
+  if (drawn.length === models.length && drawn.every((row, i) => row.dataset.shape === shapeOf(models[i]!))) {
+    models.forEach((m, i) => {
+      const progress = modelState(m.id)?.progress;
+      if (progress == null) return;
+      const fill = drawn[i]!.querySelector<HTMLElement>(".bar i");
+      const pct = drawn[i]!.querySelector<HTMLElement>(".act .state");
+      if (fill) fill.style.width = `${progress}%`;
+      if (pct) pct.textContent = `${progress}%`;
+    });
+    return;
+  }
   box.innerHTML = "";
-  for (const m of modelsInTier(opts.tier)) {
+  for (const m of models) {
     const st = modelState(m.id);
     const row = document.createElement("div");
     row.className = "model-row" + (opts.picked === m.id ? " picked" : "");
+    row.dataset.shape = shapeOf(m);
     const radio = document.createElement("span");
     radio.className = "radio";
     const body = document.createElement("div");

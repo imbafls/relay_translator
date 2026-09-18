@@ -3451,3 +3451,95 @@ describe("the SETTINGS model list during a live session", () => {
     ).not.toContain("stop the session to switch");
   });
 });
+
+/**
+ * A model list rebuilt under the pointer.
+ *
+ * While a model downloads, main pushes status about four times a second, and
+ * every push rebuilt the whole list - rows, bars and buttons - in SETTINGS and
+ * on setup step 1. A click is a press and a release on the same element, and
+ * Chromium does not deliver it when the pressed element was removed in
+ * between: a quarter of a second is well inside a normal click, so CANCEL,
+ * and DOWNLOAD or REMOVE on another row, simply did nothing a good share of
+ * the time while any download ran. It looked like the buttons were broken.
+ *
+ * A push that only moves a percentage now moves it in place, and the row is
+ * rebuilt only when what it offers changes.
+ */
+describe("the model list while a download is running", () => {
+  const ID = "local-zipformer-en-20m";
+  const status = (models: typeof fakeModels) => ({
+    companion: { version: "0.8.0" },
+    session: { state: "idle" },
+    relay: { mode: "embedded", url: "ws://127.0.0.1:8787", viewers: 0, remoteViewers: 0 },
+    devices: [],
+    config: { ...DEFAULT_CONFIG, setupDone: true },
+    localModels: models,
+  });
+  const cancelIn = (box: string): HTMLButtonElement | undefined =>
+    [...document.querySelectorAll<HTMLButtonElement>(`#${box} .model-row button`)].find((b) => b.textContent === "CANCEL");
+
+  it("keeps the button under the pointer when only the percentage moves, in SETTINGS", async () => {
+    fakeModels = [{ id: ID, downloaded: false, sizeMb: 44, progress: 12 } as (typeof fakeModels)[number]];
+    await bootWith({ setupDone: true });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+    const before = cancelIn("settingsModels");
+    expect(before, "no CANCEL on the downloading model").toBeDefined();
+
+    pushStatus?.(status([{ id: ID, downloaded: false, sizeMb: 44, progress: 13 } as (typeof fakeModels)[number]]));
+
+    expect(before?.isConnected, "the CANCEL a click was pressed on was thrown away by a progress tick").toBe(true);
+    expect(cancelIn("settingsModels")).toBe(before);
+    expect(before?.closest(".model-row")?.textContent, "the percentage did not move").toContain("13%");
+  });
+
+  it("keeps it on setup step 1 too", async () => {
+    const locals = STT_MODELS.filter((m) => m.provider === "local");
+    fakeModels = locals.map((m) => ({ id: m.id, downloaded: false, sizeMb: 10, progress: 12 }) as (typeof fakeModels)[number]);
+    await bootWith({ setupDone: false });
+    (document.querySelector('#obSttSeg [data-value="local"]') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+    const before = cancelIn("obModels");
+    expect(before, "no CANCEL in setup's list").toBeDefined();
+
+    pushStatus?.(status(locals.map((m) => ({ id: m.id, downloaded: false, sizeMb: 10, progress: 13 }) as (typeof fakeModels)[number])));
+
+    expect(before?.isConnected, "setup's CANCEL was thrown away by a progress tick").toBe(true);
+    expect(cancelIn("obModels")).toBe(before);
+  });
+
+  // the rows that stay put must still move the highlight when another model is
+  // picked - the one change a row's buttons do not show
+  it("still moves the highlight to the model picked", async () => {
+    const [first, second] = STT_MODELS.filter((m) => m.provider === "local");
+    fakeModels = [first!, second!].map((m) => ({ id: m.id, downloaded: true, sizeMb: 10 }));
+    await bootWith({ setupDone: true, stt: first!.id });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>("#settingsModels .model-row")];
+    rows()[1]!.click();
+    await waitFor(() => calls.setConfig.some((p) => p.stt === second!.id), "the pick to be saved");
+    // main answers a save with a status push, and that push is what redraws
+    // the list - the model states in it have not changed, only the pick
+    pushStatus?.(status(fakeModels));
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(rows()[1]!.classList.contains("picked"), "the model just picked is not highlighted").toBe(true);
+    expect(rows()[0]!.classList.contains("picked"), "the old model is still highlighted").toBe(false);
+  });
+
+  it("still redraws the row when the download finishes", async () => {
+    fakeModels = [{ id: ID, downloaded: false, sizeMb: 44, progress: 99 } as (typeof fakeModels)[number]];
+    await bootWith({ setupDone: true });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+
+    pushStatus?.(status([{ id: ID, downloaded: true, sizeMb: 44 }]));
+
+    const buttons = [...document.querySelectorAll("#settingsModels .model-row button")].map((b) => b.textContent);
+    expect(buttons, "a finished download still offers CANCEL").not.toContain("CANCEL");
+    expect(document.querySelector("#settingsModels")?.textContent, "the finished model does not say READY").toContain("READY");
+  });
+});

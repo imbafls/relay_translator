@@ -712,6 +712,14 @@ fixed**, the last two on 2026-09-15.
   seconds; a downloaded model still switches live and keeps the viewer link,
   which SETTINGS is the only way to do. Re-picking the model in use is a no-op.
 
+- ~~**During a download, the model list's buttons often ignored clicks.**~~
+  Fixed 2026-09-18, found by the 1.0 discovery pass. Status arrives about four
+  times a second while a model downloads, and every push rebuilt the list in
+  SETTINGS and on setup step 1 - so a click pressed on CANCEL (or another
+  row's DOWNLOAD or REMOVE) was often released on a replacement, and Chromium
+  drops a click whose pressed element was removed. A push that only moves a
+  percentage now moves it in place.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`
