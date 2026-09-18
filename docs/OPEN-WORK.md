@@ -515,6 +515,27 @@ fixed**, the last two on 2026-09-15.
   before — nothing exploits it while `isLive()` ignores `liveSince` from a
   hello in the first place.
 
+### Found on the way to 1.0
+
+- ~~**A replaced publisher's close ended the stream it had been replaced
+  in.**~~ Fixed 2026-09-18. The hosted room allows one uplink and closes the old
+  one when a new one connects - every network blip, embedded-relay restart and
+  idle settings change - and `webSocketClose` in `apps/hosted-relay/src/room.ts`
+  treated that close as the publisher leaving: room marked not live, every
+  viewer told "stream ended", under a publisher still streaming. It now returns
+  early while another uplink is attached **and OPEN**. The second half matters:
+  `getWebSockets` keeps returning a socket the takeover closed until its peer
+  answers, and a peer that has gone never does, so counting CLOSING sockets
+  would have left a room on ON AIR for good once the real publisher left.
+  Guarded in `apps/hosted-relay/test/viewerReap.test.ts`.
+- **A half-open viewer is "dropped" again on every caption.** Same runtime
+  fact, other tag: `liveViewers()` in `apps/hosted-relay/src/room.ts` closes a
+  silent viewer and counts it dropped, but a socket whose peer vanished stays in
+  `getWebSockets("viewer")` as CLOSING, so every later broadcast closes it again,
+  counts it again, and sends the uplink a fresh `viewers` message - one per
+  caption for as long as the runtime holds it. The count itself stays right;
+  the chatter and the wasted work are what is wrong.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

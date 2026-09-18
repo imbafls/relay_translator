@@ -3566,3 +3566,34 @@ and how far the renderer's structure should be taken. Every one is the owner's
 call rather than the loop's, which is why the loop's own completion condition -
 an empty board - was never reachable, and it said so rather than emptying the
 board to reach it.
+
+### The 1.0 release loop
+
+A second Ralph loop, run from `_handoff/RELEASE-1.0-RALPH.md`: land what was in
+flight, clear or explicitly defer the backlog, then cut and ship v1.0.0. One
+unit of work per iteration, one entry here per iteration.
+
+**1 - The replaced publisher, and the corpse it left behind.** Landed the fix
+the improvement loop left uncommitted: a hosted room's replaced uplink closing
+no longer tells every viewer "stream ended" under the publisher that replaced
+it. Reverting `room.ts` alone turned its test red on exactly that message. But
+the fix asked "is any other uplink attached", and Cloudflare's documentation for
+`getWebSockets` says it keeps returning a socket after `ws.close()` until the
+peer answers - CLOSING, for a peer that has gone, which is what a network blip
+leaves and a network blip is what causes the takeover. So the guard would have
+counted a corpse, and the real publisher's later close would have ended
+nothing: a room stuck on ON AIR. A third test holds that case, watched red
+against the in-flight fix before the guard learned to count only OPEN sockets.
+The same fact on the viewer side - a half-open viewer re-"dropped" on every
+caption - went into `docs/OPEN-WORK.md` rather than into this commit.
+
+The gate was red before any of that could be committed, and not because of it:
+`pnpm test` passed all 1459 tests and exited 1 on eleven unhandled errors from
+`packages/viewer/test/viewer.test.ts`. Every boot there evaluates `app.js`,
+whose clock is a `setInterval` a real page never clears, so each test left one
+running. Alone the file finishes inside a second and none fire; in the full
+suite it does not, and a tick landing between teardown and the next boot threw
+into an empty body. A guard test that tears a page down and waits a second
+watched the dead page write `00:00:00` into markup it no longer owned; the
+harness now stops every timer a page armed when the page ends. Committed first,
+separately, since it is a different effect.

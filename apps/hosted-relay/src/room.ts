@@ -164,6 +164,9 @@ const CLOSE_REPLACED = 4409;
  */
 const CLOSE_SILENT = 4408;
 
+/** `WebSocket.readyState` for a socket that can still send and be sent to */
+const READY_OPEN = 1;
+
 /**
  * How long a viewer may go silent before its socket is treated as gone.
  *
@@ -517,6 +520,27 @@ export class Room {
 
   async webSocketClose(ws: WebSocket): Promise<void> {
     if (this.ctx.getTags(ws).includes(TAG_UPLINK)) {
+      // A publisher that was REPLACED is not a stream ending. One uplink per
+      // room, so a second one closes the first and takes over - which is what
+      // happens on every network blip, every embedded-relay restart and every
+      // settings change while the app sits in the tray. Without this, the
+      // replaced socket's close marks the room not live and tells everybody
+      // watching "stream ended" while the publisher that replaced it is
+      // connected and streaming.
+      //
+      // `packages/relay/src/server.ts` reached the same rule for the same
+      // event and says it where it accepts a new uplink: the replaced one's
+      // "own close handler no longer matches `uplink === ws` to clear it".
+      // Here the equivalent question is whether any uplink is still attached,
+      // because this object identifies them by tag rather than by identity.
+      //
+      // Attached means OPEN. `getWebSockets` keeps handing back a socket the
+      // takeover already closed for as long as its peer has not answered - it
+      // sits in CLOSING, and a peer that stopped answering is what a network
+      // blip leaves behind. Counting that socket would make the real
+      // publisher's close, whenever it comes, end nothing.
+      if (this.sockets(TAG_UPLINK).some((s) => s !== ws && s.readyState === READY_OPEN)) return;
+
       const room = await this.load();
       if (room && room.live) {
         room.live = false;

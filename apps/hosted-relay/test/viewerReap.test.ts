@@ -45,6 +45,8 @@ interface Sock {
   beat: Date | null;
   /** the runtime stops handing back a socket once it is closed, and so does this */
   open: boolean;
+  /** 1 OPEN, 2 CLOSING, 3 CLOSED - the WebSocket readyState the runtime reports */
+  readyState: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
 }
@@ -56,12 +58,14 @@ function socket(tag: string, beat: Date | null): Sock {
     closed: [],
     beat,
     open: true,
+    readyState: 1,
     send(data: string) {
       this.seen.push(JSON.parse(data) as Frame);
     },
     close(code?: number, reason?: string) {
       this.closed.push({ code, reason });
       this.open = false;
+      this.readyState = 3;
     },
   };
 }
@@ -234,5 +238,139 @@ describe("a stream running with a socket nobody closed", () => {
       "a room where nothing changed still sent the app a viewer count, so this fires on every caption of every " +
         "healthy stream",
     ).toBe(0);
+  });
+});
+
+/**
+ * The publisher that was replaced, and the stream it must not end.
+ *
+ * One publisher per room: a second uplink closes the first with
+ * `CLOSE_REPLACED` and takes over. That is not a stream ending - it is the same
+ * stream, carried by a socket that reconnected, which is what happens on every
+ * network blip, every embedded-relay restart and every settings change while
+ * the app sits in the tray.
+ *
+ * `webSocketClose` identified an uplink by its tag alone and had no notion of
+ * which socket is the current one, so the replaced socket's close marked the
+ * room not live and told every viewer "stream ended" - while the publisher that
+ * replaced it was connected and streaming.
+ *
+ * `packages/relay/src/server.ts` had already reached the rule for exactly this
+ * event, and says it where it accepts a new uplink: a new uplink has said
+ * nothing yet, "not the replaced one's last word, whose own close handler no
+ * longer matches `uplink === ws` to clear it". The hosted relay had no such
+ * guard.
+ */
+describe("a publisher replaced by a newer one", () => {
+  function twoUplinks() {
+    const older = socket(UPLINK, null);
+    const newer = socket(UPLINK, null);
+    const viewer = socket(VIEWER, new Date());
+    const all = [older, newer, viewer];
+
+    (globalThis as unknown as { WebSocketRequestResponsePair: unknown }).WebSocketRequestResponsePair =
+      class {
+        constructor(
+          readonly request: string,
+          readonly response: string,
+        ) {}
+      };
+
+    const store = new Map<string, unknown>([
+      [
+        "room",
+        {
+          publisherSecret: "p",
+          viewerSecret: "v",
+          languages: { source: "en", target: "vi" },
+          translates: true,
+          live: true,
+          lastSegId: 0,
+          createdAt: 1_788_000_000_000,
+        },
+      ],
+    ]);
+
+    const ctx = {
+      storage: {
+        get: async (key: string) => structuredClone(store.get(key)),
+        put: async (key: string, value: unknown) => void store.set(key, structuredClone(value)),
+      },
+      acceptWebSocket: () => undefined,
+      getWebSockets: (tag?: string) =>
+        (tag ? all.filter((s) => s.tags.includes(tag)) : all).filter((s) => s.open),
+      getTags: (ws: Sock) => ws.tags,
+      blockConcurrencyWhile: <T>(fn: () => Promise<T>) => fn(),
+      setWebSocketAutoResponse: () => undefined,
+      getWebSocketAutoResponseTimestamp: (ws: Sock) => ws.beat,
+    };
+
+    const room = new Room(ctx as unknown as ConstructorParameters<typeof Room>[0], {});
+    return {
+      room,
+      older,
+      newer,
+      viewer,
+      live: async (): Promise<boolean> =>
+        ((await ctx.storage.get("room")) as { live: boolean } | undefined)?.live === true,
+    };
+  }
+
+  it("does not end the stream the newer one is carrying", async () => {
+    const r = twoUplinks();
+    // the older socket is closed by the takeover, the way closeAll does it
+    r.older.close(4409, "replaced by new publisher");
+    await r.room.webSocketClose(r.older as never);
+
+    expect(
+      r.viewer.seen.filter((m) => m.type === "status"),
+      "every viewer was told the stream ended while the publisher that replaced this socket was connected " +
+        "and streaming - which is one blip of the app's network away",
+    ).toEqual([]);
+    expect(await r.live(), "the room was marked not live under a connected publisher").toBe(true);
+  });
+
+  it("still ends it when the last publisher goes", async () => {
+    const r = twoUplinks();
+    // both uplinks gone: this really is the stream ending
+    r.older.close();
+    r.newer.close();
+    await r.room.webSocketClose(r.newer as never);
+
+    expect(
+      r.viewer.seen.filter((m) => m.type === "status").map((m) => (m as { live?: boolean }).live),
+      "the last publisher left and nobody watching was told",
+    ).toEqual([false]);
+    expect(await r.live()).toBe(false);
+  });
+
+  /**
+   * The replaced socket that never finished closing.
+   *
+   * Cloudflare's own documentation for `getWebSockets`: it "may still return
+   * WebSockets even after `ws.close` has been called" - a server that sent its
+   * close and got none back holds that socket in CLOSING until it notices the
+   * disconnect. A peer that stopped answering is exactly what a network blip
+   * leaves behind, and a network blip is exactly what makes the app reconnect
+   * and replace it. So "is any other uplink attached" is true of a corpse, and
+   * the real publisher leaving afterwards would be answered by nothing at all:
+   * the room kept live, every viewer left under ON AIR with no stream behind it.
+   */
+  it("still ends it when the one it replaced has not finished closing", async () => {
+    const r = twoUplinks();
+    // the takeover's close went out and the half-open peer never answered it
+    r.older.close(4409, "replaced by new publisher");
+    r.older.open = true;
+    r.older.readyState = 2;
+    // then the publisher that replaced it really does go
+    r.newer.close();
+    await r.room.webSocketClose(r.newer as never);
+
+    expect(
+      r.viewer.seen.filter((m) => m.type === "status").map((m) => (m as { live?: boolean }).live),
+      "the last real publisher left and the room kept every viewer on ON AIR, because a socket already " +
+        "closed by the takeover was still being handed back in CLOSING",
+    ).toEqual([false]);
+    expect(await r.live()).toBe(false);
   });
 });

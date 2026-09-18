@@ -69,6 +69,11 @@ interface WebSocket {
   accept(): void;
   send(data: string | ArrayBuffer): void;
   close(code?: number, reason?: string): void;
+  /**
+   * 1 is OPEN. A socket this object closed stays in `getWebSockets` as CLOSING
+   * (2) until its peer answers, which a peer that has gone never does.
+   */
+  readonly readyState: number;
 }
 
 interface ResponseInit {
