@@ -2203,3 +2203,38 @@ describe("a wordless final on a page that has no interim", () => {
     });
   }
 });
+
+/**
+ * A half-caption that came to nothing, on the overlay.
+ *
+ * The overlay shows one line, and while somebody speaks that line is the open
+ * half-caption. When the utterance comes to nothing the engine sends a
+ * wordless final, which retires the half-caption - and returned before
+ * anything chose a line again, so nothing was on air: the overlay went blank
+ * over a finished line it could have shown, until the next caption. With
+ * "hide after" set to never, the line that should have stayed up for good
+ * never came back at all.
+ */
+describe("the overlay after a half-caption that came to nothing", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+  const live = (): HTMLElement | null => document.querySelector("#lines .row.obs-live");
+
+  it("puts the last finished line back on air", () => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify({ showSource: true }));
+    boot("?obs=1");
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: false });
+    push({ type: "subtitle", id: 1, source: "push B", final: true, channel: 0 });
+    push({ type: "partial", id: 2, source: "um", channel: 0 });
+    expect(live()?.classList.contains("interim"), "the half-caption was never on air, so this proves nothing").toBe(true);
+
+    push({ type: "subtitle", id: 2, source: "", final: true, channel: 0 });
+
+    expect(live(), "the overlay went blank over a finished line it could show").not.toBeNull();
+    expect(live()?.querySelector(".src")?.textContent).toContain("push B");
+  });
+});

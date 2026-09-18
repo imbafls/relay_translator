@@ -640,7 +640,13 @@
       // an EMPTY final is the engine saying that utterance came to nothing. It
       // exists to release the reserved id and retire the interim above -
       // rendering it would leave a blank row where the half-caption was.
-      if (!msg.source && !msg.target) return;
+      if (!msg.source && !msg.target) {
+        // and if that half-caption was the overlay's line, choose again: it
+        // returned here with nothing on air, a blank overlay over a finished
+        // line until the next caption - for good, with "hide after" at never
+        if (interim) markOverlayLine();
+        return;
+      }
       el = born(makeRowEl(stamp(), msg.source, msg.target, msg.speaker, msg.color));
       shownAt.set(el, Date.now());
       rows.set(msg.id, el);

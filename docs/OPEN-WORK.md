@@ -878,6 +878,13 @@ fixed**, the last two on 2026-09-15.
   being spoken gone. The stage now remembers the lines it let go of, as the
   viewer page does, and forgets them when a new session starts.
 
+- ~~**A half-caption that came to nothing left the OBS overlay blank.**~~
+  Fixed 2026-09-18, found by the review of the two-voice overlay fix. The
+  wordless final that retires the on-air half-caption returned before the
+  overlay chose a line again, so nothing was on air over a finished line it
+  could show - until the next caption, or for good with "hide after" at
+  never. It now chooses again whenever it retires one.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

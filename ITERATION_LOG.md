@@ -4202,3 +4202,14 @@ stage. The clearing is not decoration: ids restart with every session, and a
 test that stops and starts again goes red without it, as does one that never
 fills the set. A translation for a line the stage never received - a
 reconnect across its source - still builds, and a test holds that too.
+
+**40 - A blank overlay after "um".** The overlay shows one line, and while
+somebody speaks that line is the open half-caption. An utterance that comes
+to nothing ends in a wordless final, which retires the half-caption - and
+returned before anything chose the overlay's line again. Nothing carried the
+on-air mark, so the overlay was blank over a finished line it could have
+shown until the next caption, and with "hide after" set to never, for good.
+Found by the review of the two-voice fix and carded then; one call, made only
+when a half-caption was actually retired, so the earlier guarantee that a
+wordless final with no half-caption changes nothing still holds - and its
+test still passes beside this one, which went red first.
