@@ -315,4 +315,29 @@ describe("the legacy pair and the source list", () => {
     store.update({ profanityFilter: false });
     expect(store.get().sources).toEqual(["a", "b", "c"]);
   });
+
+  /**
+   * A patch that names the list, emptied, means none of those - not "go back
+   * to them". The pair is only ever the last list's mirror, so falling back to
+   * it when the new list is empty resurrected exactly the ids just removed. The
+   * app removes a source whose device is unplugged, and a user whose only
+   * source was a USB headset launched without it: "removed" in the log, the
+   * dead id written straight back, and every START failing on it.
+   */
+  it("gives an emptied list the default source, not the ids it just removed", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["gone-usb-headset"] });
+    store.update({ sources: [] });
+
+    expect(store.get().sources, "an emptied source list brought the removed device back").toEqual(["default-mic"]);
+    expect(store.get().audioSource).toBe("default-mic");
+    expect(new ConfigStore(dir).load().sources, "and wrote it to disk that way").toEqual(["default-mic"]);
+  });
+
+  it("does the same for two removed at once", () => {
+    const store = new ConfigStore(dir);
+    store.update({ sources: ["usb-a", "usb-b"] });
+    store.update({ sources: [] });
+    expect(store.get().sources).toEqual(["default-mic"]);
+  });
 });

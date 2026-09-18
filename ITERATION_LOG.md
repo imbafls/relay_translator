@@ -4073,3 +4073,19 @@ reported a clean tree. The existing CRLF check had parsed rows the same way
 for months; it only garbled its failure messages, and its fixture rows were
 written without the TAB git prints, so its own test could not notice. Both
 use the TAB now, and reverting to the column split turns both red.
+
+**32 - Removed, and written straight back.** Audit finding 7's fix drops a
+source whose device is no longer plugged in, and it works while at least one
+survives. A user whose only source is a USB headset, launching without it,
+got "audio source 1 is no longer connected - removed" in the log - and the
+dead headset back in the config, the picker blank, and every START failing
+on it. The renderer saved an empty list; the store's `resolveSourceIds`
+treats a present-but-empty list as unusable and falls back to the legacy
+`audioSource` pair, which `syncSources` had mirrored from the previous list
+on the last save. So the fallback resurrected exactly what the patch
+removed. Two fixes, one per layer, each with its own red test: the renderer
+names the default microphone when nothing survives, and says so; and the
+store resolves a list that a patch names from that list alone, so an empty
+one means the default for any caller, not "the ones you had". A config read
+from disk and a legacy patch naming only the pair still fold the pair in,
+and the review found no caller that relied on the old reading.

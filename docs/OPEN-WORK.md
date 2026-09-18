@@ -796,6 +796,16 @@ fixed**, the last two on 2026-09-15.
   column, which the new check's first draft inherited and so opened no files
   at all; both use the TAB git puts before the path now.
 
+- ~~**A sole source unplugged at launch was "removed" and put straight
+  back.**~~ Fixed 2026-09-18, found by the 1.0 discovery pass. Audit finding
+  7's fix drops a source whose device is gone, which works while one
+  survives. With a USB headset as the only source, the app saved an empty
+  list, the config store read that as "fall back to the legacy pair" - which
+  was the last list's mirror - and the dead id came back, the picker blank
+  and every START failing on it. The app now falls back to the default
+  microphone and says so, and the store resolves a list a patch names from
+  that list alone, so an emptied one means the default everywhere.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

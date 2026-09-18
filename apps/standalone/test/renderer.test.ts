@@ -1277,6 +1277,19 @@ describe("a source whose device is no longer plugged in", () => {
     expect(written?.sources, "the dead id was left in the config for START to trip over").toEqual(["default-mic"]);
   });
 
+  // the one-source shape: nothing survives to fall back on, so the app has to
+  // name one - and say so, or the picker just changes under the user
+  it("falls back to the default microphone when the only source went", async () => {
+    await bootWith({ setupDone: true, sources: ["gone-usb-headset"], audioSource: "gone-usb-headset" }, devices);
+    await settle(60);
+
+    const written = calls.setConfig.filter((p) => p.sources).pop();
+    expect(written?.sources, "an empty list was saved, which the store reads as 'the ones you had'").toEqual([
+      "default-mic",
+    ]);
+    expect((document.getElementById("log")?.textContent || "").toLowerCase()).toContain("default microphone");
+  });
+
   it("says which device went, rather than correcting itself in silence", async () => {
     await bootWith({ setupDone: true, sources: ["default-mic", "gone-usb-headset"] }, devices);
     await settle(60);

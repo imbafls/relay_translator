@@ -182,7 +182,12 @@ function syncSources(cfg: AppConfig, patch: Partial<AppConfig>, before: string[]
     out.sources = next;
   }
 
-  out.sources = resolveSourceIds(out);
+  // A patch that names the list means that list. The pair is only ever the
+  // previous list's mirror, so letting an emptied list fall back to it put back
+  // exactly the ids the patch had just removed - a sole USB headset unplugged
+  // at launch was "removed" and written straight back, and START failed on it
+  // every time. Emptied, the list resolves to the default source instead.
+  out.sources = resolveSourceIds(namesList ? { ...out, audioSource: "", audioSource2: "" } : out);
   // an older build reads only the pair, so leave it pointing at the first two
   out.audioSource = out.sources[0] ?? "";
   out.audioSource2 = out.sources[1] ?? "";

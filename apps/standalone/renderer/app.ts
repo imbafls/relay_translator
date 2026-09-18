@@ -54,6 +54,7 @@ import {
   maskViewerLink,
   redactLog,
   rotationNotice,
+  DEFAULT_SOURCE,
 } from "@callout-relay/shared";
 import type { LinkRotation, Transcript, TranscriptSummary } from "@callout-relay/shared";
 import type { RendererBridge } from "../src/preload";
@@ -958,9 +959,17 @@ function dropDisconnectedSources(devices: AudioDeviceInfo[]): void {
   if (!gone.length) return;
 
   const alive = configured.filter((id) => known.has(id));
+  // With every source gone there is nothing left to fall back on, so name one.
+  // An empty list was saved here, the store read it as "the ones you had", and
+  // the dead headset came straight back for START to fail on.
+  const next = alive.length ? alive : [DEFAULT_SOURCE];
   // the label is unrecoverable once the device is gone, so say which slot
-  log(`audio source ${gone.map((g) => g.slot).join(" and ")} is no longer connected - removed`, "err");
-  void saveAndApply({ sources: alive });
+  log(
+    `audio source ${gone.map((g) => g.slot).join(" and ")} is no longer connected - removed` +
+      (alive.length ? "" : ", using the default microphone"),
+    "err",
+  );
+  void saveAndApply({ sources: next });
 }
 
 /** 02 TRANSCRIBE: cloud and local models in two groups */
