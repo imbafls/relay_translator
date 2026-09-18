@@ -150,6 +150,11 @@ function stand(uplinkBeat: Date | null, opts: { uplinkState?: number; live?: boo
       const arrived = all[all.length - 1]!;
       return arrived.seen.find((m) => m.type === "hello");
     },
+    /** the desktop app's uplink (re)connecting: every frame the room sends it */
+    uplinkArrives: async (): Promise<Frame[]> => {
+      await room.fetch(req("uplink", { Upgrade: "websocket" }));
+      return all[all.length - 1]!.seen;
+    },
     health: async (): Promise<Frame> => (await (await room.fetch(req("health"))).json()) as Frame,
     sync: async (): Promise<Frame | undefined> => {
       await room.webSocketMessage(watching as never, JSON.stringify({ type: "sync" }));
@@ -360,5 +365,42 @@ describe("an app from before 0.8", () => {
     await s.hello(undefined);
     await s.fireAlarm();
     expect(s.alarm(), "an older app's reconnect after STOP kept the minute-by-minute alarm alive").toBeNull();
+  });
+});
+
+/**
+ * A publisher coming back to viewers already there.
+ *
+ * The uplink reconnects on every network blip, every heartbeat give-up, every
+ * app start and every relay setting changed - and the client zeroes its
+ * viewer count on each close. The room greeted the new uplink with `ready`
+ * and nothing else, and it only ever sends a count when a viewer arrives or
+ * leaves. So the app read 0 watching over a room full of readers, and NEW,
+ * which asks SURE? only when someone is reading, replaced the link on one
+ * press - THIS LINK HAS ENDED on every phone, with no warning to the streamer.
+ * The self-hosted relay has always sent the count right after `ready`.
+ */
+describe("a publisher reconnecting to viewers already there", () => {
+  it("is told how many are watching as soon as it connects", async () => {
+    const s = stand(ago(5_000));
+    await s.lateJoiner();
+
+    const frames = await s.uplinkArrives();
+
+    expect(frames[0]).toEqual({ type: "ready" });
+    expect(
+      frames.find((m) => m.type === "viewers"),
+      "a reconnecting publisher was left believing nobody is watching two readers",
+    ).toEqual({ type: "viewers", count: 2 });
+  });
+
+  // a reader gone silent is not someone NEW should ask about
+  it("is told the number actually there, not the sockets still held", async () => {
+    const s = stand(ago(5_000));
+    s.watching.beat = ago(5 * MINUTE);
+
+    const frames = await s.uplinkArrives();
+
+    expect(frames.find((m) => m.type === "viewers")).toEqual({ type: "viewers", count: 0 });
   });
 });

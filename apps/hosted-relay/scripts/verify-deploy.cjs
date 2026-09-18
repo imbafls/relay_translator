@@ -98,6 +98,18 @@ function open(url) {
   ok("per-room health reports live", health.live === true, JSON.stringify(health));
   ok("per-room health counts the viewer", health.viewers >= 1, JSON.stringify(health));
 
+  // 7b. an uplink reconnecting to a room with readers in it - which the app
+  // does on every blip and every start - is told they are there. It zeroes
+  // its count on each close, and the room used to send one only when a viewer
+  // came or went, so the app read 0 watching and NEW skipped its SURE?
+  const again = await open(`${wsBase}/ws/uplink?token=${publisherToken}`);
+  await wait(1000);
+  ok(
+    "a reconnecting uplink is told the viewers already there",
+    again.seen.some((m) => m.type === "viewers" && m.count >= 1),
+    JSON.stringify(again.seen),
+  );
+
   // 8. rotation kills the old link
   const rotated = await fetch(`${BASE}/admin/rotate-viewer-token`, {
     method: "POST",
@@ -115,6 +127,7 @@ function open(url) {
   }
 
   up.ws.close();
+  again.ws.close();
   view.ws.close();
   badView.ws.close();
   bad.ws.close();

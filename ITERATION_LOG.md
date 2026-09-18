@@ -4042,3 +4042,18 @@ the neighbouring describe turned up a guard there that cannot fail: a shell
 once turned the `\b` around `hidden` in its regex into backspace bytes, so it
 passes whatever the markup says. Carded, with a repo-wide check for stray
 control bytes to go with it, rather than folded into this commit.
+
+**30 - Nobody watching, as far as the app knew.** The desktop uplink
+reconnects to the hosted room on every network blip, every heartbeat
+give-up, every start and every relay setting changed, and zeroes its viewer
+count on each close. The room greeted it with `ready` and nothing else, and
+only ever sent a count when a viewer arrived or left. So after any reconnect
+the app read 0 watching over a room full of readers - and NEW asks SURE? only
+when someone is reading, so one press replaced the link and put THIS LINK HAS
+ENDED on every phone, with no warning. The self-hosted relay has sent the
+count right after `ready` all along; the room does now too, counting the
+viewers actually there rather than the sockets it still holds. Both halves
+removed in turn - no count, and a raw socket count - turned a test red.
+`verify-deploy.cjs` only ever connected the uplink before the viewer, the
+order that hides this, so it now reconnects one with a reader attached; that
+check runs against the real runtime at the 1.0 deploy.

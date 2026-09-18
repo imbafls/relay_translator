@@ -776,6 +776,15 @@ fixed**, the last two on 2026-09-15.
   whenever OUTPUT changes, and a pick made in the footer's own switch stands
   until then.
 
+- ~~**A reconnecting uplink was never told who was watching.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. The app reconnects to the
+  hosted room on every blip and every start and zeroes its count each time,
+  and the room sent one only when a viewer came or went - so the app read 0
+  watching over readers, and NEW, which asks SURE? only when someone is,
+  ended the link on every phone in one press. The room now sends the count
+  right after `ready`, as the self-hosted relay always has, and
+  `verify-deploy.cjs` checks it against the real runtime.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

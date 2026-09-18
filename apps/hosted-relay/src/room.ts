@@ -397,6 +397,13 @@ export class Room {
 
       if (op === "uplink") {
         send(server, { type: "ready" });
+        // The count, straight away, as the self-hosted relay has always sent
+        // it. An uplink reconnects on every blip and every app start, and the
+        // client zeroes its count on each close; this room only re-sends one
+        // when a viewer comes or goes. So the app read 0 watching over a room
+        // full of readers, and NEW - which asks SURE? only when someone is -
+        // replaced the link on one press, ending it on every phone.
+        send(server, { type: "viewers", count: this.viewerCount() });
       } else {
         // a viewer joining mid-stream needs the state it missed
         send(server, {

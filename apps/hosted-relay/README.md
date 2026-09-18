@@ -112,12 +112,13 @@ link checks enforce, malformed-token rejection, constant-time comparison.
 **Against a real deployment** - the Durable Object runtime, which unit tests
 cannot reach:
 
-    node scripts/verify-deploy.cjs    https://<your-worker>   # 14 checks
+    node scripts/verify-deploy.cjs    https://<your-worker>   # 15 checks
     node scripts/verify-isolation.cjs https://<your-worker>   #  9 checks
 
 `verify-deploy` covers the uplink handshake, a viewer joining mid-stream and
 receiving the state it missed, captions arriving with their segment id intact,
-the viewer count reaching the uplink, per-room `/health`, 4401 on a bad
+the viewer count reaching the uplink - and reaching one that reconnects to
+viewers already there - per-room `/health`, 4401 on a bad
 credential for either role, and rotation actually killing the old link (4410 to
 the connected viewers, then 4401 when the dead link is retried). It claims its
 own room each run - reusing a fixture makes a successful rotation look like a
