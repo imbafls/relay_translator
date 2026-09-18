@@ -16,6 +16,7 @@ const PAIRS = [
     scripts: [
       "apps/standalone/renderer/app.ts",
       "apps/standalone/renderer/dom.ts",
+      "apps/standalone/renderer/elements.ts",
       "apps/standalone/renderer/format.ts",
       "apps/standalone/renderer/log.ts",
       "apps/standalone/renderer/meter.ts",

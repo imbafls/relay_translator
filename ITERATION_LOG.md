@@ -3613,3 +3613,22 @@ property - all turned the test red. Harness captures before and after read
 the same to the character. One thing surfaced that a move must not fix:
 `fmtClock` and `fmtElapsed` are two separate implementations of one format.
 The test holds them equal, so folding them is now safe for whoever does it.
+
+**3 - The pieces views are made of.** The second category the view survey
+never weighed: six small builders that are handed the element and everything
+else they need - `markLang`, `paintSpeaker`, `metaSpans`, `ratingRow`,
+`fillSelect`, and `fitSelect` with the hidden element it measures with, the one
+piece of state it owns. Moved unchanged to `renderer/elements.ts`: `app.ts`
+gained one import and lost eighty-four lines. Characterised first under
+happy-dom, and twenty-three mutations - a stale `lang` left on, the fallback
+class landing on the streamer's own voice, a colour passed through unvalidated,
+a new hidden span per fit - all went red. One trap in writing it: `fitSelect`
+keeps its measuring element at module level, correct for a page whose body is
+never replaced and wrong for a test teardown that replaces it, so each of its
+tests takes the module fresh. The harness captured select widths, meta lines,
+language marks, the measuring span and the setup screen's rating cells before
+and after; all nine read identically. `debounce` stayed where it is: it
+schedules rather than renders, and the card's own cutting rule - render out,
+orchestrate in place - keeps it in the spine. That closes the renderer card by
+its own criterion; the rest of `app.ts` moves only after a decision about how
+the spine's shared state is reached, and that decision is the owner's.
