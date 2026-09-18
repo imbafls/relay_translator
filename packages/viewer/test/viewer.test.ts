@@ -1881,3 +1881,104 @@ describe("a translation that lands after its line has gone", () => {
     expect(lineTexts(), "the previous session's numbering hid a line of this one").toEqual(["new two"]);
   });
 });
+
+/**
+ * A viewport unit an old browser does not know, with nothing under it.
+ *
+ * `.screen` took its height from `100dvh` alone. A browser that does not know
+ * `dvh` - Chromium before 108, Safari before 15.4 - drops the declaration, so
+ * the screen falls back to its content's height and `.lines`, which pins the
+ * newest caption to the bottom only inside a definite height, has nothing to
+ * pin against. OBS 28-30's browser source is Chromium 103: the overlay's one
+ * caption was drawn at the top of the source. On an older phone the rows
+ * stacked down from the top and, with the page `overflow: hidden`, the newest
+ * lines fell below the fold where nothing could scroll to them.
+ *
+ * Every declaration that uses a dynamic viewport unit needs the same property
+ * in a unit every browser knows ahead of it in the same rule, so a browser that
+ * drops the first still has the second. The pages are found, not listed: every
+ * stylesheet and every inline <style> this package serves.
+ */
+describe("a viewport unit an old browser does not know", () => {
+  // signed and any case: `translateY(-50dvh)` and `100DVH` are the same unit
+  const DYNAMIC = /(?:^|[^\w.])-?\d*\.?\d+(?:dvh|svh|lvh|dvw|svw|lvw|dvmin|dvmax|svmin|svmax|lvmin|lvmax)\b/i;
+
+  /**
+   * Every stylesheet, every <style> and every style="" attribute under the
+   * served folder, subfolders included. The landing page is written mostly in
+   * attributes, so they are where a new rule is likeliest to land.
+   */
+  function sheets(): { name: string; css: string }[] {
+    const out: { name: string; css: string }[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        const name = path.relative(publicDir, full);
+        if (entry.isDirectory()) walk(full);
+        else if (name.endsWith(".css")) out.push({ name, css: fs.readFileSync(full, "utf8") });
+        else if (name.endsWith(".html")) {
+          const html = fs.readFileSync(full, "utf8");
+          for (const m of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) {
+            out.push({ name: `${name} <style>`, css: m[1] ?? "" });
+          }
+          for (const m of html.matchAll(/\sstyle="([^"]*)"/gi)) {
+            out.push({ name: `${name} style=""`, css: `[style] { ${m[1] ?? ""} }` });
+          }
+        }
+      }
+    };
+    walk(publicDir);
+    return out;
+  }
+
+  /** declaration blocks, innermost braces only, so rules inside @media are read too */
+  function blocks(css: string): { selector: string; decls: [string, string][] }[] {
+    const plain = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    return [...plain.matchAll(/([^{}]*)\{([^{}]*)\}/g)].map((m) => ({
+      selector: (m[1] ?? "").trim(),
+      decls: (m[2] ?? "")
+        .split(";")
+        .map((d) => d.split(/:(.*)/s))
+        .filter((p) => p.length >= 2 && (p[0] ?? "").trim())
+        .map((p) => [(p[0] ?? "").trim().toLowerCase(), (p[1] ?? "").trim()] as [string, string]),
+    }));
+  }
+
+  it("reads the stylesheets it is meant to, and finds the unit in them", () => {
+    const found = sheets();
+    const names = found.map((s) => s.name);
+    expect(names, "the page stylesheet was not read").toContain("style.css");
+    expect(names, "a stylesheet in a subfolder was not read").toContain(path.join("fonts", "fonts.css"));
+    expect(names, "the landing page's <style> was not read").toContain("home.html <style>");
+    expect(names.filter((n) => n.endsWith('style=""')).length, "no inline style attribute was read").toBeGreaterThan(50);
+    // and the pattern matches what it is looking for, so a green run means the
+    // declarations it found have fallbacks - not that it found none
+    const dynamic = found
+      .flatMap((s) => blocks(s.css))
+      .flatMap((b) => b.decls)
+      .filter(([, v]) => DYNAMIC.test(v));
+    expect(dynamic.length, "no dynamic viewport length was found at all, so the check below saw nothing").toBeGreaterThan(0);
+    for (const v of ["translateY(-50dvh)", "100DVH", "calc(100dvh - 10px)", ".5svh"]) {
+      expect(DYNAMIC.test(v), `the pattern misses ${v}`).toBe(true);
+    }
+    expect(DYNAMIC.test("100vh"), "the pattern takes the fallback unit for a dynamic one").toBe(false);
+  });
+
+  it("never leaves a dynamic viewport length without a fallback ahead of it", () => {
+    const bare: string[] = [];
+    for (const { name, css } of sheets()) {
+      for (const { selector, decls } of blocks(css)) {
+        decls.forEach(([prop, value], i) => {
+          if (!DYNAMIC.test(value)) return;
+          const fallback = decls.slice(0, i).some(([p, v]) => p === prop && !DYNAMIC.test(v));
+          if (!fallback) bare.push(`${name}: ${selector} { ${prop}: ${value} }`);
+        });
+      }
+    }
+    expect(
+      bare,
+      "a browser that does not know the unit drops these and keeps nothing - on OBS 28-30 the overlay's caption " +
+        "goes to the top of the source",
+    ).toEqual([]);
+  });
+});

@@ -675,6 +675,15 @@ fixed**, the last two on 2026-09-15.
   never received (a join, a reconnect, an uplink gap) can be older than what
   is on screen and still has to build. The desktop stage's version is a card.
 
+- ~~**The viewer's screens took their height from `100dvh` alone.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. A browser without `dvh` - OBS
+  28-30's browser source is Chromium 103; Safari before 15.4 - dropped the only
+  height rule, so the overlay's caption sat at the top of the source and an
+  older phone's newest lines fell below a fold nothing could scroll to. A
+  `100vh` fallback now sits ahead of it, and a guard reads every stylesheet,
+  `<style>` and `style=""` the package serves for a dynamic viewport unit
+  with nothing under it.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

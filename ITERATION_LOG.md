@@ -3855,3 +3855,19 @@ mutations, five reds - including swapping in the high-water rule, which fails
 the never-seen test, and a lowest-id-held rule, which fails a two-source test
 where the ids finish out of order. The desktop stage has the same shape and is
 carded.
+
+**20 - A unit an old browser drops.** `.screen` took its height from `100dvh`
+alone. OBS 28-30's browser source is Chromium 103, which does not know `dvh`,
+drops the declaration and leaves the screen at its content's height - so the
+overlay's caption, pinned to the bottom only inside a definite height, drew at
+the top of the source. A `100vh` fallback ahead of it is the whole fix. The
+guard is the larger part: every declaration using a dynamic viewport unit, in
+every stylesheet, `<style>` and `style=""` the viewer package serves, must have
+the same property without one ahead of it. The reviewer found the first
+version of the guard proving nothing about itself - its "did it read anything"
+check would have stayed green with the unit pattern matching nothing, it
+missed `-50dvh` and `100DVH`, and it read neither the fonts subfolder nor the
+landing page's inline attributes, where that page keeps most of its styling.
+All four closed; a pattern that matches nothing now turns the self-check red.
+And the regex edit itself went through the shell first and lost its
+backslashes, which is exactly the trap the memory file warns about.

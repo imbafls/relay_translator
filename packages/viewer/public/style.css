@@ -67,7 +67,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   color: var(--dim);
 }
 
-.screen { height: 100dvh; display: flex; flex-direction: column; }
+/* 100vh first: a browser that does not know dvh - OBS 28-30's Chromium 103,
+   Safari before 15.4 - drops that declaration and keeps this one, so the
+   screen still has a height to pin the newest caption to the bottom of */
+.screen { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
 
 /* ------------------------------------------------------------------ hud */
 .hud {
