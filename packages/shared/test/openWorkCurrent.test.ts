@@ -53,30 +53,48 @@ function liveEntries(text: string): string[] {
  *
  * The rule below checks three sections by name, so open work under any other
  * heading - a new `## Found after 1.0`, say - would sit there unseen by it.
- * Every section is one of four kinds, told apart by heading: the release's
- * known limitations (live entries are the point), `Blocked` (live by design,
- * each B<n> named in the limitations), `Not blocked` (nothing may be live),
- * and a `Closed by ...` record, whose entries are finished work written as
- * prose rather than struck. Anything else, the text before the first heading
- * included, may hold no live entry at all. The sections are found, not listed.
+ * Two kinds of section may hold live entries, told apart by heading: the
+ * release's known limitations (live entries are the point) and `Blocked` (open
+ * by design), where everything must sit under a `### B<n>` so the limitations
+ * can name it - `strays` is what does not. Every other section, the text
+ * before the first heading included, may hold no live entry at all: closed
+ * work is struck through, and that includes the `Closed by ...` records. The
+ * sections are found, not listed.
  */
-function triage(text: string): { seen: string[]; untriaged: { heading: string; live: string[] }[] } {
+function triage(text: string): {
+  seen: string[];
+  untriaged: { heading: string; live: string[] }[];
+  strays: string[];
+} {
   const sections: { heading: string; body: string[] }[] = [{ heading: "(before the first ## heading)", body: [] }];
   for (const line of text.split(/\r?\n/)) {
     if (/^## /.test(line)) sections.push({ heading: line.slice(3).trim(), body: [] });
     else sections[sections.length - 1]!.body.push(line);
   }
-  const triaged = (heading: string): boolean =>
-    /^Known limitations in 1\.0\b/.test(heading) ||
-    /^Blocked\b/.test(heading) ||
-    /^Not blocked\b/.test(heading) ||
-    /^Closed by\b/.test(heading);
+  const mayBeOpen = (heading: string): boolean => /^Known limitations in 1\.0\b/.test(heading) || /^Blocked\b/.test(heading);
+
+  // Blocked, split at its ### headings: the part before the first one, and
+  // every part under a heading without a B-number, is a stray
+  const strays: string[] = [];
+  for (const s of sections.filter((x) => /^Blocked\b/.test(x.heading))) {
+    const parts: { heading: string | null; body: string[] }[] = [{ heading: null, body: [] }];
+    for (const line of s.body) {
+      if (/^### /.test(line)) parts.push({ heading: line, body: [] });
+      else parts[parts.length - 1]!.body.push(line);
+    }
+    for (const part of parts) {
+      if (part.heading === null) strays.push(...liveEntries(part.body.join("\n")).map((e) => e.split("\n")[0] ?? ""));
+      else if (!/^### B\d+\b/.test(part.heading)) strays.push(part.heading);
+    }
+  }
+
   return {
     seen: sections.map((s) => s.heading),
     untriaged: sections
-      .filter((s) => !triaged(s.heading))
+      .filter((s) => !mayBeOpen(s.heading))
       .map((s) => ({ heading: s.heading, live: liveEntries(s.body.join("\n")).map((e) => e.split("\n")[0] ?? "") }))
       .filter((s) => s.live.length > 0),
+    strays,
   };
 }
 
@@ -212,10 +230,12 @@ describe("what the backlog still calls open", () => {
   });
 
   it("has no section the triage rule does not know that holds open work", () => {
-    const { seen, untriaged } = triage(doc());
-    // six today; fewer than five means the splitter found no headings at all
+    const { seen, untriaged, strays } = triage(doc());
+    // seven today - the text before the first heading, and six headings. A
+    // file read as one section means the splitter found no heading at all.
     expect(seen.length, "the triage read no sections").toBeGreaterThan(4);
     expect(untriaged, "open entries under a heading no triage rule checks").toEqual([]);
+    expect(strays, "open work under Blocked that is not a B<n> the limitations can name").toEqual([]);
   });
 
   it("finds open work under a heading it has never seen, and before the first one", () => {
@@ -228,10 +248,6 @@ describe("what the backlog still calls open", () => {
       "",
       "- **A named limitation.** Allowed.",
       "",
-      "## Closed by v9.9.9",
-      "",
-      "- **Finished work, as prose.** Allowed.",
-      "",
       "## Found after 1.0",
       "",
       "- ~~**Done already.**~~ Struck, so not open.",
@@ -241,6 +257,60 @@ describe("what the backlog still calls open", () => {
 
     expect(untriaged.map((u) => u.heading)).toEqual(["(before the first ## heading)", "Found after 1.0"]);
     expect(untriaged[1]?.live).toEqual(["- **A new open item.** Under a heading the rule never named."]);
+  });
+
+  /**
+   * A `## Closed by ...` section once counted as triaged by its heading, on the
+   * grounds that its entries were finished work written as prose. That let an
+   * open item sit there unseen - "Still open: ..." under Closed by v0.8.0
+   * passed. Closed work is struck through like everywhere else in the file, so
+   * a Closed-by record is held to the same rule as any other section.
+   */
+  it("holds a Closed-by section to the rule too, so open work cannot hide in one", () => {
+    const fixture = [
+      "## Known limitations in 1.0",
+      "",
+      "- **A named limitation.** Allowed.",
+      "",
+      "## Closed by v9.9.9",
+      "",
+      "- ~~**Finished work.**~~ Struck, as closed work is.",
+      "- **Still open: a thing.** Written into a record of finished work.",
+    ].join("\n");
+    const { untriaged } = triage(fixture);
+
+    expect(untriaged.map((u) => u.heading)).toEqual(["Closed by v9.9.9"]);
+    expect(untriaged[0]?.live).toEqual(["- **Still open: a thing.** Written into a record of finished work."]);
+  });
+
+  /**
+   * Blocked is open by design, and each item there is named in the known
+   * limitations by its B<n>. The older rule only looked at headings that
+   * already had a B<n>, so a blocked item under any other heading - or a loose
+   * bullet between them - was never asked to be named.
+   */
+  it("wants every blocked item to be a B<n>, so the limitations can name it", () => {
+    const fixture = [
+      "## Known limitations in 1.0",
+      "",
+      "- **Something (B7).** Named.",
+      "",
+      "## Blocked",
+      "",
+      "- **A loose open bullet.** Under Blocked but under no item.",
+      "",
+      "### B7 — A named blocked item",
+      "",
+      "- **A detail of B7.** Part of B7, which is named.",
+      "",
+      "### C1 — A blocked item with no B-number",
+      "",
+      "Prose.",
+    ].join("\n");
+    const { untriaged, strays } = triage(fixture);
+
+    expect(untriaged).toEqual([]);
+    expect(strays).toEqual(["- **A loose open bullet.** Under Blocked but under no item.", "### C1 — A blocked item with no B-number"]);
   });
 
   it("found entries to check, so the two assertions above mean something", () => {

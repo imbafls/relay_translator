@@ -95,7 +95,7 @@ mirroring the release to the VPS, setting `RELAY_PUBLISHER_TOKEN` /
 
 Written 2026-09-10. One feature, and the health items still open after 0.7.0.
 
-- **Saved transcripts.** Every finished line and its translation is appended to
+- ~~**Saved transcripts.**~~ Every finished line and its translation is appended to
   disk while the session runs - `apps/standalone/src/transcripts.ts`, default
   `Documents\Callout Relay\Transcripts` - with a SAVED view to read and export
   them and `SETTINGS → THIS APP → TRANSCRIPTS` to switch it off or move it. The
@@ -106,7 +106,7 @@ Written 2026-09-10. One feature, and the health items still open after 0.7.0.
   each utterance twice under one id, so records are appended separately and
   merged on read, keyed by the file's own `n` because relay ids restart on every
   reconnect.
-- **The self-hosted relay's `isLive()` answered ON AIR on socket presence.**
+- ~~**The self-hosted relay's `isLive()` answered ON AIR on socket presence.**~~
   Fixed in `packages/relay/src/server.ts`: an uplink is live on what its last
   hello or status said (`uplinkLive`), a publisher once its hello has built a
   session, and `stamp()` clears the session clock on a not-live hello - the
@@ -114,16 +114,16 @@ Written 2026-09-10. One feature, and the health items still open after 0.7.0.
   adjacent shapes turned up while fixing it and closed with it: a replacing
   uplink inherited the old one's word, and a publisher counted as live before
   its hello had said anything.
-- **The relay's Linux banner printed `data\relay-state.json`.** Now built with
+- ~~**The relay's Linux banner printed `data\relay-state.json`.**~~ Now built with
   `path.join`, the way `config.ts` writes the file.
-- **The capture worklet decimated with no anti-alias filter above 16 kHz.** The
+- ~~**The capture worklet decimated with no anti-alias filter above 16 kHz.**~~ The
   entry below pointed at `packages/viewer/public/app.js`, which has no audio path
   at all; the resampler is `packages/companion/src/capture/workletSource.ts`. It
   now low-passes (a 63-tap Hann-windowed sinc) whenever it has to decimate, and
   leaves the 16 kHz path every session actually takes bit-for-bit unchanged. Run
   against the real processor source, a 12 kHz tone at 48 kHz went from full
   strength to under 5% (-26 dB), the bound the test holds it to.
-- **`HANDOFF.md` and `CLAUDE.md` described v0.5.1 and v0.5.3.** Both rewritten
+- ~~**`HANDOFF.md` and `CLAUDE.md` described v0.5.1 and v0.5.3.**~~ Both rewritten
   against the tree; `docs/GUIDE.md` and `README.md` cover saved transcripts.
 
 Each fix above shipped with a test that goes red when the fix is reverted, and
@@ -151,19 +151,19 @@ rounds a whole-branch review afterward closed, shipped in **v0.8.0** on
 2026-09-10. 0.7.0 itself was never tagged: its changelog entry ships inside
 0.8.0's release, and a user updating from 0.6.0 is shown both.
 
-- **The speech pipeline no longer gives up for the session.** The reopen
+- ~~**The speech pipeline no longer gives up for the session.**~~ The reopen
   ladder used to exhaust four attempts in ~12 s (`STT_REOPEN_DELAYS_MS`,
   `packages/relay/src/session.ts`) and stop for good, so one bad connection
   permanently ended captions. It now falls onto an endless 30 s retry tail
   (`STT_REOPEN_TAIL_MS`) once the fast ladder is spent, and narrates the
   transition into that tail once - not every attempt after, which would have
   filled `relay.log` on a week offline. `1e65dc8`, `8857de6`, `ecf4b2d`.
-- **The app stops claiming ON AIR when speech is dead.** `sttLive` now
+- ~~**The app stops claiming ON AIR when speech is dead.**~~ `sttLive` now
   reaches the desktop app; the topbar reads `ON AIR · NO SPEECH`
   (`apps/standalone/renderer/app.ts`) and the tray tooltip reads
   `live, no speech` (`apps/standalone/src/main.ts`). `8e57ca9`, `32c9959`.
-- **The hosted room stops treating "a hello arrived" as "somebody is
-  streaming."** The uplink hello now carries `live`, and `room.ts` on the
+- ~~**The hosted room stops treating "a hello arrived" as "somebody is
+  streaming."**~~ The uplink hello now carries `live`, and `room.ts` on the
   hosted relay honours it instead of marking the room live unconditionally on
   every hello, every reconnect and every idle settings change. `ad8bd97`,
   `fb93f57`, `597a21e`. This closes the *hosted* half of the liveness problem
@@ -172,12 +172,12 @@ rounds a whole-branch review afterward closed, shipped in **v0.8.0** on
   (`packages/relay/src/server.ts`) and were explicitly out of this task's
   scope. Checked against what shipped: both notes still read correctly and
   neither has changed, so they are not duplicated here.
-- **Latency reads the current stream, not the whole session.** Fixed in
+- ~~**Latency reads the current stream, not the whole session.**~~ Fixed in
   `84d9118`: `currentStreamWallStart` (`packages/relay/src/session.ts`) now
   resets on every STT reopen, not just once at session start, so a latency
   figure after a reconnect no longer measures against a stream that no
   longer exists.
-- **A quiet session stops paying for silence.** A locally-measured peak
+- ~~**A quiet session stops paying for silence.**~~ A locally-measured peak
   detector (`SILENCE_PEAK_FLOOR`, `packages/relay/src/session.ts`) stops
   forwarding audio - to Deepgram or a local model alike - after
   `idleBillingStopMinutes` (default 60) of nothing clearing the floor, and
@@ -185,15 +185,15 @@ rounds a whole-branch review afterward closed, shipped in **v0.8.0** on
   `KeepAlive` meanwhile so it does not idle-close and flap the session.
   `4b1cbac`, `d1cb164`, `2141329`, `4121197`, `d30befc`, `c7a9b7b`, `837f116`,
   `e971c6e`.
-- **A way to send a problem report exists, and it is redacted before
-  anything leaves the machine.** `redactLog()` in `packages/shared/src/index.ts`
+- ~~**A way to send a problem report exists, and it is redacted before
+  anything leaves the machine.**~~ `redactLog()` in `packages/shared/src/index.ts`
   strips keys, relay tokens, `/watch/` links, LAN IPs and the Windows account
   name. `9a54b4c`, `83f4519`, `237d31f`, `3ad32c5`.
-- **`POST /feedback`** on the hosted Worker (`apps/hosted-relay/src/index.ts`)
+- ~~**`POST /feedback`**~~ on the hosted Worker (`apps/hosted-relay/src/index.ts`)
   writes a rate-limited, size-capped report to a new R2 bucket
   (`callout-relay-feedback`), storing nothing that identifies a machine.
   `de5208b`, `d107abe`.
-- **SEND FEEDBACK in the app** (`apps/standalone/renderer/app.ts`,
+- ~~**SEND FEEDBACK in the app**~~ (`apps/standalone/renderer/app.ts`,
   `apps/standalone/src/main.ts`) previews exactly what will leave before
   anything is sent, and sends only on a press of SEND. The POST runs in the
   main process, not the renderer: the Worker answers no `Access-Control-*`
@@ -1023,6 +1023,13 @@ fixed**, the last two on 2026-09-15.
   first run, with no way to close it - and a typed key was never re-asked.
   It is now, and an older check that hung can no longer land over a newer
   answer for the same key.
+
+- ~~**The triage rule still let open work hide in two places.**~~ Fixed
+  2026-09-18, found by an independent review. A `Closed by` section counted as
+  triaged by its heading, so an open item written into one passed; and under
+  Blocked only headings that already had a B-number were asked to be named.
+  The Closed-by records are struck through now like every other closed item,
+  and everything under Blocked must sit under a `### B<n>`.
 
 ### Other
 

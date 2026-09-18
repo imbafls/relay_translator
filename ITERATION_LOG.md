@@ -4558,3 +4558,22 @@ a second answers, then the first lands. Each field has a sequence number
 now. Five tests, four red first; the fifth, the Gemini twin of the race,
 was added so the second guard had a test of its own, and four mutations -
 setup skipped, Gemini skipped, either guard removed - each turn one red.
+
+**62 - The triage rule, closed at both ends.** Iteration 56 taught the rule
+to read every section, and exempted `Closed by ...` by heading because its
+bullets were finished work written as prose, not struck. The review showed
+what that exemption let through: an open "Still open: ..." bullet under
+Closed by v0.8.0 passed, and so did a blocked item under a heading with no
+B-number, since the older check only looked at headings that had one. The
+reviewer suggested keyword rules for the Closed-by case ("still open",
+"remains"). A rule that guesses is the wrong shape for a file with a
+convention of its own: closed work is struck through. So the thirteen prose
+bullets in the three Closed-by sections are struck - their bold titles
+wrapped, two of them across a line break - and a Closed-by section is held
+to the same rule as any other. Only Known limitations and Blocked may hold
+live entries, and everything under Blocked must sit under a `### B<n>`.
+Three fixture tests red against the old rule, the real file red against the
+new one until the bullets were struck, and three mutations - the exemption
+put back, any Blocked heading allowed, loose Blocked bullets allowed - each
+turn a fixture red. The "six today" comment was wrong too (seven: the
+preamble and six headings) and says so now.
