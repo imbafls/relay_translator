@@ -996,6 +996,12 @@ fixed**, the last two on 2026-09-15.
   brand field; an Escape closed a later test's setup. The harness now
   cancels a finished test's timeouts and takes its listeners off.
 
+- ~~**Three offline-boot tests proved less than they said.**~~ Fixed
+  2026-09-18, found by an independent review. Their wait for `KEY ?` was
+  written as `/KEY ?/` - a backslash lost in a heredoc - which matches KEY OK,
+  so with the offline boot taken away three still passed. Escaped, and each
+  now fails at that wait when the boot never goes offline.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

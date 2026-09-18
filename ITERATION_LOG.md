@@ -4473,3 +4473,33 @@ had applied. The last card the release card still owed. Every open item in
 OPEN-WORK is now either struck through or in Known limitations, all 42
 discovery cards are Done, and the three Backlog cards are owner-only and
 named there. Phase 2 is finished.
+
+**57 - Somebody else reads the last six.** Before Phase 3, an independent
+review of f4c36f4..33b635f: two reviewer agents, one on the app changes and
+one on the tests, read-only, each told to tie every finding to a concrete
+scenario. Phase 2 was not finished after all. Eleven findings, confirmed
+against the code before carding (tag `review-1.0`): two P1, three P2, six
+P3. The worst is mine from iteration 53 - a fresh install whose relay port is
+taken can no longer get past setup step 1, because the save that restarts the
+relay fails, main rolls the key back, and setup now stays put; before, it
+moved on with the key lost but SETTINGS, where the port is, reachable. The
+other P1 is a test of mine: iteration 52's wait for `KEY ?` came out of a
+heredoc as `/KEY ?/`, which matches KEY OK, and the reviewer removed the
+offline boot and watched three of the six tests stay green. Also a 429 or 5xx
+from a provider read as a rejected key for the run, the online re-check not
+reaching an open setup, and the triage rule still waving through open items
+under Blocked and Closed-by sections. The test reviewer re-ran every mutation
+the commit messages name and each did go red - the fixes hold; what they
+missed is around them.
+
+**58 - The offline tests, made to check the offline boot.** `/KEY \?/`, and
+a comment saying why the escape matters. With the offline boot taken away
+every test that uses it now fails at that wait (five), where three passed
+before. Two more from the same review: "shows CHECKING while it is asked
+again" asserted only that COULD NOT REACH was absent, and passed showing
+VALID - it now requires CHECKING, and goes red when that text changes; and
+the claim in 902aad8 that the LOG line is unwrapped too had no test - it has
+one, red with the log line put back to the raw message. `/VALID/` also
+matches INVALID, so the three waits that use it are anchored. The mutations
+ran from JSON specs written with the editor through a runner that says
+whether it applied, which is what the last two traps called for.

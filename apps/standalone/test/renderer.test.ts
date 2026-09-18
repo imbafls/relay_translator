@@ -2291,6 +2291,10 @@ describe("a setup step whose save fails", () => {
 
     expect(text("obSaveError")).toMatch(/relay could not restart/i);
     expect(text("obSaveError"), "the IPC plumbing reached the screen").not.toMatch(/remote method/i);
+    // the LOG line is unwrapped too - it is what SETTINGS reports a failure in
+    const logged = document.getElementById("log")?.textContent || "";
+    expect(logged).toMatch(/config save failed: relay could not restart/i);
+    expect(logged, "the IPC plumbing reached the log").not.toMatch(/remote method/i);
   });
 
   it("clears the message once the step saves", async () => {
@@ -2412,7 +2416,12 @@ describe("a key that could not be checked at boot", () => {
   const offlineBoot = async (): Promise<void> => {
     unreachableOnce = ["dg-saved", "gm-saved"];
     await bootWith({ setupDone: true, deepgramApiKey: "dg-saved", geminiApiKey: "gm-saved", translationEnabled: true });
-    await waitFor(() => /KEY ?/.test(text("metaStt")) && /KEY ?/.test(text("gmKeyState")), "both boot checks to fail to connect");
+    // "KEY ?" exactly: the escape matters, since /KEY ?/ makes the space
+    // optional and matches KEY OK - which is how this wait once proved nothing
+    await waitFor(
+      () => /KEY \?/.test(text("metaStt")) && /KEY \?/.test(text("gmKeyState")),
+      "both boot checks to fail to connect",
+    );
   };
 
   it("is asked again when setup reopens, so step 1 can continue", async () => {
@@ -2422,7 +2431,7 @@ describe("a key that could not be checked at boot", () => {
     (document.getElementById("settingsSetup") as HTMLButtonElement).click();
 
     await waitFor(() => checksOf("dg-saved") === 2, "the saved Deepgram key to be checked again");
-    await waitFor(() => /VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
+    await waitFor(() => /^VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
     expect((document.getElementById("obContinue1") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
   });
 
@@ -2434,7 +2443,7 @@ describe("a key that could not be checked at boot", () => {
     (document.getElementById("settingsSetup") as HTMLButtonElement).click();
 
     await waitFor(() => checksOf("dg-saved") === 2, "the timed-out key to be checked again");
-    await waitFor(() => /VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
+    await waitFor(() => /^VALID/.test(text("obDgStatus")), "step 1 to show the key's real verdict");
   });
 
   it("is asked again for Gemini too, so step 2 is not left with only SKIP", async () => {
@@ -2444,7 +2453,7 @@ describe("a key that could not be checked at boot", () => {
     (document.getElementById("settingsSetup") as HTMLButtonElement).click();
 
     await waitFor(() => checksOf("gm-saved") === 2, "the saved Gemini key to be checked again");
-    await waitFor(() => /VALID/.test(text("obGmStatus")), "step 2 to show the key's real verdict");
+    await waitFor(() => /^VALID/.test(text("obGmStatus")), "step 2 to show the key's real verdict");
     expect((document.getElementById("obContinue2") as HTMLButtonElement).disabled, "CONTINUE stayed dead").toBe(false);
   });
 
@@ -2457,6 +2466,9 @@ describe("a key that could not be checked at boot", () => {
 
     expect(text("obDgStatus"), "setup opened on the boot-time failure").not.toMatch(/COULD NOT REACH/);
     expect(text("obGmStatus"), "setup opened on the boot-time failure").not.toMatch(/COULD NOT REACH/);
+    // and says what it is doing, rather than anything else that is not that
+    expect(text("obDgStatus")).toMatch(/^CHECKING/);
+    expect(text("obGmStatus")).toMatch(/^CHECKING/);
   });
 
   it("is asked again when the network comes back, so the chain stops saying KEY ?", async () => {
