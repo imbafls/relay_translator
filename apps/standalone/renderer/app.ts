@@ -2167,25 +2167,50 @@ function obSttChoice(): string {
   return isLocalStt(config.stt) ? "deepgram-nova-3" : config.stt;
 }
 
-/** (re)open setup at step 1 with the current values filled in */
 /**
  * A setup step's save, which only moves setup on when it lands. SETTINGS
  * reports a failed save in the LOG, but setup hides the footer that opens it,
  * so the failure is said here instead. Moving on anyway marked the step done
  * over a key main had just rolled back - a key is a relay setting, so saving
  * one restarts the relay, and a held port fails that restart.
+ *
+ * "Lands" means stored, not "reported no error". When the relay was already
+ * down - its port held since launch - main keeps the settings (there is no
+ * working relay to roll back to) and still reports the restart. Holding setup
+ * there held a fresh install on step 1 for ever, since the port that fixes it
+ * is in SETTINGS and a first run cannot reach it; so a failure is checked
+ * against what main actually stored.
  */
 async function obSave(patch: Partial<AppConfig>): Promise<boolean> {
   const box = $("obSaveError");
-  const ok = await saveAndApply(patch, {
+  let ok = await saveAndApply(patch, {
     onFail: (reason) => {
       box.textContent = `COULD NOT SAVE · ${reason}`;
     },
   });
+  if (!ok) ok = await storedAsSaved(patch);
   box.hidden = ok;
   return ok;
 }
 
+/** whether every setting in `patch` is what main now has stored */
+async function storedAsSaved(patch: Partial<AppConfig>): Promise<boolean> {
+  try {
+    const stored = await cr.getConfig();
+    const same = (Object.keys(patch) as (keyof AppConfig)[]).every(
+      (k) => JSON.stringify(stored[k]) === JSON.stringify(patch[k]),
+    );
+    if (same) {
+      config = stored;
+      syncControlsFromConfig();
+    }
+    return same;
+  } catch {
+    return false;
+  }
+}
+
+/** (re)open setup at step 1 with the current values filled in */
 function openSetup(): void {
   obStep = 1;
   // a failure belongs to the run of setup it happened in

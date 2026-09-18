@@ -1002,6 +1002,14 @@ fixed**, the last two on 2026-09-15.
   so with the offline boot taken away three still passed. Escaped, and each
   now fails at that wait when the boot never goes offline.
 
+- ~~**A fresh install whose relay port was taken could not finish setup.**~~
+  Fixed 2026-09-18, found by an independent review; a regression from
+  902aad8. Saving a key restarts the relay, a held port fails that, main
+  put the empty key back, and setup - which stays on a step whose save
+  failed - could not get past step 1, with the port in SETTINGS out of
+  reach. Main now keeps a save when the relay was not running before it
+  either, and setup moves on when what it saved is what is stored.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

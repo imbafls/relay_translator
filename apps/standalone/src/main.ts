@@ -41,7 +41,6 @@ import {
   HOSTED_RELAY_URL,
   RELAY_CONFIG_KEYS,
   redactLog,
-  relayRollbackPatch,
   rotationNotice,
   validPublicBaseUrl,
   uplinkUrlFor,
@@ -50,6 +49,7 @@ import {
 } from "@callout-relay/shared";
 import { RELEASES_URL, Updater } from "./updater";
 import { rotateLinks, trayOpensLink } from "./linkRotation";
+import { restartAfterConfigChange } from "./relayRestart";
 import type { RendererBridge } from "./preload";
 
 /**
@@ -546,30 +546,26 @@ const RELAY_KEYS: (keyof AppConfig)[] = [...RELAY_CONFIG_KEYS];
 
 async function applyConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   const before = config();
+  // read before anything restarts: whether a failed restart has a working
+  // relay to roll back to is a fact about the settings being replaced
+  const relayWasUp = relay !== null;
   const cfg = configStore.update(patch);
   const relayChanged = RELAY_KEYS.some((k) => JSON.stringify(before[k]) !== JSON.stringify(cfg[k]));
   if (relayChanged) {
     log("info", "relay-affecting config changed, restarting local relay + uplink");
     try {
-      await restartEmbeddedRelay();
+      await restartAfterConfigChange({
+        relayWasUp,
+        before,
+        after: cfg,
+        restart: restartEmbeddedRelay,
+        store: (p) => configStore.update(p),
+        log,
+      });
     } catch (err) {
-      // The write above already happened - configStore.update is synchronous
-      // and runs before this - so a port that cannot be bound is now the SAVED
-      // port. Without putting it back, every START fails with "local relay not
-      // ready" and a relaunch re-reads the same bad value and fails the same
-      // way. The app is dead, permanently, from one typo.
-      const reason = String((err as Error)?.message || err);
-      log("error", `relay restart failed (${reason}) - putting the previous relay settings back`);
-      configStore.update(relayRollbackPatch(before, cfg));
-      try {
-        await restartEmbeddedRelay();
-        log("info", "previous relay settings restored and the relay is up again");
-      } catch (again) {
-        log("error", `could not restart on the previous settings either: ${String((again as Error)?.message || again)}`);
-      }
       win?.webContents.send("config:changed", config());
       broadcastStatus();
-      throw new Error(`relay could not restart: ${reason}`);
+      throw err;
     }
   } else {
     // language/toggle changes flow into a live uplink immediately

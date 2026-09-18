@@ -98,6 +98,12 @@ function bridge(config: AppConfig) {
     setConfig: async (patch: Partial<AppConfig>) => {
       if (setConfigGate) await setConfigGate;
       if (setConfigFails) throw new Error(setConfigMessage);
+      if (setConfigKeepsThenFails) {
+        // what main does when the relay was down before the save: the settings
+        // are stored, and the failed restart is still reported
+        current = { ...current, ...patch };
+        throw new Error(setConfigMessage);
+      }
       calls.setConfig.push(patch);
       current = { ...current, ...patch };
       return current;
@@ -223,6 +229,8 @@ let setConfigFails = false;
 let setConfigMessage = "EADDRINUSE: port 3000 is already in use";
 /** when set, cr.setConfig() waits for it - a save that restarts the relay is not instant */
 let setConfigGate: Promise<void> | null = null;
+/** make cr.setConfig() store the patch and still throw setConfigMessage */
+let setConfigKeepsThenFails = false;
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
 /** what a rotation did to the internet link, as main reports it */
@@ -361,6 +369,7 @@ afterEach(() => {
   setConfigFails = false;
   setConfigMessage = "EADDRINUSE: port 3000 is already in use";
   setConfigGate = null;
+  setConfigKeepsThenFails = false;
   claimFails = null;
   fakeModels = [];
   fakeRotation = { remote: "none" };
@@ -2223,8 +2232,8 @@ describe("a setup step whose save fails", () => {
     await waitFor(() => !(document.getElementById(button) as HTMLButtonElement).disabled, `${button} to enable`);
   };
 
-  const toStep2 = async (): Promise<void> => {
-    await bootWith({ setupDone: false });
+  const toStep2 = async (config: Partial<AppConfig> = {}): Promise<void> => {
+    await bootWith({ setupDone: false, ...config });
     await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
     (document.getElementById("obContinue1") as HTMLButtonElement).click();
     await waitFor(() => visible("obStep2"), "step 2");
@@ -2256,7 +2265,10 @@ describe("a setup step whose save fails", () => {
   });
 
   it("stays on step 2 when SKIP does not save", async () => {
-    await toStep2();
+    // translation on to begin with: SKIP turns it off, and a failed save that
+    // leaves it on has not done what SKIP asked. With it already off - the
+    // default - there is nothing for SKIP to save, and moving on is right.
+    await toStep2({ translationEnabled: true });
     setConfigFails = true;
     (document.getElementById("obSkip2") as HTMLButtonElement).click();
     await settle(60);
@@ -2295,6 +2307,39 @@ describe("a setup step whose save fails", () => {
     const logged = document.getElementById("log")?.textContent || "";
     expect(logged).toMatch(/config save failed: relay could not restart/i);
     expect(logged, "the IPC plumbing reached the log").not.toMatch(/remote method/i);
+  });
+
+  /**
+   * The failure that made this trap real: another program holds the relay's
+   * port from launch, so on a fresh install every save of a key "fails" to
+   * restart a relay that never started. Main keeps such a save - there is no
+   * working relay to roll back to - and still reports the restart. Setup has
+   * to move on then, or it holds the user on step 1 for ever: the port that
+   * would fix it is in SETTINGS, and a first run cannot get there.
+   */
+  it("moves on when main kept the settings and only the relay would not start", async () => {
+    await bootWith({ setupDone: false });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    setConfigKeepsThenFails = true;
+    setConfigMessage =
+      "Error invoking remote method 'config:set': Error: relay could not start: listen EADDRINUSE: address already in use 0.0.0.0:8787 - the settings were saved";
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+
+    await waitFor(() => visible("obStep2"), "setup to move on past a save that landed");
+    expect(visible("obSaveError"), "a save that landed was reported as not saved").toBe(false);
+  });
+
+  it("still stays when main put the old settings back", async () => {
+    // an older key stored, and a different one pasted: after a rollback the
+    // stored key is there but is not the one saved, so the save did not land
+    await bootWith({ setupDone: false, deepgramApiKey: "dg-older" });
+    await pasteKey("obDeepgramKey", "dg-pasted", "obContinue1");
+    setConfigFails = true;
+    (document.getElementById("obContinue1") as HTMLButtonElement).click();
+    await settle(60);
+
+    expect(visible("obStep2")).toBe(false);
+    expect(visible("obSaveError")).toBe(true);
   });
 
   it("clears the message once the step saves", async () => {

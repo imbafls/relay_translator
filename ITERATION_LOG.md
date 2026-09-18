@@ -4503,3 +4503,29 @@ one, red with the log line put back to the raw message. `/VALID/` also
 matches INVALID, so the three waits that use it are anchored. The mutations
 ran from JSON specs written with the editor through a runner that says
 whether it applied, which is what the last two traps called for.
+
+**59 - The trap iteration 53 set.** Iteration 53 made setup stay on a step
+whose save failed, and was right to; the review found the case where that is
+a cage. Another program holds 8787 from launch, so the embedded relay never
+starts. On a fresh install step 1 saves the Deepgram key, a key is a relay
+setting, the restart fails, and main put the old key - none - back. Every
+retry the same; the port that fixes it is in SETTINGS, which a first run
+cannot reach. Two halves. Main: the rollback exists for a working relay a
+save broke, and there was no working relay to go back to, so when the relay
+was down before the save it now keeps the new settings and says so in the
+error. That decision moved out of `main.ts` into `relayRestart.ts`, free of
+Electron like `linkRotation.ts`, with a straight extraction first so the new
+test could go red against today's behaviour and the two tests of today's
+behaviour could pass against it. The renderer: a setup step lands when what
+it saved is stored, not when no error came back, so a reported failure is
+checked against `getConfig`. That changed one test's premise honestly -
+SKIP with translation already off (the default) has nothing to save, so
+moving on is right, and the test that SKIP stays on a failed save now starts
+with translation on. Five mutations; two survived at first and both were
+the tests' fault: the source guard on `main.ts` accepted `relayWasUp:
+false`, and "still stays when main put the old settings back" booted with no
+key stored, so a check that ignored values still saw a difference. Both
+tightened, all five red. Also moved `openSetup`'s one-line doc comment back
+above `openSetup`, where iteration 53 had left it stranded over `obSave`.
+What stays open, and is carded: a relay that cannot start is still invisible
+until START fails with "local relay not ready".
