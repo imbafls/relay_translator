@@ -703,6 +703,15 @@ fixed**, the last two on 2026-09-15.
   The setting now hides the original's words, not who said them. Seen in a
   real browser on both surfaces against the mock relay.
 
+- ~~**A row clicked in SETTINGS mid-stream could end the broadcast.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass. Picking a local model there
+  switches the engine at once, live or not, and a row is a big target: a
+  streamer clicking a not-yet-downloaded model's name while meaning DOWNLOAD
+  restarted the session onto it and ended in ERROR. That one pick is now
+  refused while live, and the models field says why in amber for a few
+  seconds; a downloaded model still switches live and keeps the viewer link,
+  which SETTINGS is the only way to do. Re-picking the model in use is a no-op.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

@@ -3905,3 +3905,20 @@ they always meant. Seen in a real browser against the mock relay with a
 scratch two-channel publisher - YOU and CHAT in their colours above each
 translation on the phone, the tag stacked over the line on the overlay - and
 the review's one nit, a trailing margin nudging a centred tag, is gone too.
+
+**23 - A big target in SETTINGS.** Picking a local model in SETTINGS
+switches the engine at once, and a streamer clicking a row mid-stream to
+download a model for later - on the name rather than exactly on DOWNLOAD -
+restarted the session onto a model not on disk and ended the broadcast in
+ERROR; clicking the model already in use bounced a healthy session for
+nothing. The first fix locked the whole list while live, to match 02
+TRANSCRIBE's lock. It was green, and the review showed it took something
+away: SETTINGS is the only place a streamer can move to a downloaded local
+model mid-stream without a STOP and START that hands viewers a new link. The
+fault was only ever the model that is not on disk, so that is the one pick
+refused - and the review's other point, that a refusal logged to LOG is
+invisible from SETTINGS under a hint promising the pick switches straight
+away, is answered in place: the models field says DOWNLOAD ... FIRST · ON AIR
+in amber for a few seconds. A downloaded model still switches live without
+rotating the link, and a test holds it. Five parts, each removed in turn -
+including the too-broad lock - each turning a test red.

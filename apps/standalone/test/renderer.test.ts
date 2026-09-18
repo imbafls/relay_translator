@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEFAULT_CONFIG, FALLBACK_STT, HOSTED_RELAY_URL } from "@callout-relay/shared";
+import { DEFAULT_CONFIG, FALLBACK_STT, HOSTED_RELAY_URL, STT_MODELS } from "@callout-relay/shared";
 import type { AppConfig } from "@callout-relay/shared";
 
 /**
@@ -106,7 +106,7 @@ function bridge(config: AppConfig) {
     },
     reportState: () => {},
     reportDevices: () => {},
-    modelStatus: async () => [],
+    modelStatus: async () => fakeModels,
     downloadModel: async () => [],
     cancelModel: async () => [],
     removeModel: async () => [],
@@ -165,6 +165,8 @@ let fakeDevices: { kind: string; deviceId: string; label: string; groupId: strin
 let setConfigFails = false;
 /** when set, claiming a room fails with this message */
 let claimFails: string | null = null;
+/** what cr.modelStatus() answers: the local models on disk */
+let fakeModels: { id: string; downloaded: boolean; sizeMb: number }[] = [];
 /** what cr.readRelayLog() answers - the raw, unredacted relay.log text */
 let fakeRelayLog = "";
 /**
@@ -259,6 +261,7 @@ afterEach(() => {
   fakeDevices = [];
   setConfigFails = false;
   claimFails = null;
+  fakeModels = [];
   fakeRelayLog = "";
   readRelayLogGate = null;
   releaseReadRelayLogGate = null;
@@ -3316,5 +3319,135 @@ describe("a STOP pressed while the session is still preparing", () => {
 
     expect(sessionState(), "a start that failed on its own was left sitting in STARTING").toBe("error");
     expect((document.getElementById("idleError") as HTMLElement).textContent).toContain("network timeout");
+  });
+});
+
+/**
+ * The model list in SETTINGS, while a session is running.
+ *
+ * Picking a row switches the engine straight away, live or not - and while
+ * live, SETTINGS is the only place a streamer can move to a downloaded local
+ * model without a STOP and START that hands viewers a new link. But the rows
+ * are big targets: a streamer opening the list mid-stream to download a model
+ * for later, and clicking the name rather than exactly on DOWNLOAD, picked a
+ * model that was not on disk - which restarted the session onto it and ended
+ * the broadcast in ERROR with "Download ... first". Clicking the row of the
+ * model already in use bounced a healthy session for nothing: stage cleared,
+ * clock reset, a new transcript file started.
+ */
+describe("the SETTINGS model list during a live session", () => {
+  let client: { state: string; hooks: { onSubtitle?: (seg: { id: number; source: string }) => void } };
+
+  const goLive = async (config: Partial<AppConfig>): Promise<void> => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key", ...config });
+    const companion = (await import("@callout-relay/companion")) as unknown as {
+      RelayPublisherClient: { prototype: { connect: (...args: unknown[]) => void } };
+      BrowserAudioCapture: { prototype: Record<string, unknown> };
+    };
+    companion.RelayPublisherClient.prototype.connect = function (this: typeof client & {
+      hooks: { onState?: (s: string) => void };
+    }) {
+      client = this;
+      this.state = "connected";
+      this.hooks.onState?.("connected");
+    };
+    companion.BrowserAudioCapture.prototype.start = async () => true;
+    companion.BrowserAudioCapture.prototype.stop = () => undefined;
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "capturing", { configurable: true, get: () => true });
+    Object.defineProperty(companion.BrowserAudioCapture.prototype, "channels", { configurable: true, get: () => 1 });
+    (document.getElementById("startStop") as HTMLButtonElement).click();
+    await waitFor(() => document.getElementById("app")?.dataset.session === "live", "the session to go live");
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+  };
+
+  const session = (): string | undefined => document.getElementById("app")?.dataset.session;
+  // one row per local model, in catalogue order
+  const rowFor = (id: string): HTMLElement => {
+    const rows = [...document.querySelectorAll<HTMLElement>("#settingsModels .model-row")];
+    const locals = STT_MODELS.filter((m) => m.provider === "local");
+    expect(rows.length, "the settings model list did not draw one row per local model").toBe(locals.length);
+    const row = rows[locals.findIndex((m) => m.id === id)];
+    if (!row) throw new Error(`no row for ${id} in #settingsModels`);
+    return row;
+  };
+
+  it("does not throw the broadcast away for a model that is not downloaded", async () => {
+    await goLive({});
+    const saves = calls.setConfig.length;
+
+    rowFor("local-zipformer-en-20m").click();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(session(), "clicking a row mid-stream ended the broadcast").toBe("live");
+    expect(
+      calls.setConfig.slice(saves).filter((p) => "stt" in p),
+      "a live session was switched onto a model that is not on disk",
+    ).toEqual([]);
+    // and it says why, where the click happened - not only in LOG
+    const note = document.getElementById("modelsDir") as HTMLElement;
+    expect(note.textContent, "the click did nothing visible and said nothing").toMatch(/DOWNLOAD .* FIRST/);
+    expect(note.classList.contains("warn")).toBe(true);
+  });
+
+  it("takes the warning down again afterwards", async () => {
+    await goLive({});
+    const note = document.getElementById("modelsDir") as HTMLElement;
+    const idle = note.textContent;
+    vi.useFakeTimers();
+    try {
+      rowFor("local-zipformer-en-20m").click();
+      expect(note.classList.contains("warn")).toBe(true);
+      vi.advanceTimersByTime(6_500);
+      expect(note.textContent, "the warning stayed up for good").toBe(idle);
+      expect(note.classList.contains("warn")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still switches a live session to a model that is on disk, keeping the link", async () => {
+    fakeModels = [{ id: "local-zipformer-en-20m", downloaded: true, sizeMb: 60 }];
+    await goLive({});
+    const saves = calls.setConfig.length;
+
+    rowFor("local-zipformer-en-20m").click();
+    await waitFor(() => calls.setConfig.slice(saves).some((p) => p.stt === "local-zipformer-en-20m"), "the switch to be saved");
+    await waitFor(() => session() === "live", "the session to come back on the new model");
+
+    expect(calls.rotated.length, "switching the engine handed viewers a new link").toBe(0);
+  });
+
+  it("still picks the model when nothing is running", async () => {
+    await bootWith({ setupDone: true, deepgramApiKey: "dg-key" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+    const saves = calls.setConfig.length;
+
+    rowFor("local-zipformer-en-20m").click();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(
+      calls.setConfig.slice(saves).map((p) => p.stt),
+      "the lock reached past the live session and the list no longer picks anything",
+    ).toEqual(["local-zipformer-en-20m"]);
+  });
+
+  it("leaves a live session alone when the row clicked is the model already in use", async () => {
+    fakeModels = [{ id: "local-zipformer-en-20m", downloaded: true, sizeMb: 60 }];
+    await goLive({ stt: "local-zipformer-en-20m" });
+    client.hooks.onSubtitle?.({ id: 1, source: "rush B" });
+    const saves = calls.setConfig.length;
+
+    rowFor("local-zipformer-en-20m").click();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(session()).toBe("live");
+    expect(calls.setConfig.slice(saves), "re-picking the model in use saved and restarted for nothing").toEqual([]);
+    expect(document.querySelector("#lines .row")?.textContent, "the stage was cleared by a restart").toContain("rush B");
+    expect(
+      (document.getElementById("log") as HTMLElement).textContent,
+      "the log told the streamer to stop the session to switch to the model they are already on",
+    ).not.toContain("stop the session to switch");
   });
 });

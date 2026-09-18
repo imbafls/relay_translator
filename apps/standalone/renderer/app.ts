@@ -1655,7 +1655,7 @@ function renderSettings(): void {
   renderUpdate();
   renderTranscriptState();
   renderCaptionSettings();
-  renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
+  renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: pickSettingsModel });
 }
 
 // ---------------------------------------------------------------------------
@@ -1693,6 +1693,38 @@ function renderPickedDetail(): void {
   }
 }
 
+/** the note beside LOCAL SPEECH MODELS going back to what it said - see pickSettingsModel */
+let modelsNoteTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * A row picked in SETTINGS → LOCAL SPEECH MODELS.
+ *
+ * It switches the engine straight away, live or not - and while live, this is
+ * the only way onto a downloaded local model that keeps the viewers' link. But
+ * a row is a big target, and one clicked mid-stream for a model that is not on
+ * disk - on the name, when the streamer meant DOWNLOAD - restarted the session
+ * onto it and ended the broadcast in ERROR. That one pick is refused while a
+ * session runs, and says why where it was clicked: a line in LOG is a line
+ * nobody in SETTINGS reads. Re-picking the model already in use changes
+ * nothing and must not bounce a session for it.
+ */
+function pickSettingsModel(id: string): void {
+  if (id === config.stt) return;
+  if ((session === "live" || session === "starting") && !modelReady(id)) {
+    const note = $("modelsDir");
+    note.dataset.idle ??= note.textContent || "";
+    note.textContent = `DOWNLOAD ${sttShort(id).toUpperCase()} FIRST · ON AIR`;
+    note.classList.add("warn");
+    if (modelsNoteTimer) clearTimeout(modelsNoteTimer);
+    modelsNoteTimer = setTimeout(() => {
+      note.textContent = note.dataset.idle || "";
+      note.classList.remove("warn");
+    }, 6000);
+    log(`${sttFull(id)} is not downloaded - download it before switching a live session to it`, "err");
+    return;
+  }
+  void saveAndApply({ stt: id }, { restart: true });
+}
 /**
  * One row per local model: pick (radio), download / cancel / remove, progress.
  * Rendering is idempotent so status broadcasts can redraw it freely.
@@ -1801,7 +1833,7 @@ function setLocalModels(list: LocalModelStatus[] | undefined): void {
   if (!list) return;
   localModels = list;
   renderChain();
-  if (view === "settings") renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: (id) => void saveAndApply({ stt: id }, { restart: true }) });
+  if (view === "settings") renderModelList($("settingsModels"), { picked: sttIsLocal() ? config.stt : "", pick: pickSettingsModel });
   if (view === "onboarding" && obStep === 1) renderOnboarding();
 }
 
