@@ -3815,3 +3815,25 @@ with a slow second handshake shows the old timer giving up on the new socket
 mid-handshake without it. Six parts, six mutations, six reds. The publisher
 client carries the same line and it is harmless there: the relay checks a
 publisher with protocol pings every client answers on its own.
+
+**18 - A translation that is not coming.** When Gemini gave up on a line the
+relay told the streamer's app and nobody else, so every viewer kept that
+row's "…" for good - and an OBS overlay set to hide the original, the setup
+for an audience that does not read the streamer's language, put a lone "…"
+on air over the words that were said. The relay now answers every failed
+translation with `target: ""`, "not coming": a real translation of a line
+with words is never empty, and every hop between the relay and a viewer
+already carries `target` as it is, so no hop had to learn anything. The page
+drops the placeholder and shows the original even where originals are hidden.
+What is on screen is a stylesheet question and happy-dom does not fetch the
+page's stylesheet - but it does apply an inline one, so the test loads the
+real `style.css` and asserts computed display. Each of the four parts was
+removed in turn and each removal turned a test red. Two of the three
+reviewers found the same hole: the signal is the slowest message the page
+ever gets, up to ~22 s after its line on timeouts, and for a line already
+trimmed it brought the stale line back as the newest caption and deleted the
+one being spoken. A late *successful* translation takes that same path, which
+is a separate card with a harder rule; for "not coming" there is nothing
+waiting, so it is simply ignored. The desktop stage keeps its own "…" for a
+failed line - carded, because the same signal on the publisher path would also
+write into the saved transcript.

@@ -656,6 +656,15 @@ fixed**, the last two on 2026-09-15.
   latent on Electron 33, live on the standard WebSocket the next Electron
   moves to. Fixed and held on both implementations.
 
+- ~~**A line whose translation failed kept its "…" for good.**~~ Fixed
+  2026-09-18, found by the 1.0 discovery pass; audit finding 22 had named the
+  symptom and fixed only the report to the app. The relay now answers every
+  failed translation with `target: ""` - documented on `ServerToViewer` as
+  "not coming" - and the viewer page drops the placeholder and shows the
+  original even where the reader hid originals, so an OBS overlay no longer
+  puts a lone "…" on air. The desktop stage's own placeholder is a separate
+  card: its signal would also feed the saved transcript.
+
 ### Other
 
 - ~~**No guard test over `CLAUDE.md`.**~~ Done — `packages/shared/test/handoff.test.ts`

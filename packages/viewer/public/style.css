@@ -157,6 +157,10 @@ body.no-tgt .row .src { font-size: calc(var(--size) * 1.11); color: inherit; }
 body.no-tgt .row.latest .src { font-size: calc(var(--size) * 1.33); font-weight: 600; color: var(--fg); }
 body.no-tgt .row.latest .ts { padding-top: 8px; }
 body.no-src .row .src { display: none; }
+/* a line whose translation is not coming: no placeholder, and its original
+   stays on screen even where the reader hid originals - it is all there is */
+.row.untranslated .tgt { display: none; }
+body.no-src .row.untranslated .src { display: block; }
 body.no-src .row .tgt { margin-top: 0; }
 body.no-src .row.interim { display: none; }
 body.center .row { text-align: center; }

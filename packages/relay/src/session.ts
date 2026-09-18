@@ -622,6 +622,19 @@ export class PublisherSession {
             this.deps.toPublisher?.({ type: "subtitle", id, source: text, target: targetText, latency: full, ...tag });
           })
           .catch((err) => {
+            // Every viewer built this line with a placeholder under it and is
+            // waiting for its own answer, so this goes out for every failure -
+            // the log line below is rate-limited, this is not. `target: ""` is
+            // "not coming": a real translation of a line with words is never
+            // empty, and every hop to a viewer already carries `target` as is.
+            this.deps.toViewers({
+              type: "subtitle",
+              id,
+              source: this.forViewers(text),
+              target: "",
+              final: true,
+              ...tag,
+            });
             const now = Date.now();
             if (now - this.lastTranslateErrorAt < TRANSLATE_ERROR_EVERY_MS) return;
             this.lastTranslateErrorAt = now;

@@ -1177,6 +1177,13 @@ export interface SessionElapsed {
   epoch?: number;
 }
 
+/**
+ * A subtitle's `target` has three meanings, not two. Absent: this line has no
+ * translation yet - one may follow for the same id. A string with words: the
+ * translation. `""`: the translation failed and none is coming, so a viewer
+ * should stop waiting and show the original (`session.ts` sends it; a real
+ * translation of a line with words is never empty).
+ */
 export type ServerToViewer =
   | ({ type: "hello"; languages: Languages; live: boolean; translates: boolean } & SessionElapsed & Brand)
   | ({ type: "partial"; id: number; source: string } & SpeakerTag)

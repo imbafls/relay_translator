@@ -563,6 +563,11 @@
 
   function showSubtitle(msg) {
     let el = rows.get(msg.id);
+    // "not coming" for a line the page no longer holds: nothing is waiting on
+    // it. It is the slowest message there is - sent only once every retry has
+    // run out - so the row has often been trimmed by then, and treating it as a
+    // new line put the stale line back on air and deleted the one being spoken.
+    if (!el && msg.target === "") return;
     if (!el) {
       const ch = msg.channel || 0;
       const interim = interims.get(ch);
@@ -584,7 +589,11 @@
       markLang(g, langs.target);
       g.textContent = msg.target;
       g.classList.remove("pending");
-      el.classList.add("has-tgt");
+      // "" is the relay saying this line's translation is not coming. Without
+      // it the placeholder stayed for good, and an overlay hiding the original
+      // put a lone "…" on air over the words that were said.
+      el.classList.toggle("untranslated", msg.target === "");
+      el.classList.toggle("has-tgt", msg.target !== "");
     }
     if (msg.latency) {
       const total = (msg.latency.stt || 0) + (msg.latency.translate || 0);

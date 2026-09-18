@@ -2533,3 +2533,47 @@ describe("holding the speech socket open while the gate is shut", () => {
     vi.useRealTimers();
   });
 });
+
+/**
+ * A line whose translation failed, and the viewers waiting on it.
+ *
+ * A viewer builds each finished line with a "…" placeholder under it and
+ * replaces that when the translation arrives. When Gemini gave up - retries
+ * spent, a quota wall, a safety block, a revoked key - the relay told the
+ * streamer's app and nobody else, so the placeholder stayed for good: a column
+ * of "…" during an outage, and on an OBS overlay set to hide the original,
+ * a lone "…" where the caption should be. Audit finding 22 named that symptom;
+ * its fix only covered the report to the app.
+ *
+ * `target: ""` is the answer: this line's translation is not coming. A real
+ * translation of a line with words is never empty - the translator throws on
+ * an empty reply - and every hop between here and a viewer already carries
+ * `target` as it is.
+ */
+describe("a line whose translation fails", () => {
+  const failing: Translator = { translate: () => Promise.reject(new Error("503 unavailable")) };
+
+  it("tells viewers the translation is not coming, for every line it fails on", async () => {
+    const { session, viewers } = makeSession(failing);
+    session.start();
+    await tick();
+    session.audio(oneUtterance());
+    session.audio(oneUtterance());
+    await tick(50);
+
+    const lines = viewers.filter(
+      (m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle" && m.target === undefined,
+    );
+    const givenUp = viewers.filter(
+      (m): m is Extract<ServerToViewer, { type: "subtitle" }> => m.type === "subtitle" && m.target === "",
+    );
+    expect(lines.length, "the mock never produced two lines").toBe(2);
+    // both, although the error LOG is rate-limited to one: every viewer row is
+    // waiting on its own answer
+    expect(
+      givenUp.map((m) => m.id),
+      "viewers were never told these translations are not coming, so each keeps its placeholder for good",
+    ).toEqual(lines.map((m) => m.id));
+    session.stop();
+  });
+});

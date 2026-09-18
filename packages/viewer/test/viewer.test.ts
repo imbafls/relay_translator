@@ -1697,3 +1697,95 @@ describe("tearing a page down", () => {
     ).toBe("untouched");
   });
 });
+
+/**
+ * A line whose translation is not coming.
+ *
+ * The relay answers a failed translation with `target: ""`. Before it did,
+ * the row's "…" placeholder stayed for good - and on an OBS overlay set to
+ * hide the original, which is the setup for an audience that does not read
+ * the streamer's language, the caption on air was a lone "…" with the words
+ * that were said hidden underneath it.
+ *
+ * What is on screen is a stylesheet question, so the real stylesheet is
+ * loaded here: happy-dom does not fetch the page's <link>, but it does apply
+ * an inline <style>.
+ */
+describe("a line whose translation is not coming", () => {
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+    document.head.querySelector("style[data-test]")?.remove();
+  });
+
+  const overlayHidingTheOriginal = (): void => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify({ showSource: false }));
+    boot("?obs=1");
+    const style = document.createElement("style");
+    style.dataset.test = "1";
+    style.textContent = css;
+    document.head.appendChild(style);
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+  };
+
+  const shown = (el: Element | null | undefined): boolean => !!el && getComputedStyle(el).display !== "none";
+
+  it("puts the words that were said on air, not a placeholder", () => {
+    overlayHidingTheOriginal();
+    push({ type: "subtitle", id: 1, source: "rush B", final: true, channel: 0 });
+    push({ type: "subtitle", id: 1, source: "rush B", target: "", final: true, channel: 0 });
+
+    const row = document.querySelector("#lines .row.obs-live");
+    expect(row, "nothing is on air at all").not.toBeNull();
+    expect(
+      shown(row?.querySelector(".src")),
+      "the original is still hidden under a translation that is never coming, so the caption on air says nothing",
+    ).toBe(true);
+    expect(
+      shown(row?.querySelector(".tgt")),
+      "the translation slot is still on air - a placeholder, or an empty gap - for a translation that is not coming",
+    ).toBe(false);
+  });
+
+  /**
+   * The signal is the slowest message the page ever gets: it goes out only
+   * once every retry has run out, up to about 22 s after the line on
+   * timeouts. By then the page may have trimmed the row, and a subtitle for an
+   * id it does not hold is treated as a new line - which put the stale line
+   * back on air as the newest caption and deleted the half-caption being
+   * spoken. There is no placeholder left to retire, so there is nothing to do.
+   */
+  it("does nothing for a line the page has already let go of", () => {
+    vi.useFakeTimers();
+    localStorage.setItem("relay-style-v2", JSON.stringify({ showSource: false, lines: 3 }));
+    boot("?obs=1");
+    vi.advanceTimersByTime(1);
+    push({ type: "hello", languages: { source: "en", target: "vi" }, live: true, translates: true });
+    for (let id = 1; id <= 5; id += 1) {
+      push({ type: "subtitle", id, source: `line ${id}`, target: `dong ${id}`, final: true, channel: 0 });
+    }
+    push({ type: "partial", id: 6, source: "being spoken", channel: 0 });
+    const before = lineTexts();
+
+    // line 1's translation, failed long after line 1 was trimmed
+    push({ type: "subtitle", id: 1, source: "line 1", target: "", final: true, channel: 0 });
+
+    expect(lineTexts(), "a line the page had already let go of came back").toEqual(before);
+    expect(document.querySelector("#lines .row.interim"), "the half-caption being spoken was deleted").not.toBeNull();
+  });
+
+  it("still waits with the placeholder while the translation is only in flight", () => {
+    overlayHidingTheOriginal();
+    push({ type: "subtitle", id: 1, source: "rush B", final: true, channel: 0 });
+
+    const row = document.querySelector("#lines .row.obs-live");
+    // unchanged behaviour: a translation that is coming is waited for, and the
+    // original stays hidden as the reader asked
+    expect(shown(row?.querySelector(".src"))).toBe(false);
+    expect(row?.querySelector(".tgt")?.textContent).toBe("…");
+  });
+});
