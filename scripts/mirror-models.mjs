@@ -98,7 +98,7 @@ async function stage(out) {
       }
       continue;
     }
-    const archive = path.join(out, "_archives", path.posix.basename(new URL(info.archive.url).pathname));
+    const archive = path.join(`${out}.archives`, path.posix.basename(new URL(info.archive.url).pathname));
     if (!holds(archive, info.archive.size, info.archive.sha256)) {
       console.log(`fetch ${info.id} archive (${Math.round(info.archive.size / 1e6)} MB)`);
       await fetchTo(info.archive.url, archive);
@@ -109,7 +109,7 @@ async function stage(out) {
     const sizes = new Map(info.files.map((f) => [f.name, f.size]));
     const need = Object.keys(info.archive.pick).filter((name) => !fs.existsSync(path.join(dest, name)));
     if (need.length) {
-      const scratch = path.join(out, "_extract", info.id);
+      const scratch = path.join(`${out}.extract`, info.id);
       fs.rmSync(scratch, { recursive: true, force: true });
       fs.mkdirSync(scratch, { recursive: true });
       console.log(`unpack ${info.id}`);
@@ -132,7 +132,7 @@ async function stage(out) {
   fs.writeFileSync(path.join(out, "README.md"), card(local));
   console.log(`\nstaged ${Object.keys(manifest).length} models in ${out}`);
   console.log("upload (needs `hf auth login` with a write token for imbafls first):");
-  console.log(`  hf upload ${MIRROR_REPO} "${out}" . --repo-type model --exclude "_archives/*" "_extract/*"`);
+  console.log(`  hf upload ${MIRROR_REPO} "${out}" . --repo-type model`);
   console.log("then take the commit hash it prints and run:");
   console.log("  node scripts/mirror-models.mjs verify <commit>");
 }
@@ -174,16 +174,23 @@ async function verify(rev) {
     for (const f of info.files) {
       const url = `https://huggingface.co/${MIRROR_REPO}/resolve/${rev}/${info.id}/${f.name}`;
       const res = await fetch(url, { method: "HEAD", redirect: "manual" });
-      const size = Number(res.headers.get("x-linked-size") || res.headers.get("content-length"));
-      const etag = (res.headers.get("x-linked-etag") || res.headers.get("etag") || "").replace(/"/g, "");
-      const okStatus = res.status === 200 || res.status === 302;
-      // small files are stored in git, not LFS, so their etag is not a SHA-256;
-      // those are held to their size here and to their digest by the app
-      const shaOk = !f.sha256 || etag.length !== 64 || etag === f.sha256;
+      let size = Number(res.headers.get("x-linked-size"));
+      let sha = (res.headers.get("x-linked-etag") || "").replace(/"/g, "");
+      let status = res.status;
+      // Small files are stored in git, not LFS: Hugging Face answers those with
+      // a redirect and no linked size or digest, so fetch and hash them whole.
+      if (!res.headers.get("x-linked-size")) {
+        const body = await fetch(url, { redirect: "follow" });
+        status = body.status;
+        const bytes = Buffer.from(await body.arrayBuffer());
+        size = bytes.length;
+        sha = createHash("sha256").update(bytes).digest("hex");
+      }
       checked += 1;
-      if (!okStatus || size !== f.size || !shaOk) {
+      const okStatus = status === 200 || status === 302;
+      if (!okStatus || size !== f.size || (f.sha256 && sha !== f.sha256)) {
         bad += 1;
-        console.log(`MISMATCH ${info.id}/${f.name}: HTTP ${res.status}, ${size} B, etag ${etag}`);
+        console.log(`MISMATCH ${info.id}/${f.name}: HTTP ${status}, ${size} B, sha256 ${sha}`);
       }
     }
   }
