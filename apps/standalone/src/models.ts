@@ -12,8 +12,53 @@ import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import * as tar from "tar";
 import unbzip2 from "unbzip2-stream";
-import { LOCAL_VAD, LocalModelStatus, STT_MODELS, SttModelInfo, modelDiskBytes } from "@callout-relay/shared";
+import {
+  LOCAL_VAD,
+  LocalModelStatus,
+  STT_MODELS,
+  SttModelFile,
+  SttModelInfo,
+  fileSources,
+  mirrorLabel,
+  modelDiskBytes,
+} from "@callout-relay/shared";
 import { localModelReady } from "@callout-relay/relay";
+
+/**
+ * A file that failed on every source in its chain. Carries each source's
+ * failure, so the message - and the archive fallback, which adds its own -
+ * can name every mirror that was tried and what each one said.
+ */
+export class FileFailure extends Error {
+  constructor(
+    readonly model: SttModelInfo,
+    readonly file: SttModelFile,
+    readonly failures: SourceFailure[],
+    /** bytes of the file kept on disk, which the next DOWNLOAD resumes from */
+    readonly received: number,
+  ) {
+    super(
+      `${model.label}: ${file.name} failed on every source - ` +
+        (failures.length ? failures.map((f) => `${f.mirror}: ${f.reason}`).join("; ") : "it has no source") +
+        `. Got ${mb(received)} of ${mb(file.size)}. ${nextStep(failures, received > 0)}`,
+    );
+  }
+}
+
+/** close a write stream and wait until Windows has the handle back */
+async function closeQuietly(out: fs.WriteStream): Promise<void> {
+  if (out.closed) return;
+  await new Promise<void>((resolve) => {
+    out.once("close", () => resolve());
+    out.destroy();
+  });
+}
+
+async function sha256OfFile(file: string): Promise<string> {
+  const digest = createHash("sha256");
+  await pipeline(fs.createReadStream(file), digest);
+  return digest.digest("hex");
+}
 
 /**
  * Windows says these when something else still has the file open. A scanner
@@ -89,6 +134,72 @@ export async function publishRetry(
   }
 }
 
+/**
+ * An error's message plus the errno underneath it. Node's fetch reports every
+ * network failure as the same two words, "fetch failed", and keeps the part a
+ * person can act on - ECONNRESET, a certificate error, a timeout - in `cause`.
+ * That is the line the 2026-10 log shows on every retry, saying nothing.
+ */
+export function describeError(err: unknown): string {
+  const e = err as { message?: string; code?: string; cause?: { code?: string; message?: string } };
+  const base = String(e?.message || err);
+  const code = e?.cause?.code || e?.code;
+  if (code && !base.includes(code)) return `${base} (${code})`;
+  if (!code && e?.cause?.message && !base.includes(e.cause.message)) return `${base} (${e.cause.message})`;
+  return base;
+}
+
+/** what went wrong with one source, in the terms the advice is chosen by */
+export type FailureKind = "http" | "transport" | "short" | "size" | "checksum" | "decode" | "disk" | "locked" | "other";
+
+export interface SourceFailure {
+  /** `mirrorLabel()` of the source, or `github archive` for the fallback */
+  mirror: string;
+  kind: FailureKind;
+  /** the HTTP status, when the failure was one */
+  status?: number;
+  reason: string;
+}
+
+function classify(err: unknown): { kind: FailureKind; status?: number } {
+  const e = err as { status?: number; transport?: boolean; code?: string; kind?: FailureKind };
+  if (e?.kind) return { kind: e.kind, status: e.status };
+  if (typeof e?.status === "number") return { kind: "http", status: e.status };
+  if (e?.code === "ENOSPC") return { kind: "disk" };
+  if (e?.code && LOCKED.has(e.code)) return { kind: "locked" };
+  if (e?.transport) return { kind: "transport" };
+  return { kind: "other" };
+}
+
+const mb = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${n} B`);
+
+/**
+ * The one sentence a person needs after a failed download: what to do next.
+ * Chosen by the most specific failure seen, because the last one is often the
+ * least informative - a mirror that 404s after another that corrupted the bytes.
+ */
+export function nextStep(failures: SourceFailure[], resumable: boolean): string {
+  const has = (k: FailureKind): SourceFailure | undefined => failures.find((f) => f.kind === k);
+  if (has("disk")) return "Free up space on this drive, then press DOWNLOAD again.";
+  if (has("locked")) {
+    return "Another program is holding the model files - usually an antivirus scan. Wait a minute and press DOWNLOAD again, or exclude the models folder from real-time scanning.";
+  }
+  if (has("checksum") || has("decode") || has("size")) {
+    return "The bytes that arrived were not the published file. Security software that inspects HTTPS downloads is the usual cause: pause it and press DOWNLOAD again, or use COPY DIAGNOSTICS and send the report.";
+  }
+  const http = has("http");
+  if (http?.status === 401 || http?.status === 403 || http?.status === 407) {
+    return "Something between this PC and the download refused it - a proxy, firewall or network filter. Try another network, or use COPY DIAGNOSTICS and send the report.";
+  }
+  if (has("transport") || has("short")) {
+    return resumable
+      ? "The connection kept dropping. Check the network (or a VPN, proxy or antivirus that scans HTTPS) and press DOWNLOAD again - it carries on from where it stopped."
+      : "The connection kept dropping. Check the network (or a VPN, proxy or antivirus that scans HTTPS) and press DOWNLOAD again.";
+  }
+  if (http) return "The download server answered with an error. Try again later; if it persists, use COPY DIAGNOSTICS and send the report.";
+  return "Use COPY DIAGNOSTICS and send the report.";
+}
+
 /** free bytes on the volume holding `dir`, or -1 if the platform will not say */
 
 /**
@@ -123,6 +234,12 @@ export async function publishRetry(
  */
 export interface ResumeOpts {
   signal: AbortSignal;
+  /**
+   * bytes of the file already on disk. The first request then asks for the
+   * rest, which is what lets a `.part` left by a closed app, or by a mirror
+   * that broke, carry on instead of starting again
+   */
+  start?: number;
   /** attempts allowed with no byte delivered between them */
   tries?: number;
   /**
@@ -150,7 +267,7 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   async function* pull(): AsyncGenerator<Buffer> {
-    let received = 0;
+    let received = opts.start ?? 0;
     /** `received` when this run of failures started; -1 before the first one */
     let mark = -1;
     /** consecutive failures with no byte delivered between them */
@@ -179,7 +296,7 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
           // a 404 is a stale catalog URL, not a flaky line. Retrying one wastes
           // twenty seconds and then reports the timeout instead of the 404.
           const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
-          throw Object.assign(new Error(`HTTP ${res.status}`), { noResume: permanent });
+          throw Object.assign(new Error(`HTTP ${res.status}`), { noResume: permanent, status: res.status, received });
         }
         // a host that ignored the Range and started over. Not an error - just
         // bytes the decoder has already seen, so drop them and carry on
@@ -217,7 +334,7 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
         // it as a lost connection sends the reader at the wrong half.
         if (fromConsumer) throw err;
         if ((err as { noResume?: boolean }).noResume) throw err;
-        const detail = String((err as Error).message || err);
+        const detail = describeError(err);
         // a failure that arrives after new bytes is a fresh problem, not the
         // same one repeating, and earns the full budget again
         if (received > mark) stuck = 0;
@@ -230,6 +347,7 @@ export function resumableBody(url: string, opts: ResumeOpts): Readable {
           // which is the wrong half of the problem to go looking at
           throw Object.assign(new Error(`${detail} (gave up after ${why}, ${received} bytes)`), {
             transport: true,
+            received,
           });
         }
         opts.onRetry?.(received, detail);
@@ -326,9 +444,6 @@ export class ModelStore {
     this.errors.delete(id);
     this.onChange();
 
-    const plan: { info: SttModelInfo; file: SttModelInfo["files"] extends (infer F)[] | undefined ? F : never }[] = [];
-    // archive models are one download; `files` only says what it unpacks to
-    if (!info.archive) for (const f of info.files) plan.push({ info, file: f });
     // the catalogue's own entry when it carries one, so a caller that stands the
     // VAD in for a test describes it the same way it describes every other model
     // - including its digest, which is now checked
@@ -339,23 +454,34 @@ export class ModelStore {
     // possibility is real here, because the catalogue is injectable.
     const listed = this.catalogue.find((m) => m.id === LOCAL_VAD.id);
     const vad = listed?.files?.length ? { ...listed, files: listed.files } : LOCAL_VAD;
+    // An archive model goes file by file whenever every file it unpacks to has
+    // a source of its own - which is what the project mirror gives it. The
+    // archive is then the fallback, not the route: the 2026-10 log is a PC on
+    // which every archive failed in the bz2 decoder while plain files installed
+    // (docs/LOG-REVIEW-2026-10.md).
+    const perFile = !info.archive || info.files.every((f) => fileSources(f).length > 0);
+    type Step = { info: SttModelInfo; file: SttModelFile };
+    const plan: Step[] = [];
+    // the shared VAD first: an archive fallback needs it as much as the files do
     if (info.kind === "offline") for (const f of vad.files) plan.push({ info: vad, file: f });
-    const total = plan.reduce((n, p) => n + p.file.size, 0) + (info.archive?.size || 0);
+    if (perFile) for (const f of info.files) plan.push({ info, file: f });
+    let total = plan.reduce((n, p) => n + p.file.size, 0) + (perFile ? 0 : info.archive?.size || 0);
     let doneBytes = 0;
     let lastTick = 0;
     // set once the archive starts unpacking: only then may cleanup delete the
     // model folder. An offline archive model also pulls the shared VAD first,
     // and a failure there must not wipe an install this run never touched.
     let unpacked = false;
-    const tick = (chunk: Buffer): void => {
-      doneBytes += chunk.length;
+    const credit = (n: number): void => {
+      doneBytes += n;
       const now = Date.now();
       if (now - lastTick > 250) {
         lastTick = now;
-        run.progress = Math.min(99, Math.floor((doneBytes / total) * 100));
+        run.progress = Math.min(99, Math.floor((doneBytes / Math.max(1, total)) * 100));
         this.onChange();
       }
     };
+    const tick = (chunk: Buffer): void => credit(chunk.length);
 
     try {
       // An archive downloads far less than it installs - whisper turbo fetches
@@ -365,106 +491,47 @@ export class ModelStore {
       const needed = modelDiskBytes(info);
       const free = this.freeBytes(this.dir);
       if (free >= 0 && free < needed) {
-        const mb = (n: number): string => `${Math.round(n / 1e6)} MB`;
         throw new Error(
-          `needs ${mb(needed)} free once unpacked and this drive has ${mb(free)}`,
+          `${info.label}: needs ${Math.round(needed / 1e6)} MB free once unpacked and this drive has ` +
+            `${Math.round(free / 1e6)} MB. Free up space on this drive, then press DOWNLOAD again.`,
         );
       }
+      let fileFailure: FileFailure | undefined;
       for (const { info: target, file } of plan) {
-        const folder = path.join(this.dir, target.id);
-        fs.mkdirSync(folder, { recursive: true });
-        const dest = path.join(folder, file.name);
-        if (fs.existsSync(dest) && fs.statSync(dest).size === file.size) {
-          doneBytes += file.size;
-          continue;
-        }
-        // Another model may already be fetching this exact file - every offline
-        // model pulls the same shared VAD, and each row has its own DOWNLOAD
-        // button. Two truncating streams on one .part is not merely wasteful:
-        // the loser's descriptor was opened BEFORE the winner's rename, so it
-        // follows the inode and writes a hole into the PUBLISHED file that
-        // every offline model then depends on.
-        const shared = this.fetching.get(dest);
-        if (shared) {
-          this.log("info", `model download: ${target.id}/${file.name} is already being fetched, waiting`);
-          await shared.catch(() => undefined);
-          if (fs.existsSync(dest) && fs.statSync(dest).size === file.size) {
-            doneBytes += file.size;
-            continue;
-          }
-          // it failed or was cancelled under us; this model still wants the
-          // file, so fall through and fetch it ourselves
-        }
-        const part = `${dest}.part`;
-        this.log("info", `model download: ${target.id}/${file.name} (${Math.round(file.size / 1e6)} MB)`);
-        const fetching = (async () => {
-          const out = fs.createWriteStream(part);
-          // the biggest single file in the catalog is a 652 MB encoder, and a
-          // dropped connection anywhere in it used to mean starting over
-          const body = resumableBody(file.url, {
-            signal: controller.signal,
-            onRetry: (at, detail) => {
-              const pct = file.size > 0 ? Math.floor((at / file.size) * 100) : 0;
-              this.log("warn", `model download: ${target.id}/${file.name} lost the connection at ${pct}% - resuming from byte ${at} (${detail})`);
-            },
-          });
-          // hashed as it arrives rather than read back afterwards: the largest
-          // file in the catalogue is 652 MB, and the archive path upstairs
-          // already takes its digest from the stream for the same reason
-          const digest = createHash("sha256");
-          body.on("data", (chunk: Buffer) => {
-            tick(chunk);
-            digest.update(chunk);
-          });
-          await pipeline(body, out);
-          // A body that ends cleanly but short raises nothing for resumableBody
-          // to catch - its own contract says so, and points at fetchArchive as
-          // the layer that reports the case from the byte count. This is the
-          // file path's equivalent, and until it existed there was none: a
-          // truncated mirror, a changed artifact or an error page served with a
-          // 200 was renamed into place and then reported installed, because
-          // localModelReady() decides by filename. The failure surfaced later,
-          // at decode time, a long way from the cause.
-          //
-          // The catalogue carries the exact size of a fixed released artifact,
-          // the way it does for the VAD, and the skip-this-file check above
-          // already trusts that number as the test for "complete". This applies
-          // the same test to what just arrived, before the rename makes it the
-          // published file.
-          const got = fs.statSync(part).size;
-          if (got !== file.size) {
-            // refuse fail-closed: the bytes go too, so a failed 652 MB fetch
-            // does not sit on the disk it just filled
-            fs.rmSync(part, { force: true });
-            throw new Error(
-              `${target.id}/${file.name} arrived as ${got} B, the catalogue declares ${file.size} B`,
-            );
-          }
-          // The length was right; this says the bytes were too. A size check
-          // alone accepts any file of the same length, which is the whole gap
-          // the archives' pinned digest closes and this one did not - until
-          // 90b27e5 fixed the revision these are fetched from, pinning content
-          // would have meant pinning it to something allowed to move.
-          const actual = digest.digest("hex");
-          if (file.sha256 && actual !== file.sha256) {
-            fs.rmSync(part, { force: true });
-            throw new Error(
-              `${target.id}/${file.name} is not the file the catalogue describes: ` +
-                `expected SHA-256 ${file.sha256}, got ${actual}`,
-            );
-          }
-          fs.renameSync(part, dest);
-        })();
-        this.fetching.set(dest, fetching);
         try {
-          await fetching;
-        } finally {
-          this.fetching.delete(dest);
+          await this.fetchFile(target, file, controller.signal, tick, credit);
+        } catch (err) {
+          // a model file that failed on every mirror still has the archive
+          if (controller.signal.aborted || target !== info || !info.archive || !(err instanceof FileFailure)) throw err;
+          fileFailure = err;
+          break;
         }
       }
-      if (info.archive && !this.isReady(id)) {
+      // after a clean per-file run every file is in place; asking isReady()
+      // would also be right for the shipped catalogue, but it judges by that
+      // catalogue, not this store's
+      if (info.archive && (!perFile || fileFailure) && !this.isReady(id)) {
+        if (fileFailure) {
+          this.log("warn", `model download: ${id} - ${fileFailure.file.name} failed on every mirror, falling back to the GitHub archive`);
+          total = doneBytes + info.archive.size;
+        }
         unpacked = true;
-        await this.fetchArchive(info, controller.signal, tick);
+        try {
+          await this.fetchArchive(info, controller.signal, tick);
+        } catch (err) {
+          if (controller.signal.aborted) throw err;
+          const { kind, status } = classify(err);
+          const failures: SourceFailure[] = [
+            ...(fileFailure?.failures ?? []),
+            { mirror: "github archive", kind, status, reason: describeError(err) },
+          ];
+          const got = (err as { received?: number }).received ?? 0;
+          throw new Error(
+            `${info.label}: ${fileFailure ? `${fileFailure.file.name} and the archive` : "the archive"} failed on every source - ` +
+              `${failures.map((f) => `${f.mirror}: ${f.reason}`).join("; ")}. ` +
+              `Got ${mb(got)} of ${mb(info.archive.size)} from the archive. ${nextStep(failures, false)}`,
+          );
+        }
       }
       run.progress = 100;
       this.log("info", `model ready: ${id}`);
@@ -474,7 +541,9 @@ export class ModelStore {
       this.log("error", `model download failed: ${id} - ${message}`);
       // a half-unpacked archive must never look like a model on the next launch
       const stale = info.archive ? this.stagingFor(id) : [];
-      if (unpacked) stale.push(path.join(this.dir, id));
+      // only an archive-only install: after a per-file attempt the folder holds
+      // .part files the next DOWNLOAD resumes from
+      if (unpacked && !perFile) stale.push(path.join(this.dir, id));
       for (const folder of stale) {
         try {
           this.removeArchiveDir(folder);
@@ -489,13 +558,169 @@ export class ModelStore {
   }
 
   /**
-   * Fetch a tar.bz2 model and unpack only the entries it declares, renaming
-   * each to the plain name the worker looks for. The archive itself never
-   * touches disk.
+   * One file into `<dir>/<model>/<name>`, from whichever source in its chain
+   * delivers it, sharing an in-flight fetch of the same path.
+   */
+  private async fetchFile(
+    target: SttModelInfo,
+    file: SttModelFile,
+    signal: AbortSignal,
+    tick: (chunk: Buffer) => void,
+    credit: (n: number) => void,
+  ): Promise<void> {
+    const folder = path.join(this.dir, target.id);
+    fs.mkdirSync(folder, { recursive: true });
+    const dest = path.join(folder, file.name);
+    if (fs.existsSync(dest) && fs.statSync(dest).size === file.size) {
+      credit(file.size);
+      return;
+    }
+    // Another model may already be fetching this exact file - every offline
+    // model pulls the same shared VAD, and each row has its own DOWNLOAD
+    // button. Two truncating streams on one .part is not merely wasteful:
+    // the loser's descriptor was opened BEFORE the winner's rename, so it
+    // follows the inode and writes a hole into the PUBLISHED file that
+    // every offline model then depends on.
+    const shared = this.fetching.get(dest);
+    if (shared) {
+      this.log("info", `model download: ${target.id}/${file.name} is already being fetched, waiting`);
+      await shared.catch(() => undefined);
+      if (fs.existsSync(dest) && fs.statSync(dest).size === file.size) {
+        credit(file.size);
+        return;
+      }
+      // it failed or was cancelled under us; this model still wants the
+      // file, so fall through and fetch it ourselves
+    }
+    const fetching = this.fetchFromSources(target, file, dest, signal, tick, credit);
+    this.fetching.set(dest, fetching);
+    try {
+      await fetching;
+    } finally {
+      this.fetching.delete(dest);
+    }
+  }
+
+  /**
+   * Walk the file's mirror chain. Every source serves the same bytes - the
+   * catalogue's size and SHA-256 hold for all of them - so a `.part` one source
+   * left behind is continued by the next, and by the next launch of the app.
+   * A source that delivers the wrong bytes has them deleted before the next
+   * one starts.
+   */
+  private async fetchFromSources(
+    target: SttModelInfo,
+    file: SttModelFile,
+    dest: string,
+    signal: AbortSignal,
+    tick: (chunk: Buffer) => void,
+    credit: (n: number) => void,
+  ): Promise<void> {
+    const sources = fileSources(file);
+    const part = `${dest}.part`;
+    const failures: SourceFailure[] = [];
+    let counted = 0;
+    for (const [i, url] of sources.entries()) {
+      const mirror = mirrorLabel(url);
+      let have = fs.existsSync(part) ? fs.statSync(part).size : 0;
+      if (have > file.size) {
+        fs.rmSync(part, { force: true });
+        have = 0;
+      }
+      // bytes already on disk count towards progress, once
+      if (have > counted) credit(have - counted);
+      counted = have;
+      this.log(
+        "info",
+        `model download: ${target.id}/${file.name} (${mb(file.size)}) from ${mirror}` +
+          (have > 0 ? `, resuming at ${mb(have)}` : ""),
+      );
+      try {
+        await this.fetchFrom(url, part, have, target, file, signal, (chunk) => {
+          counted += chunk.length;
+          tick(chunk);
+        });
+        fs.renameSync(part, dest);
+        this.log("info", `model download: ${target.id}/${file.name} served by ${mirror}`);
+        return;
+      } catch (err) {
+        if (signal.aborted) throw err;
+        const { kind, status } = classify(err);
+        failures.push({ mirror, kind, status, reason: describeError(err) });
+        const more = i < sources.length - 1 && kind !== "disk";
+        this.log(
+          "warn",
+          `model download: ${target.id}/${file.name} failed on ${mirror} - ${describeError(err)}` +
+            (more ? " - trying the next mirror" : ""),
+        );
+        if (!more) break;
+      }
+    }
+    const received = fs.existsSync(part) ? fs.statSync(part).size : 0;
+    throw new FileFailure(target, file, failures, received);
+  }
+
+  /** one source, into `part`, starting from the `have` bytes already there */
+  private async fetchFrom(
+    url: string,
+    part: string,
+    have: number,
+    target: SttModelInfo,
+    file: SttModelFile,
+    signal: AbortSignal,
+    onChunk: (chunk: Buffer) => void,
+  ): Promise<void> {
+    if (have < file.size) {
+      const out = fs.createWriteStream(part, { flags: have > 0 ? "a" : "w" });
+      // the biggest single file in the catalog is a 675 MB encoder, and a
+      // dropped connection anywhere in it used to mean starting over
+      const body = resumableBody(url, {
+        signal,
+        start: have,
+        onRetry: (at, detail) => {
+          const pct = file.size > 0 ? Math.floor((at / file.size) * 100) : 0;
+          this.log("warn", `model download: ${target.id}/${file.name} lost the connection at ${pct}% - resuming from byte ${at} (${detail})`);
+        },
+      });
+      body.on("data", onChunk);
+      // pipeline closes `out` however this ends, so a failed source never
+      // leaves the .part held open for the next one, or for the cleanup
+      await pipeline(body, out);
+    }
+    // A body that ends cleanly but short raises nothing for resumableBody to
+    // catch. Short bytes are kept: they are a prefix of the right file, and the
+    // next source or the next DOWNLOAD carries on from them. Long ones are not.
+    const got = fs.statSync(part).size;
+    if (got !== file.size) {
+      if (got > file.size) fs.rmSync(part, { force: true });
+      throw Object.assign(
+        new Error(`${target.id}/${file.name} arrived as ${got} B, the catalogue declares ${file.size} B`),
+        { kind: got > file.size ? "size" : "short" },
+      );
+    }
+    // Hashed from disk rather than from the stream, because the bytes may have
+    // come from several sources over several launches of the app.
+    if (file.sha256) {
+      const actual = await sha256OfFile(part);
+      if (actual !== file.sha256) {
+        fs.rmSync(part, { force: true });
+        throw Object.assign(
+          new Error(
+            `${target.id}/${file.name} is not the file the catalogue describes: expected SHA-256 ${file.sha256}, got ${actual}`,
+          ),
+          { kind: "checksum" },
+        );
+      }
+    }
+  }
+
+  /**
+   * Fetch a tar.bz2 model and unpack only the entries it declares, under the
+   * plain names the worker looks for. The archive itself never touches disk.
    *
    * Everything lands in a staging folder first. `localModelReady()` decides
    * by filename alone, so extracting straight into `<dir>/<id>/` would report
-   * the model ready the moment tar opened the last file - before its bytes
+   * the model ready the moment the last file was opened - before its bytes
    * were written - and a crash mid-extract would leave that half-written file
    * looking installed for good. The staging folder is published with a single
    * directory rename once every entry is present and non-empty.
@@ -555,7 +780,7 @@ export class ModelStore {
     const archive = info.archive!;
     const folder = path.join(this.dir, info.id);
     fs.mkdirSync(staging, { recursive: true });
-    this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB)`);
+    this.log("info", `model download: ${info.id} archive (${Math.round(archive.size / 1e6)} MB) from github`);
 
     // entry name inside the archive -> the local name the worker wants
     const wanted = new Map<string, string>();
@@ -606,29 +831,65 @@ export class ModelStore {
     body.on("error", () => {
       /* handled by the pipeline; this only stops an unhandled 'error' */
     });
+
+    // The files being written are opened HERE, not inside tar, so that a
+    // failure can close them. `tar.x` kept the entry it was writing open when
+    // the pipeline was torn down: under Electron 33's Node 20 the handle stayed
+    // until the app exited, so every cleanup waited out its 31 s of retries on
+    // ENOTEMPTY and then failed on `EPERM ... lstat` - the exact pair the
+    // 2026-10 log ends every failure with, reproduced here with a corrupted
+    // archive in Electron (docs/LOG-REVIEW-2026-10.md).
+    const writers: fs.WriteStream[] = [];
+    const written: Promise<void>[] = [];
+    const parser = new tar.Parser({
+      strict: true,
+      onReadEntry: (entry) => {
+        const local = entry.type === "File" ? wanted.get(path.posix.basename(entry.path)) : undefined;
+        if (!local) {
+          entry.resume();
+          return;
+        }
+        const out = fs.createWriteStream(path.join(staging, local));
+        writers.push(out);
+        const done = new Promise<void>((resolve, reject) => {
+          out.on("finish", resolve);
+          out.on("error", reject);
+        });
+        // observed below, or abandoned with the attempt; never unhandled
+        done.catch(() => undefined);
+        written.push(done);
+        // a write that fails (a full disk, a lock) fails the whole attempt
+        // rather than leaving a truncated ONNX to sail through
+        out.on("error", (err) => body.destroy(err));
+        entry.pipe(out);
+      },
+    });
     try {
-      await pipeline(
-        body,
-        unbzip2(),
-        tar.x({
-          cwd: staging,
-          strip: 1,
-          // without this a failed write (a full disk, a lock) is only a warning:
-          // tar drops the rest of that entry, the pipeline resolves, and a
-          // truncated ONNX would sail through as a finished model
-          strict: true,
-          filter: (p: string) => wanted.has(path.posix.basename(p)),
-        }),
-      );
+      await pipeline(body, unbzip2(), parser as unknown as NodeJS.WritableStream);
+      await Promise.all(written);
     } catch (err) {
-      const detail = String((err as Error).message || err);
+      await Promise.all(writers.map(closeQuietly));
+      const detail = describeError(err);
+      const status = (err as { status?: number }).status;
+      if (typeof status === "number") {
+        // a 4xx is the catalogue's problem and will not change on a retry
+        throw Object.assign(new Error(`HTTP ${status}`), {
+          kind: "http",
+          status,
+          received,
+          retryArchive: status >= 500 || status === 408 || status === 429,
+        });
+      }
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOSPC" || (code && LOCKED.has(code))) {
+        throw Object.assign(new Error(`could not write the model (${detail})`), { code, received });
+      }
       // Two signals, neither of which is "how many bytes did we pull":
       //  - the error is a stream/socket failure, i.e. the transport broke;
       //  - or the source ENDED and still delivered less than it announced,
       //    which is a server that closed short cleanly and raises nothing.
       // A decoder error on a body that never ended is the archive, whatever
       // the byte count says - and that is the case this was getting wrong.
-      const code = (err as NodeJS.ErrnoException).code;
       const transportish =
         (err as { transport?: boolean }).transport === true ||
         code === "ERR_STREAM_PREMATURE_CLOSE" ||
@@ -638,14 +899,17 @@ export class ModelStore {
       const endedShort = sourceEnded && declared > 0 && received < declared;
       if (transportish || endedShort) {
         const pct = declared > 0 ? Math.floor((received / declared) * 100) : 100;
-        throw new Error(
-          `the download stopped early: ${received} of ${declared} bytes (${pct}%) - ${detail}`,
+        throw Object.assign(
+          new Error(`the download stopped early: ${received} of ${declared} bytes (${pct}%) - ${detail}`),
+          { kind: "transport", received },
         );
       }
       // a fresh attempt can still be the pinned archive; the digest decides,
       // but only after the stream finishes, so this one is worth retrying
       throw Object.assign(new Error(`the archive would not unpack (${received} bytes read) - ${detail}`), {
         retryArchive: true,
+        kind: "decode",
+        received,
       });
     }
 
@@ -659,7 +923,7 @@ export class ModelStore {
     if (actual !== archive.sha256) {
       throw Object.assign(
         new Error(`archive checksum mismatch: expected SHA-256 ${archive.sha256}, got ${actual}`),
-        { retryArchive: true },
+        { retryArchive: true, kind: "checksum", received },
       );
     }
 
@@ -668,21 +932,21 @@ export class ModelStore {
     // long one only means the catalog drifted, which is not the worker's problem
     const expect = new Map((info.files || []).map((f) => [f.name, f.size]));
     for (const [entry, local] of wanted) {
-      const from = path.join(staging, entry);
-      if (!fs.existsSync(from)) throw new Error(`archive is missing ${entry}`);
-      const size = fs.statSync(from).size;
+      const at = path.join(staging, local);
+      if (!fs.existsSync(at)) throw new Error(`archive is missing ${entry}`);
+      const size = fs.statSync(at).size;
       const want = expect.get(local);
       if (want != null ? size < want : size === 0) {
         throw new Error(`archive entry ${entry} is ${size} B, expected ${want ?? "non-empty"}`);
       }
       if (want != null && size !== want) this.log("warn", `${info.id}/${local} is ${size} B, catalog says ${want}`);
-      if (entry !== local) fs.renameSync(from, path.join(staging, local));
     }
     // only now may the model be seen: one rename, after every file is whole.
     // Windows hands out EPERM/EBUSY when a scanner is still holding a new file,
     // so the publish gets the same few retries the removals get.
     this.removeArchiveDir(folder);
     await publishRetry(() => fs.renameSync(staging, folder));
+    this.log("info", `model download: ${info.id} served by github archive`);
   }
 
   cancel(id: string): void {
