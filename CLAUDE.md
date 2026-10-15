@@ -355,5 +355,6 @@ Full list and status in `docs/OPEN-WORK.md`. The two that shape decisions:
   every archive model dying in the bz2 decoder on one PC while plain files
   install there. Models are now plain files through a mirror chain
   (`fileSources()`, `MIRROR_REPO` at `MIRROR_REV`), with the GitHub archive
-  as the fallback. `MIRROR_REV` stays null until the owner uploads the mirror;
-  `scripts/mirror-models.mjs` stages and verifies it.
+  as the fallback. The mirror is `imbafls/callout-relay-models`, pinned by
+  `MIRROR_REV`; `scripts/mirror-models.mjs` stages it and verifies a commit
+  before the pin moves. B6 waits only on a retry on the reporting PC.

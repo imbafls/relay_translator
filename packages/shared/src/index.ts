@@ -821,8 +821,9 @@ const GH_MODELS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-m
 export const MIRROR_REPO = "imbafls/callout-relay-models";
 
 /**
- * The commit of `MIRROR_REPO` every file is fetched from, or null before the
- * mirror has been uploaded.
+ * The commit of `MIRROR_REPO` every file is fetched from, or null when there
+ * is no mirror. `26f8bdd7` was uploaded on 2026-10-15 and `verify` matched all
+ * 39 files' size and SHA-256 before it was written here.
  *
  * A commit and never a branch, for the reason HF_REV gives: a repo edit must
  * not be able to change the bytes an install receives. Null is a real state,
@@ -831,7 +832,7 @@ export const MIRROR_REPO = "imbafls/callout-relay-models";
  * 1.0 behaviour. Set it only after `node scripts/mirror-models.mjs verify
  * <commit>` passes against that commit.
  */
-export const MIRROR_REV: string | null = null;
+export const MIRROR_REV: string | null = "26f8bdd7c4e06f4422b448a8639558eb27255fcf";
 
 /** this project's copy of `<id>/<name>`, at the pinned commit, when there is one */
 export function mirrorUrl(id: string, name: string, rev: string | null = MIRROR_REV): string | null {

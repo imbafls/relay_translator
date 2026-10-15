@@ -32,9 +32,8 @@ here.
   instrumented error came back on 2026-10-15 from 1.0.0: every archive dies in
   the bz2 decoder there while plain-file models install. The fix moves every
   model onto plain files from the project's own Hugging Face mirror, with the
-  archive as the fallback; it is live once the mirror is uploaded and
-  `MIRROR_REV` is set, which needs the owner's Hugging Face login. Full entry
-  under Blocked.
+  archive as the fallback, and the mirror is uploaded and pinned. What is left
+  is confirming it on the reporting PC. Full entry under Blocked.
 - **With a local model, STOP can take longer than it needs to (audit finding
   17 (part), low).** The close is still posted behind the queued audio on the
   same port, in `packages/relay/src/localSttWorker.ts`. With the deadline scaled
@@ -236,8 +235,8 @@ wire signing into `electron-builder`.
 
 ### B6 — In-app archive model downloads corrupt at ~28%
 **Band: medium. Status: the instrumented failure arrived 2026-10-15, from
-1.0.0; fixed by routing around the archive path, blocked only on uploading the
-mirror (the owner's Hugging Face login). Read
+1.0.0; fixed by routing around the archive path through a mirror that is now
+uploaded and pinned, blocked only on a retry on the reporting PC. Read
 [`LOG-REVIEW-2026-10.md`](LOG-REVIEW-2026-10.md) before anything below, which
 is the history that led to it.**
 
@@ -266,11 +265,13 @@ is the history that led to it.**
 > Electron 33 `tar.x` kept them open until exit, which is the 31 s of
 > `ENOTEMPTY` and the `EPERM ... lstat` at the end of every failure in the log.
 >
-> **What is left.** `MIRROR_REV` is null, so until the mirror is uploaded every
-> model takes the 1.0 route. The files are staged; `hf auth login`, then
-> `hf upload` and `node scripts/mirror-models.mjs verify <commit>` as that
-> script prints, then set `MIRROR_REV` to the commit. B6 closes when the two
-> largest models install from the mirror on the reporting PC.
+> **The mirror is live (2026-10-15).** Uploaded as
+> `imbafls/callout-relay-models` commit `26f8bdd7`, and `verify` matched all 39
+> files' size and SHA-256 against the catalogue before `MIRROR_REV` was set.
+> On this machine, in Electron 33 from that commit, Nemotron installed in 25 s
+> and Whisper Turbo, interrupted at 30% and relaunched, resumed at 313.7 MB
+> and finished. **What is left:** B6 closes when the two largest models
+> install from the mirror on the reporting PC.
 
 > **What v0.8.1 closed, and what it did not.** `516247f` hashes the compressed
 > bytes as they stream and refuses to publish anything whose digest is not the
