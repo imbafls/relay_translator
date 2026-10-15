@@ -792,6 +792,19 @@ function registerIpc(): void {
     void models.download(String(id || ""));
     return models.status();
   });
+  ipcMain.handle("models:diagnostics", (): Reply<"modelDiagnostics"> => {
+    let logText = "";
+    try {
+      logText = fs.readFileSync(path.join(defaultDataDir(), "relay.log"), "utf8");
+    } catch {
+      /* nothing logged yet */
+    }
+    return models.diagnostics({
+      appVersion: APP_VERSION,
+      runtime: `Windows ${os.release()} ${process.arch}, Electron ${process.versions.electron}`,
+      logText,
+    });
+  });
   ipcMain.handle("models:cancel", (_e, id: string) => {
     models.cancel(String(id || ""));
     return models.status();

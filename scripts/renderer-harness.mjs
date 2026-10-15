@@ -92,6 +92,7 @@ window.cr = (() => {
     downloadModel: async () => [],
     cancelModel: async () => [],
     removeModel: async () => [],
+    modelDiagnostics: async () => "harness - no model diagnostics",
     onCommand: noop,
     onConfigChanged: noop,
     onStatus: noop,

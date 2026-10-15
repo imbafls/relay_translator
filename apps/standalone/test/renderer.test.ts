@@ -177,6 +177,7 @@ function bridge(config: AppConfig) {
     downloadModel: async () => [],
     cancelModel: async () => [],
     removeModel: async () => [],
+    modelDiagnostics: async () => fakeDiagnostics,
     onCommand: () => {},
     onConfigChanged: () => {},
     onStatus: (cb: (s: unknown) => void) => {
@@ -246,6 +247,8 @@ let claimFails: string | null = null;
 let fakeRotation: LinkRotation = { remote: "none" };
 /** what cr.modelStatus() answers: the local models on disk */
 let fakeModels: { id: string; downloaded: boolean; sizeMb: number }[] = [];
+/** what cr.modelDiagnostics() answers */
+let fakeDiagnostics = "Callout Relay test - diagnostics";
 /** what cr.readRelayLog() answers - the raw, unredacted relay.log text */
 let fakeRelayLog = "";
 /**
@@ -409,6 +412,7 @@ afterEach(() => {
   fakeModels = [];
   fakeRotation = { remote: "none" };
   fakeRelayLog = "";
+  fakeDiagnostics = "Callout Relay test - diagnostics";
   readRelayLogGate = null;
   releaseReadRelayLogGate = null;
   appVersionFails = false;
@@ -3125,6 +3129,29 @@ describe("when a model download fails", () => {
 
     expect(strip()).toMatch(/FAILED/i);
     expect(strip()).toMatch(/2752512/);
+  });
+
+  it("keeps the whole reason on the model's row, where it does not vanish", async () => {
+    await bootWith({ setupDone: true, stt: "local-whisper-turbo" });
+    (document.getElementById("settingsBtn") as HTMLButtonElement).click();
+    await settle(30);
+    await failWith("Whisper Large v3 Turbo: encoder.int8.onnx failed on every source - hf:imbafls/callout-relay-models: HTTP 404");
+
+    const rows = [...document.querySelectorAll("#settingsModels .model-row")];
+    const row = rows.find((r) => /Turbo/i.test(r.textContent || ""));
+    expect(row, "the model is not listed").toBeTruthy();
+    expect(row!.querySelector(".meta.why")?.textContent, "the reason is only in a tooltip").toContain(
+      "hf:imbafls/callout-relay-models: HTTP 404",
+    );
+  });
+
+  it("copies the diagnostics main gathered with one click", async () => {
+    fakeDiagnostics = "Callout Relay 1.0.0 - models folder: x";
+    await bootWith({ setupDone: true, stt: "local-whisper-turbo" });
+    (document.getElementById("copyModelDiag") as HTMLButtonElement).click();
+    await settle(20);
+
+    expect(calls.clipboard).toContain("Callout Relay 1.0.0 - models folder: x");
   });
 });
 

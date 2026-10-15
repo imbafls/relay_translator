@@ -121,7 +121,7 @@ All verified against `package.json` at v1.0.0.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | vitest, the whole suite. **105 files**, ~40 s. The count is guarded: `handoff.test.ts` fails if this line and the tree disagree. It used to quote a test total too, and that drifted twice in two days - once inside the very commit that corrected it - because no cheap check can hold it. A number nothing can verify is worse than no number. |
+| `pnpm test` | vitest, the whole suite. **106 files**, ~40 s. The count is guarded: `handoff.test.ts` fails if this line and the tree disagree. It used to quote a test total too, and that drifted twice in two days - once inside the very commit that corrected it - because no cheap check can hold it. A number nothing can verify is worse than no number. |
 | `pnpm test:watch` | vitest in watch mode. |
 | `pnpm typecheck:test` | `tsc -p tsconfig.test.json --noEmit`. **Separate on purpose** — see gotchas. |
 | `pnpm -r typecheck` | Per-package typecheck. Needs `pnpm -r build` first on a clean checkout. |
@@ -282,7 +282,7 @@ documentation and config — `versions.test.ts`, `workflows.test.ts`,
 guard non-source facts.
 
 **No mocking of the core relay or the translation state machine.** Verified:
-`vi.mock` appears in **zero** of the 105 test files. The relay tests stand up a
+`vi.mock` appears in **zero** of the 106 test files. The relay tests stand up a
 real `startRelay` on an ephemeral port and talk to it over real WebSockets; the
 renderer and viewer tests run under happy-dom against the real markup. Keep it
 that way — mocking the thing under test is what the audit found hiding several
@@ -351,7 +351,9 @@ Full list and status in `docs/OPEN-WORK.md`. The two that shape decisions:
   allows `http:` only for loopback (`localhost`, `127.0.0.1`, `[::1]`, `::1`) on
   the grounds that that is a developer serving their own build. An unset feed
   means the packaged GitHub feed and is allowed.
-- **In-app archive model downloads (B6)** fail at ~28% on one user's machine
-  and cannot be reproduced on the dev desktop, where both failing models install
-  cleanly. The instrumented error message is what will settle it - ask for it
-  before changing the download path.
+- **Model downloads (B6).** The 1.0.0 log (docs/LOG-REVIEW-2026-10.md) shows
+  every archive model dying in the bz2 decoder on one PC while plain files
+  install there. Models are now plain files through a mirror chain
+  (`fileSources()`, `MIRROR_REPO` at `MIRROR_REV`), with the GitHub archive
+  as the fallback. `MIRROR_REV` stays null until the owner uploads the mirror;
+  `scripts/mirror-models.mjs` stages and verifies it.
