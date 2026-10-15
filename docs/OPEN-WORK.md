@@ -28,12 +28,13 @@ here.
   identity check, not a code change; until then an update is checked against
   the sha512 in the release's own `latest.yml`, and `isAllowedUpdateFeed()`
   refuses any feed that is not `https:` or loopback. Full entry under Blocked.
-- **An archive model download may still fail on one reporting machine (B6).**
-  It has never been reproduced here, where every archive model installs, and
-  0.8.1 already pinned each archive to a SHA-256 and retries a failed attempt in
-  a fresh folder - the fix that fits the report - so what remains is waiting for
-  the instrumented error from that machine, which cloud speech does not need.
-  Full entry under Blocked.
+- **An archive model download fails on one reporting machine (B6).** The
+  instrumented error came back on 2026-10-15 from 1.0.0: every archive dies in
+  the bz2 decoder there while plain-file models install. The fix moves every
+  model onto plain files from the project's own Hugging Face mirror, with the
+  archive as the fallback; it is live once the mirror is uploaded and
+  `MIRROR_REV` is set, which needs the owner's Hugging Face login. Full entry
+  under Blocked.
 - **With a local model, STOP can take longer than it needs to (audit finding
   17 (part), low).** The close is still posted behind the queued audio on the
   same port, in `packages/relay/src/localSttWorker.ts`. With the deadline scaled
@@ -234,10 +235,42 @@ LAN-MITM paths; it does not make an update cryptographically verified.
 wire signing into `electron-builder`.
 
 ### B6 — In-app archive model downloads corrupt at ~28%
-**Band: medium. Status: re-scoped by v0.8.1, still never reproduced here and
-still never retried there. Instrumented 2026-09-07; two candidate causes fixed
-the same day, one demonstrated end to end. v0.8.1 then pinned every archive to
-a SHA-256 and gave each retry a staging folder of its own.**
+**Band: medium. Status: the instrumented failure arrived 2026-10-15, from
+1.0.0; fixed by routing around the archive path, blocked only on uploading the
+mirror (the owner's Hugging Face login). Read
+[`LOG-REVIEW-2026-10.md`](LOG-REVIEW-2026-10.md) before anything below, which
+is the history that led to it.**
+
+> **What the 1.0.0 log said (2026-10-15).** Nemotron, Parakeet v2 and Whisper
+> Tiny all failed in the bz2 decoder (`crc32 do not match`, and the decoder's
+> joke errors for a bad selector and a bad block pointer), each within a few KB
+> of the same offset on every attempt, on 0.8.0 and 1.0.0, and on both of the
+> owner's machines. No HTTP error, no disk or publish problem, no checksum
+> mismatch (none got that far). In the same session the per-file Hugging Face
+> model installed and ran. The same code on the same Electron runtime decodes
+> past every one of those offsets here, so the cause is still not proven; the
+> review names the one test on that PC that would settle it (download the
+> asset with curl and compare its SHA-256).
+>
+> **What changed.** Every local model is now plain files, each with its own
+> size and SHA-256 (archive models' files hashed by
+> `scripts/mirror-models.mjs stage` from archives that matched their pins),
+> fetched through a chain: `imbafls/callout-relay-models` at `MIRROR_REV`
+> first, then the upstream file, with the GitHub archive as the last resort.
+> A file downloads into `<name>.part` and resumes with `Range` across sources
+> and app restarts; a source that 4xxs, breaks or delivers wrong bytes falls
+> through to the next, and the log names the mirror that served each file.
+> Failures name the model, every source, the status or errno, the bytes and
+> the next step, and the model screen has COPY DIAGNOSTICS. Separately, the
+> archive path now closes the files it was extracting when it fails: under
+> Electron 33 `tar.x` kept them open until exit, which is the 31 s of
+> `ENOTEMPTY` and the `EPERM ... lstat` at the end of every failure in the log.
+>
+> **What is left.** `MIRROR_REV` is null, so until the mirror is uploaded every
+> model takes the 1.0 route. The files are staged; `hf auth login`, then
+> `hf upload` and `node scripts/mirror-models.mjs verify <commit>` as that
+> script prints, then set `MIRROR_REV` to the commit. B6 closes when the two
+> largest models install from the mirror on the reporting PC.
 
 > **What v0.8.1 closed, and what it did not.** `516247f` hashes the compressed
 > bytes as they stream and refuses to publish anything whose digest is not the

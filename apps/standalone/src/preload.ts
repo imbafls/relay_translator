@@ -49,6 +49,8 @@ export interface RendererBridge {
   downloadModel(id: string): Promise<LocalModelStatus[]>;
   cancelModel(id: string): Promise<LocalModelStatus[]>;
   removeModel(id: string): Promise<LocalModelStatus[]>;
+  /** COPY DIAGNOSTICS: the model screen's state and recent download log, redacted */
+  modelDiagnostics(): Promise<string>;
   /** "setup" reopens onboarding (tray / keys view) */
   onCommand(cb: (cmd: "start" | "stop" | "setup") => void): void;
   onConfigChanged(cb: (cfg: AppConfig) => void): void;
@@ -104,6 +106,7 @@ contextBridge.exposeInMainWorld("cr", {
   downloadModel: (id: string) => ipcRenderer.invoke("models:download", id),
   cancelModel: (id: string) => ipcRenderer.invoke("models:cancel", id),
   removeModel: (id: string) => ipcRenderer.invoke("models:remove", id),
+  modelDiagnostics: () => ipcRenderer.invoke("models:diagnostics"),
   onConfigChanged: (cb: (cfg: AppConfig) => void) =>
     ipcRenderer.on("config:changed", (_e, cfg) => cb(cfg)),
   onStatus: (cb: (status: ControlStatus) => void) =>

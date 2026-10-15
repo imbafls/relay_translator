@@ -2005,6 +2005,14 @@ function renderModelList(
     meta.className = "meta";
     meta.textContent = `${m.languages || ""} · ${fmtMb(m.sizeMb || 0)} · ${m.kind === "streaming" ? "streaming" : "utterances"}`;
     body.append(name, meta);
+    // the reason, on the row, where it stays: a tooltip vanished on the next
+    // redraw, and the reason is now long enough to say what to do next
+    if (st?.error && st.error !== "cancelled" && st.progress == null && !st.downloaded) {
+      const why = document.createElement("div");
+      why.className = "meta why";
+      why.textContent = st.error;
+      body.appendChild(why);
+    }
     const act = document.createElement("div");
     act.className = "act";
     const btn = (text: string, cls: string, onClick: () => void): HTMLButtonElement => {
@@ -2818,6 +2826,9 @@ function bind(): void {
   $("copyLink").onclick = () => {
     const url = currentLink();
     if (url) void copyText(url, "link");
+  };
+  $("copyModelDiag").onclick = () => {
+    void cr.modelDiagnostics().then((text) => copyText(text, "model diagnostics"));
   };
   $("openLink").onclick = () => {
     const url = currentLink();

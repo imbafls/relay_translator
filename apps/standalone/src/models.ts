@@ -15,12 +15,15 @@ import unbzip2 from "unbzip2-stream";
 import {
   LOCAL_VAD,
   LocalModelStatus,
+  MIRROR_REPO,
+  MIRROR_REV,
   STT_MODELS,
   SttModelFile,
   SttModelInfo,
   fileSources,
   mirrorLabel,
   modelDiskBytes,
+  redactLog,
 } from "@callout-relay/shared";
 import { localModelReady } from "@callout-relay/relay";
 
@@ -947,6 +950,49 @@ export class ModelStore {
     this.removeArchiveDir(folder);
     await publishRetry(() => fs.renameSync(staging, folder));
     this.log("info", `model download: ${info.id} served by github archive`);
+  }
+
+  /**
+   * COPY DIAGNOSTICS on the model screen: everything a download report needs,
+   * in one paste. B6 stayed open for weeks because the one useful line was in a
+   * file nobody could find; this puts it, and what surrounds it, on the
+   * clipboard. Redacted with the same `redactLog` SEND FEEDBACK uses, so a key
+   * in a URL or a user name in a path never leaves with it.
+   */
+  diagnostics(about: { appVersion: string; runtime: string; logText: string }): string {
+    const free = this.freeBytes(this.dir);
+    const lines = [
+      `Callout Relay ${about.appVersion} - ${about.runtime}`,
+      `models folder: ${this.dir} (${free >= 0 ? `${mb(free)} free` : "free space unknown"})`,
+      `mirror: ${MIRROR_REV ? `hf:${MIRROR_REPO} @ ${MIRROR_REV}` : "not published yet - archive models come from GitHub"}`,
+      "",
+    ];
+    for (const s of this.status()) {
+      const info = this.catalogue.find((m) => m.id === s.id)!;
+      const state = s.downloaded ? "ready" : s.progress != null ? `downloading ${s.progress}%` : s.error ? "failed" : "not downloaded";
+      lines.push(`${s.id}: ${state}`);
+      if (s.error) lines.push(`  error: ${s.error}`);
+      const chain = [...new Set((info.files ?? []).flatMap((f) => fileSources(f).map(mirrorLabel)))];
+      lines.push(`  sources: ${[...chain, ...(info.archive ? ["github archive"] : [])].join(" > ") || "none"}`);
+      // what a failed or interrupted run left behind is often the clearest
+      // evidence of where it stopped
+      const leftovers: string[] = [];
+      for (const staged of this.stagingFor(s.id)) leftovers.push(`${path.basename(staged)}/`);
+      try {
+        for (const name of fs.readdirSync(path.join(this.dir, s.id))) {
+          if (name.endsWith(".part")) leftovers.push(`${name} ${mb(fs.statSync(path.join(this.dir, s.id, name)).size)}`);
+        }
+      } catch {
+        /* no folder yet */
+      }
+      if (leftovers.length) lines.push(`  on disk: ${leftovers.join(", ")}`);
+    }
+    const recent = about.logText
+      .split(/\r?\n/)
+      .filter((l) => /model (download|ready|remove)|could not clean up/.test(l))
+      .slice(-60);
+    lines.push("", `last ${recent.length} model log lines:`, ...recent);
+    return redactLog(lines.join("\n"));
   }
 
   cancel(id: string): void {

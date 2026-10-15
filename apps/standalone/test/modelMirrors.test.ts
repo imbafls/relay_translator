@@ -330,3 +330,40 @@ describe("a failed extract lets go of its files", () => {
     expect(close, "the files are closed only after the error has already been thrown").toBeLessThan(firstThrow);
   });
 });
+
+describe("COPY DIAGNOSTICS", () => {
+  it("gathers the version, each model's state, its sources, what is on disk and the recent log", async () => {
+    serve({ [A]: { status: 404 } });
+    const s = store(fileModel([A]));
+    await s.download("m");
+    fs.writeFileSync(path.join(dir, "m", "model.onnx.part"), Buffer.alloc(1234));
+
+    const text = s.diagnostics({
+      appVersion: "1.0.0",
+      runtime: "Windows 10.0.26200 x64, Electron 33.4.11",
+      logText: [
+        "[2026-10-15T15:20:00.000Z] [info] uplink: connected",
+        "[2026-10-15T15:20:08.013Z] [warn] model download: m/model.onnx failed on hf:imbafls/callout-relay-models - HTTP 404",
+        "[2026-10-15T15:20:09.000Z] [info] fetching https://example.invalid/x?token=abc123secret",
+      ].join("\n"),
+    });
+
+    expect(text).toMatch(/Callout Relay 1\.0\.0 - Windows/);
+    expect(text).toMatch(/^m: failed$/m);
+    expect(text).toMatch(/error: Test Model: model\.onnx failed on every source/);
+    expect(text).toMatch(/sources: hf:imbafls\/callout-relay-models/);
+    expect(text).toMatch(/model\.onnx\.part 1234 B/);
+    expect(text, "the model log line is missing").toMatch(/failed on hf:imbafls\/callout-relay-models - HTTP 404/);
+    expect(text, "unrelated log lines were copied").not.toMatch(/uplink: connected/);
+  });
+
+  it("redacts what SEND FEEDBACK redacts", () => {
+    const s = store(fileModel([A]));
+    const text = s.diagnostics({
+      appVersion: "1.0.0",
+      runtime: "test",
+      logText: "[warn] model download: m failed - https://host.invalid/f?token=abc123secretvalue",
+    });
+    expect(text).not.toContain("abc123secretvalue");
+  });
+});

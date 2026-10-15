@@ -5,11 +5,14 @@ import {
   DEFAULT_CONFIG,
   FALLBACK_STT,
   LOCAL_VAD,
+  MIRROR_REPO,
+  MIRROR_REV,
   MODEL_TIERS,
   STT_MODELS,
   TRANSLATION_MODELS,
   clampChannels,
   MAX_CAPTURE_CHANNELS,
+  fileSources,
   isLocalStt,
   modelDiskBytes,
   recommendTier,
@@ -355,5 +358,41 @@ describe("the model table in README.md", () => {
     const listed = new Set(rows.map((r) => r.id));
     const missing = STT_MODELS.filter((m) => m.id.startsWith("local-") && !listed.has(m.id)).map((m) => m.id);
     expect(missing, "these are installable and the README does not mention them").toEqual([]);
+  });
+});
+
+/**
+ * The project mirror (docs/LOG-REVIEW-2026-10.md). Every file an archive model
+ * unpacks to now carries its own digest, because the mirror serves those files
+ * one by one and the archive's digest no longer covers them; and the mirror is
+ * reached at a commit, never a branch, for the reason the HF_REV pins give.
+ */
+describe("the project mirror", () => {
+  const everyFile = [...local, LOCAL_VAD].flatMap((m) => (m.files ?? []).map((f) => ({ id: m.id, f })));
+
+  it("covers some files, so the checks below are not vacuous", () => {
+    expect(everyFile.length).toBeGreaterThan(20);
+  });
+
+  it("knows what every file should hash to, archive models included", () => {
+    const missing = everyFile.filter(({ f }) => !/^[0-9a-f]{64}$/.test(f.sha256 ?? "")).map(({ id, f }) => `${id}/${f.name}`);
+    expect(missing, "a file the mirror would serve with nothing saying what it should be").toEqual([]);
+  });
+
+  it("is reached at a full commit, or not at all", () => {
+    expect(MIRROR_REV === null || /^[0-9a-f]{40}$/.test(MIRROR_REV), `MIRROR_REV is ${MIRROR_REV}`).toBe(true);
+  });
+
+  it("is the first source of every file once it is published, and of none before", () => {
+    for (const { id, f } of everyFile) {
+      const first = fileSources(f)[0] ?? "";
+      if (MIRROR_REV) {
+        expect(first, `${id}/${f.name} does not try the mirror first`).toBe(
+          `https://huggingface.co/${MIRROR_REPO}/resolve/${MIRROR_REV}/${id}/${f.name}`,
+        );
+      } else {
+        expect(first, `${id}/${f.name} points at a mirror that has no revision`).not.toContain(MIRROR_REPO);
+      }
+    }
   });
 });
