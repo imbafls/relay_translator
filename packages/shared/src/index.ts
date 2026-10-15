@@ -696,6 +696,37 @@ export interface SttModelFile {
    * must say what it should be.
    */
   sha256?: string;
+  /**
+   * Where else the same bytes can be fetched, tried IN ORDER and BEFORE `url`.
+   * Every source must serve the identical file, because the size and SHA-256
+   * above hold for all of them; that is also what lets a download that broke on
+   * one mirror carry on from its `.part` on the next. `fileSources()` gives
+   * the whole chain.
+   */
+  mirrors?: string[];
+}
+
+/** every place a file can come from, in the order to try them */
+export function fileSources(file: SttModelFile): string[] {
+  return [...(file.mirrors ?? []), file.url].filter((u) => u.length > 0);
+}
+
+/**
+ * A short, stable name for a mirror, for the log and the error a user reads:
+ * `hf:imbafls/callout-relay-models`, `github`, or the bare host. Never the
+ * full URL - the revision hash is noise to a person and stays in the log line
+ * that says which URL was fetched.
+ */
+export function mirrorLabel(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return "unknown";
+  }
+  if (u.hostname === "huggingface.co") return `hf:${u.pathname.split("/").slice(1, 3).join("/")}`;
+  if (u.hostname === "github.com") return "github";
+  return u.hostname;
 }
 
 /**
@@ -784,11 +815,56 @@ const HF_REV = {
 const GH_MODELS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models";
 
 /**
- * Local models come from the sherpa-onnx mirrors on Hugging Face, one plain
- * file per entry, so the app can stream them with progress and never needs a
- * tar.bz2 decoder. Sizes are the int8 exports.
+ * The project's own mirror: every local model as the plain files the worker
+ * loads, at `<id>/<local name>`. `scripts/mirror-models.mjs` builds and checks it.
  */
-export const STT_MODELS: SttModelInfo[] = [
+export const MIRROR_REPO = "imbafls/callout-relay-models";
+
+/**
+ * The commit of `MIRROR_REPO` every file is fetched from, or null before the
+ * mirror has been uploaded.
+ *
+ * A commit and never a branch, for the reason HF_REV gives: a repo edit must
+ * not be able to change the bytes an install receives. Null is a real state,
+ * not a placeholder: with no revision there is no mirror, every archive model
+ * takes its GitHub archive, and every loose-file model its upstream repo - the
+ * 1.0 behaviour. Set it only after `node scripts/mirror-models.mjs verify
+ * <commit>` passes against that commit.
+ */
+export const MIRROR_REV: string | null = null;
+
+/** this project's copy of `<id>/<name>`, at the pinned commit, when there is one */
+export function mirrorUrl(id: string, name: string, rev: string | null = MIRROR_REV): string | null {
+  return rev ? `${HF}/${MIRROR_REPO}/resolve/${rev}/${id}/${name}` : null;
+}
+
+/**
+ * Put the project mirror first in every file's chain. An archive model's files
+ * then become downloadable one by one, and the archive drops to the fallback:
+ * `ModelStore` only reaches for it when a file failed on every mirror.
+ */
+function withMirror(m: SttModelInfo): SttModelInfo {
+  if (m.provider !== "local" || !m.files) return m;
+  return {
+    ...m,
+    files: m.files.map((f) => {
+      const own = mirrorUrl(m.id, f.name);
+      return own ? { ...f, mirrors: [own, ...(f.mirrors ?? [])] } : f;
+    }),
+  };
+}
+
+/**
+ * Every local model is a list of plain files, each with its exact size and
+ * SHA-256, fetched through the chain `fileSources()` describes: this
+ * project's mirror first (`MIRROR_REPO` at `MIRROR_REV`), then the file's
+ * upstream URL. An archive model's files have no upstream URL of their own -
+ * upstream only publishes the tar.bz2 - so its chain is the mirror alone, and
+ * the archive is the last resort behind it. Sizes are the int8 exports; the
+ * per-file digests of archive models were taken by
+ * `scripts/mirror-models.mjs stage` from archives that matched their pins.
+ */
+export const STT_MODELS: SttModelInfo[] = ([
   { id: "deepgram-nova-3", label: "Deepgram Nova-3 - fastest, English-first", provider: "deepgram", languages: "en (+multi)" },
   { id: "deepgram-nova-3-multi", label: "Deepgram Nova-3 Multi - en/es/fr/de/pt/it...", provider: "deepgram", languages: "multilingual" },
   { id: "deepgram-nova-2", label: "Deepgram Nova-2 - wide language incl. vi", provider: "deepgram", languages: "wide incl. vi" },
@@ -880,11 +956,11 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "preprocess.onnx", url: "", size: 6800738 },
-      { name: "encode.int8.onnx", url: "", size: 18249187 },
-      { name: "uncached_decode.int8.onnx", url: "", size: 53216096 },
-      { name: "cached_decode.int8.onnx", url: "", size: 45264830 },
-      { name: "tokens.txt", url: "", size: 436688 },
+      { name: "preprocess.onnx", url: "", size: 6800738, sha256: "f33addce61a143460fe753b5ee5b7db255e5140b5b779c065b94f6c83ff0bf4e" },
+      { name: "encode.int8.onnx", url: "", size: 18249187, sha256: "8774dfba578de027ec6595c2c654a0836434489bc963a0db124a7f181f571acb" },
+      { name: "uncached_decode.int8.onnx", url: "", size: 53216096, sha256: "216737000dd5881a17aa043f6bbd286add33e4c3b0ae257153e2ec15438bdc41" },
+      { name: "cached_decode.int8.onnx", url: "", size: 45264830, sha256: "2aff28bba6a03d8dcf5c9feac45462629bae37317442299f28115ad09da773f6" },
+      { name: "tokens.txt", url: "", size: 436688, sha256: "1165c2aeb9f72f457a83be2d459a09054f27490acd9b41bd43794dfd25e296ea" },
     ],
   },
   {
@@ -910,9 +986,9 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "encoder.int8.onnx", url: "", size: 12937772 },
-      { name: "decoder.int8.onnx", url: "", size: 89853865 },
-      { name: "tokens.txt", url: "", size: 835554 },
+      { name: "encoder.int8.onnx", url: "", size: 12937772, sha256: "0ce578b827c94a961aacb8fa14b02f096504b337e5c94be37c36238cbe3e8bc6" },
+      { name: "decoder.int8.onnx", url: "", size: 89853865, sha256: "06c0e6ff6348d427e51839219d1c886c18cfdf411e629e33f5e1679bff9c1527" },
+      { name: "tokens.txt", url: "", size: 835554, sha256: "306cd27f03c1a714eca7108e03d66b7dc042abe8c258b44c199a7ed9838dd930" },
     ],
   },
   {
@@ -939,10 +1015,10 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "encoder.int8.onnx", url: "", size: 70108816 },
-      { name: "decoder.int8.onnx", url: "", size: 540688 },
-      { name: "joiner.int8.onnx", url: "", size: 259416 },
-      { name: "tokens.txt", url: "", size: 5048 },
+      { name: "encoder.int8.onnx", url: "", size: 70108816, sha256: "5022b2eca5b19d1bc104fcf33e26bc32604b7df553cd2e1f62e31dc7b05e9c87" },
+      { name: "decoder.int8.onnx", url: "", size: 540688, sha256: "780c63ee94c7cfa314211172e5d09b406c0da2beab5c40ea2f54cc95670b76a5" },
+      { name: "joiner.int8.onnx", url: "", size: 259416, sha256: "abd5e30f3f16fc510605c6029dba33f10e4386bd75c5bdc30cf94076864db10d" },
+      { name: "tokens.txt", url: "", size: 5048, sha256: "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb" },
     ],
   },
   {
@@ -970,11 +1046,11 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "preprocess.onnx", url: "", size: 14077290 },
-      { name: "encode.int8.onnx", url: "", size: 50311494 },
-      { name: "uncached_decode.int8.onnx", url: "", size: 122120451 },
-      { name: "cached_decode.int8.onnx", url: "", size: 99983837 },
-      { name: "tokens.txt", url: "", size: 436688 },
+      { name: "preprocess.onnx", url: "", size: 14077290, sha256: "ffa630d395c5ccf76f5d4954be5b882df76aaf6491519ec01fd82ea7a3819fb2" },
+      { name: "encode.int8.onnx", url: "", size: 50311494, sha256: "7e38770f776f2e5583a53b052936005df2ba5c833d7e09c2a5fd796b94bf73e2" },
+      { name: "uncached_decode.int8.onnx", url: "", size: 122120451, sha256: "c01f4b35093bcac20d352d23a75a539e772964579f9d024a90e5e6f09cae9987" },
+      { name: "cached_decode.int8.onnx", url: "", size: 99983837, sha256: "2db74e51cedf64a8b1be3c8192e0bb5e4923af0e90bd9e87f8e8771873f8ea03" },
+      { name: "tokens.txt", url: "", size: 436688, sha256: "1165c2aeb9f72f457a83be2d459a09054f27490acd9b41bd43794dfd25e296ea" },
     ],
   },
   {
@@ -1001,10 +1077,10 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "encoder.int8.onnx", url: "", size: 652184296 },
-      { name: "decoder.int8.onnx", url: "", size: 7257753 },
-      { name: "joiner.int8.onnx", url: "", size: 1739080 },
-      { name: "tokens.txt", url: "", size: 9384 },
+      { name: "encoder.int8.onnx", url: "", size: 652184296, sha256: "a32b12d17bbbc309d0686fbbcc2987b5e9b8333a7da83fa6b089f0a2acd651ab" },
+      { name: "decoder.int8.onnx", url: "", size: 7257753, sha256: "b6bb64963457237b900e496ee9994b59294526439fbcc1fecf705b31a15c6b4e" },
+      { name: "joiner.int8.onnx", url: "", size: 1739080, sha256: "7946164367946e7f9f29a122407c3252b680dbae9a51343eb2488d057c3c43d2" },
+      { name: "tokens.txt", url: "", size: 9384, sha256: "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d" },
     ],
   },
   {
@@ -1031,10 +1107,10 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "encoder.int8.onnx", url: "", size: 657601403 },
-      { name: "decoder.int8.onnx", url: "", size: 14978075 },
-      { name: "joiner.int8.onnx", url: "", size: 9504438 },
-      { name: "tokens.txt", url: "", size: 131440 },
+      { name: "encoder.int8.onnx", url: "", size: 657601403, sha256: "012e9321373af99021415e0b0eb3ec827b4be3153be6f30d9b448fe65e896e68" },
+      { name: "decoder.int8.onnx", url: "", size: 14978075, sha256: "19f9c98fc6d0a2c33a65a43b36fdb2e914c26c0aa9764be3aebc502a1e982fb0" },
+      { name: "joiner.int8.onnx", url: "", size: 9504438, sha256: "4101c7c679a0bc30483794b27a059e34e79232aa2068d78d51231a22c8b0d7ce" },
+      { name: "tokens.txt", url: "", size: 131440, sha256: "729cc103155bafa785f9cd45746cd41cabe97eab7182fc04d594129587958f8a" },
     ],
   },
   {
@@ -1061,12 +1137,12 @@ export const STT_MODELS: SttModelInfo[] = [
       },
     },
     files: [
-      { name: "encoder.int8.onnx", url: "", size: 674716297 },
-      { name: "decoder.int8.onnx", url: "", size: 361080764 },
-      { name: "tokens.txt", url: "", size: 816730 },
+      { name: "encoder.int8.onnx", url: "", size: 674716297, sha256: "b02dcdf54f348741e93fe732b67d933c8dcb6735655f710640143081db38878b" },
+      { name: "decoder.int8.onnx", url: "", size: 361080764, sha256: "20accd02388482eb3a46bd615631adfdc85e1eb2c7db9ea3f02a40ffe6b81547" },
+      { name: "tokens.txt", url: "", size: 816730, sha256: "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126" },
     ],
   },
-];
+] as SttModelInfo[]).map(withMirror);
 
 /** what this PC can comfortably run - a game is usually on the same CPU */
 export interface HardwareInfo {
@@ -1094,7 +1170,7 @@ export function recommendTier(threads: number, ramGb: number): ModelTier {
  * three different ways - two `!` assertions, one thrown error, one `?? []`.
  * Saying what is true is cheaper than defending against what is not.
  */
-export const LOCAL_VAD: SttModelInfo & { files: SttModelFile[] } = {
+export const LOCAL_VAD: SttModelInfo & { files: SttModelFile[] } = withMirror({
   id: "local-vad-silero",
   label: "Silero VAD",
   provider: "local",
@@ -1103,7 +1179,7 @@ export const LOCAL_VAD: SttModelInfo & { files: SttModelFile[] } = {
   files: [
     { name: "silero_vad.onnx", url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx", size: 643854 , sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6" },
   ],
-};
+}) as SttModelInfo & { files: SttModelFile[] };
 
 export function sttModel(id: string): SttModelInfo | undefined {
   return STT_MODELS.find((m) => m.id === id);

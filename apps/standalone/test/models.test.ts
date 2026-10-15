@@ -986,7 +986,11 @@ describe("a file-based model the host did not deliver in full", () => {
 
     expect(failure(), "a short file was published without complaint").toMatch(/1024 B.*4096|4096.*1024/);
     expect(published("model.onnx"), "the truncated file was published under its final name").toBe(false);
-    expect(published("model.onnx.part"), "the refused bytes were left on disk").toBe(false);
+    // Kept, deliberately, since the mirror chain: short bytes are a prefix of
+    // the right file, and the next source or the next DOWNLOAD resumes from
+    // them. They are still never published - the digest is checked on the
+    // whole file. modelMirrors.test.ts holds the resume.
+    expect(fs.statSync(path.join(fileDir(), "model.onnx.part")).size, "the bytes to resume from were not kept").toBe(1024);
   });
 
   it("refuses a file whose bytes are not the ones the catalogue describes", async () => {
