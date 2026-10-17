@@ -674,7 +674,6 @@ export class ModelStore {
     onChunk: (chunk: Buffer) => void,
   ): Promise<void> {
     if (have < file.size) {
-      const out = fs.createWriteStream(part, { flags: have > 0 ? "a" : "w" });
       // the biggest single file in the catalog is a 675 MB encoder, and a
       // dropped connection anywhere in it used to mean starting over
       const body = resumableBody(url, {
@@ -685,10 +684,27 @@ export class ModelStore {
           this.log("warn", `model download: ${target.id}/${file.name} lost the connection at ${pct}% - resuming from byte ${at} (${detail})`);
         },
       });
-      body.on("data", onChunk);
-      // pipeline closes `out` however this ends, so a failed source never
-      // leaves the .part held open for the next one, or for the cleanup
-      await pipeline(body, out);
+      // Each chunk is written the moment it arrives, synchronously, and never
+      // queued. Inside the app's own main process - and only there: not in a
+      // bare Electron main process, not under ELECTRON_RUN_AS_NODE, not in
+      // plain Node - chunks waiting in an fs.WriteStream's queue had their
+      // memory rewritten by data that arrived later, so the file on disk held
+      // 32-64 KB runs of bytes from 16 KB further on. That is the 2026-10-17
+      // reproduction in docs/LOG-REVIEW-2026-10.md: the full app failed every
+      // large download on both machines, through fetch and through https
+      // alike, and passed once the writes stopped queueing. A buffer this code
+      // holds for longer than a tick is the thing to avoid here.
+      const fd = fs.openSync(part, have > 0 ? "a" : "w");
+      try {
+        for await (const chunk of body as AsyncIterable<Buffer>) {
+          fs.writeSync(fd, chunk);
+          onChunk(chunk);
+        }
+      } finally {
+        // closed however this ends, so a failed source never leaves the
+        // .part held open for the next one, or for the cleanup
+        fs.closeSync(fd);
+      }
     }
     // A body that ends cleanly but short raises nothing for resumableBody to
     // catch. Short bytes are kept: they are a prefix of the right file, and the

@@ -270,8 +270,11 @@ is the history that led to it.**
 > files' size and SHA-256 against the catalogue before `MIRROR_REV` was set.
 > On this machine, in Electron 33 from that commit, Nemotron installed in 25 s
 > and Whisper Turbo, interrupted at 30% and relaunched, resumed at 313.7 MB
-> and finished. **What is left:** B6 closes when the two largest models
-> install from the mirror on the reporting PC.
+> and finished. **2026-10-17:** the reporting PC still got wrong bytes from the
+> mirror while curl got the right ones; reproduced in the full app here and
+> fixed by writing each chunk as it arrives (addendum in the log review).
+> **What is left:** B6 closes when the two largest models install in the app
+> on the reporting PC.
 
 > **What v0.8.1 closed, and what it did not.** `516247f` hashes the compressed
 > bytes as they stream and refuses to publish anything whose digest is not the

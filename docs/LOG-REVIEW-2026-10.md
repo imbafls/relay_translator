@@ -180,3 +180,31 @@ the start (0.8.1's numbered folders are in use), and the 0.5.12 aliasing bug
   bytes received and what to do next, and the model screen gets COPY
   DIAGNOSTICS. That way the next report answers this review's open question
   without anyone having to dig through the bucket.
+
+## Addendum, 2026-10-17: the cause, reproduced
+
+The mirror moved the failure without ending it. On FLS the test build fetched
+Whisper Turbo's encoder as one plain file, with no bz2 involved, and its
+SHA-256 came out wrong (`13aba2a3…`, not `b02dcdf5…`). `curl` on the same PC
+fetched the right bytes. So hypothesis 1 was half right: the bytes the app holds
+are not the bytes that arrived, but nothing outside the app changes them.
+
+Narrowed on FLS over SSH, then reproduced here:
+
+| Where the download code ran | Result |
+|-----------------------------|--------|
+| Node 24, Electron 33's Node (`ELECTRON_RUN_AS_NODE`), on both machines | correct |
+| A bare Electron 33 main process, in the background session and in the desktop session | correct |
+| **The full app**, its DOWNLOAD driven over DevTools with a throwaway profile | **wrong, every time**, via fetch and via `https` alike |
+| The full app, each chunk written with `fs.writeSync` as it arrives | **correct**, Turbo and Nemotron at once |
+
+The wrong file, compared with the good one, held 32-64 KB runs whose bytes
+belonged 16 KB further on. Data that arrived later had been written over
+chunks still waiting in the `fs.WriteStream` queue. The archive path holds
+received chunks in the bz2 decoder's queue in the same way, which is why the
+1.0 failures were decoder errors a couple of MB in.
+
+**The fix:** `fetchFrom` writes each chunk synchronously the moment it arrives,
+so no received buffer waits in memory. The precise mechanism inside the app's
+main process (which of its other work makes queued buffers unsafe there and
+nowhere else) is still not identified. The guard holds the shape that fixed it.
