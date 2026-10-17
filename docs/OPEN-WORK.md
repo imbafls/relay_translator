@@ -32,8 +32,9 @@ here.
   instrumented error came back on 2026-10-15 from 1.0.0: every archive dies in
   the bz2 decoder there while plain-file models install. The fix moves every
   model onto plain files from the project's own Hugging Face mirror, with the
-  archive as the fallback, and the mirror is uploaded and pinned. What is left
-  is confirming it on the reporting PC. Full entry under Blocked.
+  archive as the fallback, and a write-queue corruption inside the app is
+  fixed; both are verified on the reporting PC and ship in 1.1. Full entry
+  under Blocked.
 - **With a local model, STOP can take longer than it needs to (audit finding
   17 (part), low).** The close is still posted behind the queued audio on the
   same port, in `packages/relay/src/localSttWorker.ts`. With the deadline scaled
@@ -273,8 +274,11 @@ is the history that led to it.**
 > and finished. **2026-10-17:** the reporting PC still got wrong bytes from the
 > mirror while curl got the right ones; reproduced in the full app here and
 > fixed by writing each chunk as it arrives (addendum in the log review).
-> **What is left:** B6 closes when the two largest models install in the app
-> on the reporting PC.
+> **Verified 2026-10-17 on the reporting PC:** the fixed build installed
+> Whisper Turbo and Nemotron together, then Moonshine Tiny and Whisper Tiny,
+> every file served by the mirror, no warning or error in its log. The same
+> two models installed in the packaged app on the owner's laptop too. B6 is
+> fixed in the 1.1 branch and closes when that ships.
 
 > **What v0.8.1 closed, and what it did not.** `516247f` hashes the compressed
 > bytes as they stream and refuses to publish anything whose digest is not the
