@@ -367,3 +367,35 @@ describe("COPY DIAGNOSTICS", () => {
     expect(text).not.toContain("abc123secretvalue");
   });
 });
+
+/**
+ * A downloaded chunk is written the moment it arrives, never queued.
+ *
+ * Checked at the source, because the failure exists only inside the app's own
+ * main process: reproduced there on 2026-10-17 by driving the real app's
+ * DOWNLOAD over DevTools, where every large file came out with 32-64 KB runs
+ * of bytes from 16 KB further on - through fetch and through https alike -
+ * while the same code passed in a bare Electron main process, under
+ * ELECTRON_RUN_AS_NODE and in this suite. Chunks waiting in an fs.WriteStream's
+ * queue were what got rewritten; writing each one synchronously as it arrives
+ * fixed both machines (docs/LOG-REVIEW-2026-10.md).
+ */
+describe("a downloaded chunk is never left waiting in memory", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "..", "src", "models.ts"), "utf8");
+  const fetchFrom = /private async fetchFrom\([\s\S]*?\n  }\n/.exec(src)?.[0] ?? "";
+  const code = fetchFrom.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  it("reads fetchFrom, so the checks below are not vacuous", () => {
+    expect(code.length, "fetchFrom could not be found in models.ts").toBeGreaterThan(500);
+  });
+
+  it("writes each chunk synchronously as it arrives", () => {
+    expect(code, "the chunk is no longer written as it arrives").toMatch(/for await \([^)]*\)\s*\{\s*fs\.writeSync\(/);
+  });
+
+  it("does not hand the chunks to a write stream to queue", () => {
+    expect(code, "a write stream queues chunks, and queued chunks were rewritten in the app").not.toMatch(
+      /createWriteStream\(|pipeline\(/,
+    );
+  });
+});
