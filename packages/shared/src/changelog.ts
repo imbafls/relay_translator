@@ -28,6 +28,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.1.0",
+    date: "2026-10-18",
+    headline: "Local speech models download, and when one cannot it says why",
+    changes: [
+      {
+        kind: "fixed",
+        text: "The large local speech models install. On some PCs every download of Whisper Turbo, Nemotron, Parakeet and the other big models failed part way with a decoding error, however many times you tried. The app was damaging the downloaded bytes itself before they reached the disk. It no longer does, and both of the largest models now install in well under a minute on a fast connection.",
+      },
+      {
+        kind: "changed",
+        text: "Models now come as plain files from the app's own mirror, each checked against a fixed fingerprint, with the original download as the fallback. A download interrupted by closing the app or losing the connection carries on from where it stopped instead of starting again.",
+      },
+      {
+        kind: "added",
+        text: "A model that cannot be downloaded now says why on its row and stays there: which source was tried, what went wrong, how much arrived and what to do next. COPY DIAGNOSTICS under the model list copies all of it, with the recent download log, ready to paste into SEND FEEDBACK.",
+      },
+      {
+        kind: "fixed",
+        text: "A failed download no longer leaves folders in the models folder that cannot be deleted until the app is closed, or makes you wait half a minute before it gives up.",
+      },
+    ],
+  },
+  {
     version: "1.0.0",
     date: "2026-09-18",
     headline: "1.0: the app says what is wrong, and setup can no longer strand you",

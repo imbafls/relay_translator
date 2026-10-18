@@ -20,7 +20,7 @@ transcribed (Deepgram cloud STT, or sherpa-onnx locally), translated (Gemini),
 and pushed as subtitles to a friend's phone or an OBS browser source.
 
 pnpm monorepo, TypeScript throughout, Node >= 20. Root package is
-`callout-relay`, private, version `1.0.0` — every workspace package carries the
+`callout-relay`, private, version `1.1.0` — every workspace package carries the
 same version, and two guard tests enforce it: one over every package.json, one
 over the sentence you are reading, because that number sat at 0.8.0 through the
 0.8.1 release with nothing holding it.
